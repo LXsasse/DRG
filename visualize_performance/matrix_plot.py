@@ -9,52 +9,46 @@ from scipy.spatial.distance import pdist, cdist
 from scipy.cluster.hierarchy import dendrogram, linkage
 import seaborn as sns
 
-def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty = None, x_attributes = None, y_attributes = None, xattr_name = None, yattr_name = None, heatmapcolor = cm.BrBG_r, xatt_color = None, yatt_color = None, pwms = None, combine_cutx = 0., combine_cuty = 0., color_cutx = 0., color_cuty = 0., plot_value = False, vmin = None, vmax = None, grid = False, xdenline = None, ydenline = None, xlabel = None, ylabel = None, xticklabels = None, yticklabels  = None, dpi = 100, figname = None):
+def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty = None, x_attributes = None, y_attributes = None, xattr_name = None, yattr_name = None, heatmapcolor = cm.BrBG_r, xatt_color = None, yatt_color = None, pwms = None, combine_cutx = 0., combine_cuty = 0., color_cutx = 0., color_cuty = 0., plot_value = False, vmin = None, vmax = None, grid = False, xdenline = None, ydenline = None, xlabel = None, ylabel = None, xticklabels = None, yticklabels  = None, dpi = 100, figname = None, maxsize = 20):
     
     # either provide similarity matrix as heatmap (measurex = None) or provide a similarity function from scipy.spatial.distance.pdist
     # If no measure is provided heatmap entries will be rescaled between 0,1 and a transformation function can retransform for xticklabels
     if measurex is not None:
         simatrixX = pdist(heatmat.T, metric = measurex)
-        def transformx(treevals):
-            return treevals
     else:
         if np.shape(heatmat)[0] != np.shape(heatmat)[1]:
             print( 'heatmat not symmetric matrix: sortx set to None if given')
             sortx = None
         else:
-            if np.all(np.abs(heatmat - heatmat.T) > 10^-8):
+            if np.any(np.abs(heatmat - heatmat.T) > 1e-8):
                 print( 'heatmat not symmetric matrix: sortx set to None if given')
                 sortx = None
+        
         if sortx is not None:        
             # checks if similarity matrix or distance matrix
-            issimilarity = np.amax(heatmap) == np.diag(heatmap)
-            maxheat, minheat = np.amax(heatmat), np.amin(heatmat)
-            def transformx(treevals):
-                return (treevals - int(issimilarity))*- (2.*int(issimilarity)-1.) * (heatmax - heatmin)+heatmin
-            simatrixX = int(issimilarity) - (2.*int(issimilarity)-1.) * (heatmat - heatmin)/(heatmax - heatmin)
+            issimilarity = np.all(np.amax(heatmat) == np.diag(heatmat))
+            heatmax, heatmin = np.amax(heatmat), np.amin(heatmat)
+            simatrixX = 1.-heatmat.T #int(issimilarity) - (2.*int(issimilarity)-1.) * (heatmat - heatmin)/(heatmax - heatmin)
             simatrixX = simatrixX[np.triu_indices(len(simatrixX),1)]
-    
+            
     if measurey is not None:
         simatrixY = pdist(heatmat, metric = measurey)
-        
-        def transformy(treevals):
-            return treevals
     else:
         if np.shape(heatmat)[0] != np.shape(heatmat)[1]:
             print( 'heatmat not symmetric matrix: sorty set to None if given')
             sorty = None
         else:
-            if np.all(np.abs(heatmat - heatmat.T) > 10^-8):
-                print( 'heatmat not symmetric matrix: sortx set to None if given')
+            if np.any(np.abs(heatmat - heatmat.T) > 1e-8):
+                print( 'heatmat not symmetric matrix: sorty set to None if given')
                 sorty = None
         if sorty is not None:        
             # checks if similarity matrix or distance matrix
-            issimilarity = np.amax(heatmap) == np.diag(heatmap)
-            maxheat, minheat = np.amax(heatmat), np.amin(heatmat)
-            def transformx(treevals):
-                return (treevals - int(issimilarity))*- (2.*int(issimilarity)-1.) * (heatmax - heatmin)+heatmin
-            simatrixY = int(issimilarity) - (2.*int(issimilarity)-1.) * (heatmat - heatmin)/(heatmax - heatmin)
+            issimilarity = np.all(np.amax(heatmat) == np.diag(heatmat))
+            heatmax, heatmin = np.amax(heatmat), np.amin(heatmat)
+            simatrixY = 1.-heatmat #int(issimilarity) - (2.*int(issimilarity)-1.) * (heatmat - heatmin)/(heatmax - heatmin)
             simatrixY = simatrixY[np.triu_indices(len(simatrixY),1)]
+            
+            
     
     
     # Generate dendrogram for x and y
@@ -77,14 +71,13 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
     if x_attributes is not None:
         yextra = np.shape(x_attributes)[0]*0.8
     
-    maxpix = 5000
 
-    fig = plt.figure(figsize = (min(maxpix/dpi,0.3*np.shape(heatmat)[1])+xextra, min(maxpix/dpi, 0.3*np.shape(heatmat)[0])+yextra), dpi = dpi)
+    fig = plt.figure(figsize = (min(maxsize,0.3*np.shape(heatmat)[1])+xextra, min(maxsize, 0.3*np.shape(heatmat)[0])+yextra), dpi = dpi)
     
-    if 0.3*np.shape(heatmat)[1] > maxpix/dpi:
+    if 0.3*np.shape(heatmat)[1] > maxsize:
         xticklabels = None
         plot_value = False
-    if 0.3*np.shape(heatmat)[0] > maxpix/dpi:
+    if 0.3*np.shape(heatmat)[0] > maxsize:
         yticklabels = None
         plot_value = False
     
@@ -130,11 +123,11 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
         axdeny.spines['right'].set_visible(False)
         axdeny.spines['left'].set_visible(False)
         axdeny.tick_params(which = 'both', left = False, labelleft = False)
-        axdeny.set_position([-1.55,0.15,1.7,0.75])
+        axdeny.set_position([0.05,0.15,0.09,0.75])
         dny = dendrogram(Zy, ax = axdeny, no_labels = True, color_threshold = color_cuty, above_threshold_color = 'k', orientation = 'left', get_leaves = True)
         sorty = dny['leaves']
         heatmat = heatmat[sorty]
-        axdeny.set_xticks(axdeny.get_xticks()[1:])
+        #axdeny.set_yticks(axdeny.get_yticks()[1:])
 
         if y_attributes is not None:
             y_attributes = y_attributes[sorty]
@@ -152,7 +145,7 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
     if vmax is None:
         vmax = np.amax(heatmat)
     
-    ax.imshow(heatmat, aspect = 'auto', cmap = heatmapcolor, vmin = vmin, vmax = vmax)
+    ax.imshow(heatmat, aspect = 'auto', cmap = heatmapcolor, vmin = vmin, vmax = vmax, origin = 'lower')
     ax.set_yticks(np.arange(len(heatmat)))
     ax.set_xticks(np.arange(len(heatmat[0])))
     
@@ -184,7 +177,7 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
         axatx.spines['right'].set_visible(False)
         axatx.spines['left'].set_visible(False)
         axatx.tick_params(which = 'both', bottom = False, labelbottom = False, left = False, labelleft = False, labelright = True)
-        axatx.set_position([0.15,0.05,0.7,0.1])
+        axatx.set_position([0.15,0.11,0.7,0.04])
         axatx.imshow(x_attributes, aspect = 'auto', cmap = xatt_color)
         axatx.set_xticks(np.arange(len(heatmat[0])))        
         if xlabel is not None:
@@ -213,7 +206,7 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
         axaty.spines['right'].set_visible(False)
         axaty.spines['left'].set_visible(False)
         axaty.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False)
-        axaty.set_position([0.85,0.15,0.1,0.75])
+        axaty.set_position([0.85,0.15,0.03,0.75])
         axaty.imshow(y_attributes, aspect = 'auto', cmap = yatt_color)
         axaty.set_yticks(np.arange(len(heatmat)))
         if ylabel is not None:

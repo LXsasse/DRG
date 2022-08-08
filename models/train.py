@@ -12,7 +12,73 @@ import torch.nn.functional as F
 from init import MyDataset, get_device
 from modules import loss_dict, func_dict
 from torch_regression import torch_Regression
-from predict import pwmset, pwm_scan
+
+
+#### Wondering if there is something similar to the alpha fold techniques that we can do for this here: They use predicted information in a latter layer and pass it to an earlier layer 3 times. I sounds like a new type of recurrent block, a specialized recurrent block. Maybe there is something that we can do simiarly here.
+# Generally, the issue is that we cannot align sequences because genes have different lengths and enhancers are placed in different locations. However, relaitve distances may play a role. 
+# to capture these relative distances between motifs we need long-range equidistant modules
+# We basically need an aligmnment that focuses on aligning regulatory sequences properly to each other
+
+
+
+
+# Generates a list of pwms with targetlen from a pwm with different or same length
+# for example, creates two pwms of length 7 from pwm of length 8
+def pwmset(pwm, targetlen, shift_long = True):
+    if np.shape(pwm)[-1] == targetlen:
+        return pwm[None, :]
+    elif np.shape(pwm)[-1] > targetlen:
+        if shift_long:
+            npwms = []
+            for l in range(np.shape(pwm)[-1]-targetlen+1):
+                npwm = np.zeros((np.shape(pwm)[0], targetlen))
+                npwm[:] = pwm[:, l:l+targetlen]
+                npwms.append(npwm)
+        else:
+            npwm = np.zeros((np.shape(pwm)[0], targetlen))
+            l = int((np.shape(pwm)[-1]-targetlen)/2)
+            npwm[:] = pwm[:, l:l+targetlen]
+            npwms = [npwm]
+        return np.array(npwms)
+    elif np.shape(pwm)[-1] < targetlen:
+        if shift_long:
+            npwms = []
+            for l in range(targetlen - np.shape(pwm)[-1]+1):
+                npwm = np.zeros((np.shape(pwm)[0], targetlen))
+                npwm[:,l:l+np.shape(pwm)[-1]] = pwm[:]
+                npwms.append(npwm)
+        else:
+            npwm = np.zeros((np.shape(pwm)[0], targetlen))
+            l = int((targetlen-np.shape(pwm)[-1])/2)
+            npwm[:,l:l+np.shape(pwm)[-1]] = pwm[:]
+            npwms = [npwm]
+        return np.array(npwms)
+        
+# Scans onehot encoded numpy array for pwms
+def pwm_scan(sequences, pwms, targetlen = None, activation = 'max', motif_cutoff = None, set_to = 0., verbose = False):
+    # if pwms are longer than the targeted kernel size then its unclear if we should the convolution with the right side of the pwm or the left side. Each would create  a different positional pattern. Therefore we take the mean over both options all options of pwms with the target length.
+    # If Pwms are smaller than the target len we use all the options of padded pwms to create scanning pattern
+    if targetlen is None:
+        targetlen = np.amax([len(pqm.T) for pqm in pwms])
+    outscan = np.zeros((np.shape(sequences)[0], len(pwms), np.shape(sequences)[-1]-targetlen+1))
+    if verbose:
+        print('Scanning', len(sequences), 'sequences with', len(pwms), 'PWMs')
+    for p, pwm in enumerate(pwms):
+        if p%10 == 0 and verbose:
+            print(p)
+        setps = pwmset(pwm, targetlen = targetlen)
+        for l in range(np.shape(sequences)[-1]-targetlen+1):
+            setscans = np.sum(sequences[:,None,:,l:l+targetlen] * setps[None, :, :, :], axis = (-1, -2))
+            # max activation across all shorter subpwms
+            if activation == 'max':
+                outscan[:,p, l] = np.amax(setscans, axis = -1)
+            elif activation == 'mean':
+                outscan[:,p, l] = np.mean(setscans, axis = -1)
+    # pwms also assign values to partial fits of the sequence, to remove these partial fits one can 
+    if motif_cutoff is not None:
+        outscan[outscan < motif_cutoff] = set_to
+    return outscan
+
 
 def l1_loss(w):
     return torch.abs(w).mean()
@@ -37,7 +103,7 @@ class hook_grads():
             self.grads[name] = grad
         return hook
 
-def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', validation_loss = None, batchsize = None, device = 'cpu', optimizer = 'Adam', optim_params = None,  verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', patience = 25, init_adjust = True, keepmodel = False, load_previous = True, write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, shift_back = False, **kwargs):
+def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', validation_loss = None, batchsize = None, device = 'cpu', optimizer = 'Adam', optim_params = None,  verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', patience = 25, init_adjust = True, keepmodel = False, load_previous = True, write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, restart = False, **kwargs):
     
     # Default parameters for each optimizer
     if optim_params is None:
@@ -57,6 +123,12 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     if model.outname is not None:
         outname = model.outname
         
+    if shift_back is not None:
+        if isinstance(shift_back, int):
+            if shift_back > 0:
+                shift_back = np.arange(1,shift_back+1)
+            else:
+                shift_back = None
     
     # Assignment of loss function
     if loss_function is None:
@@ -127,23 +199,48 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
         # If weighted outputs then the loss needs to normalized by the sum of weights
         trainsize = np.sum(sample_weights)
     else:
-        trainsize = float(len(X))
-    valsize = float(len(Xval))
+        if multiple_input:
+            trainsize = float(len(X[0]))
+        else:
+            trainsize = float(len(X))
+    if multiple_input:
+        valsize = float(len(Xval[0]))
+    else:
+        valsize = float(len(Xval))
     
-    X = torch.Tensor(X) # transform to torch tensor
+    if multiple_input:
+        X = [torch.Tensor(x) for x in X] # transform to torch tensor
+        Xval = [torch.Tensor(xval) for xval in Xval] # transform to torch tensor
+    else:
+        X = torch.Tensor(X) # transform to torch tensor
+        Xval = torch.Tensor(Xval) # transform to torch tensor
+    trainlen, vallen = len(Y), len(Yval)
     Y = torch.Tensor(Y)
-    Xval = torch.Tensor(Xval) # transform to torch tensor
     Yval = torch.Tensor(Yval)
     
     
-    my_dataset = MyDataset(X, Y) # create your datset
+    my_dataset = MyDataset(X, Y, axis = int(multiple_input)) # create your datset
     if batchsize is None:
         batchsize = len(X)
-    dataloader = DataLoader(my_dataset, batch_size = batchsize, shuffle = True)
     
-    my_val_dataset = MyDataset(Xval, Yval) # create your datset
-    val_batchsize = int(min(batchsize,valsize)) # largest batchsize for validation set is 250 to save memory on gpu
-    val_dataloader = DataLoader(my_val_dataset, batch_size = val_batchsize, shuffle = True)
+    droplast = False
+    mindata = 10 # minimum left data points for last batch to not be dropped
+    if trainlen%batchsize < mindata:
+        droplast = True
+    dataloader = DataLoader(my_dataset, batch_size = batchsize, shuffle = True, drop_last = droplast)
+    
+    my_val_dataset = MyDataset(Xval, Yval, axis = int(multiple_input)) # create your datset
+    val_batchsize = int(min(batchsize,vallen)) # largest batchsize for validation set is 250 to save memory on gpu
+    
+    vdroplast = False
+    if vallen%val_batchsize < mindata:
+        vdroplast = True
+    val_dataloader = DataLoader(my_val_dataset, batch_size = val_batchsize, shuffle = True, drop_last = vdroplast)
+    
+    if batchsize < mindata and loss_function in ['Correlationclass', 'MSECorrelation']:
+        print(loss_function, 'NOT RECOMMENDED WITH BATCHSIZE <', mindata)
+    if val_batchsize < mindata and validation_loss in ['Correlationclass', 'MSECorrelation']:
+        print(validation_loss, 'NOT RECOMMENDED WITH BATCHSIZE <', mindata)
     
     if warm_start:
         print('Warm start')
@@ -173,10 +270,6 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     
     # Send model parameter to GPU
     model.to(device)
-    if verbose:
-        for param_tensor in model.state_dict():
-            print(param_tensor, "\t", model.state_dict()[param_tensor].size())
-    
     
     # Collect the sizes and names of all parameters of the model layers 
     layersizes = []
@@ -205,7 +298,9 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     else:
         a_lrs = lr*np.ones(len(layersizes))
         if kernel_lr is not None:
-            a_lrs[0] = kernel_lr
+            for a, lan in enumerate(layernames):
+                if 'convolutions' in lan:
+                    a_lrs[a] = kernel_lr
     
     # Give all the lrs to a list of dictionaries
     a_dict = []
@@ -235,15 +330,17 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     else:
         print(optimizer, 'not allowed')
     
-    # Compute losses at the beginning with random model
-    lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = 0)
+    # Compute losses at the beginning with randomly initialized model
+    lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = shift_back, smooth_onehot = 0,multiple_input = multiple_input)
     
-    beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back)
+    beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, smooth_onehot = smooth_onehot, multiple_input = multiple_input)
     
     saveloss = [lossval, loss2, lossorigval, beginning_loss, 0]
     save_model(model, outname+'_params0.pth')
     save_model(model, outname+'_parameter.pth')   
     
+    if verbose:
+        print('Train_loss(val), Val_loss(val), Train_loss(train), Val_loss(train)')
     if writeloss:
         writebeginning = str(round(lossorigval,4))+'\t'+str(round(lossval,4))+'\t'+str(round(beginning_loss,4))+'\t'+str(round(loss2,4))
         save_losses(outname+'_loss.txt', 0, writebeginning)
@@ -255,16 +352,15 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     # Start epochs and updates
     restarted = 0
     e = 0
-    
+    been_larger = 1
     
     while True:
-        
-        trainloss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, True, device, val_loss = val_loss, optimizer = optimizer, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back)
+        trainloss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, True, device, val_loss = val_loss, optimizer = optimizer, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input)
         
         model.eval() # Sets model to evaluation mode which is important for batch normalization over all training mean and for dropout to be zero
         e += 1
         
-        lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = 0)
+        lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = shift_back, smooth_onehot = 0, multiple_input = multiple_input)
         
         
         
@@ -278,44 +374,69 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
         
         early_stop, stopexp = stopcriterion(e, lossval)
         
-        if (np.isnan(lossval) or np.isnan(loss2) or (trainloss > beginning_loss)) and (e > 0) and (e < init_epochs) and init_adjust:
-            # reduces learning rate if training loss goes up actually
-            # need something learnable for each layer during training
-            restarted += 1
-            if restarted > 15:
-                break
-            save_losses(outname+'_loss.txt', 0, writebeginning)
-            load_model(model, outname+'_params0.pth',device)
-            e = 0
+        #print(trainloss, beginning_loss, e, init_epochs, init_adjust)
+        if init_adjust and e > init_epochs:
+            if (np.isnan(lossval) or np.isnan(loss2) or np.isnan(lossorigval) or np.isnan(trainloss)) or ((been_larger >= 2) and (trainloss > beginning_loss)):
+                # reduces learning rate if training loss goes up actually
+                # need something learnable for each layer during training
+                restarted += 1
+                if restarted > 15:
+                    break
+                save_losses(outname+'_loss.txt', 0, writebeginning)
+                load_model(model, outname+'_params0.pth',device)
+                e = 0
+                lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, smooth_onehot = 0, shift_back = shift_back, multiple_input = multiple_input)
+                early_stop, stopexp = stopcriterion(0, lossval)
+                print('Learning rate reduced', restarted,  lossorigval, lossval, lr * 0.25**restarted)
+                for a, adict in enumerate(a_dict):
+                    a_dict[a]['lr'] = adict['lr'] *0.25
+                been_larger = 1
+            elif trainloss > beginning_loss:
+                been_larger += 1
+            else:
+                been_larger = 1
             
-            for a, adict in enumerate(a_dict):
-                a_dict[a]['lr'] = adict['lr'] *0.25
-            
-            if verbose:
-                print(optimizer)
-            
-
-        elif e == epochs or early_stop:
+        if e == epochs or (early_stop and (e > init_epochs)):
             # stop after reaching maximum epoch number
-            if early_stop and verbose:
-                # Early stopping if validation loss is not improved for patience epochs
-                print(e, lossval, stopexp)
-            
-            if lossval > saveloss[0] and load_previous:
-                # Load better model if it was created in an earlier epoch
+            if restart:
                 load_model(model, outname+'_parameter.pth',device)
                 if verbose:
                     print("Loaded model from", outname+'_parameter.pth', e - saveloss[-1], 'steps ago with loss', saveloss[0])
+                restarted =0
+                for mname, layer in model.named_modules():
+                    if hasattr(layer, 'reset_parameters') and 'convolutions' not in mname.split('.'):
+                        layer.reset_parameters()
+                        if verbose:
+                            print('Reseted', mname)
+                save_model(model, outname+'_params0.pth')
+                beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, smooth_onehot = smooth_onehot, multiple_input = multiple_input)
+                lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, smooth_onehot = 0, shift_back = shift_back, multiple_input = multiple_input)
+                early_stop, stopexp = stopcriterion(0, lossval)
+                restart = False
+                
+                if verbose:
+                    print('New start', str(round(lossorigval,4))+'\t'+str(round(lossval,4))+'\t'+str(round(trainloss,4))+'\t'+str(round(loss2,4)))
             else:
-                saveloss = [lossval, loss2, lossorigval, trainloss, e]
-            os.remove(outname+'_params0.pth')
-            break
+                if early_stop and verbose:
+                    # Early stopping if validation loss is not improved for patience epochs
+                    print(e, lossval, stopexp)
+                
+                if lossval > saveloss[0] and load_previous:
+                    # Load better model if it was created in an earlier epoch
+                    load_model(model, outname+'_parameter.pth',device)
+                    if verbose:
+                        print("Loaded model from", outname+'_parameter.pth', e - saveloss[-1], 'steps ago with loss', saveloss[0])
+                else:
+                    saveloss = [lossval, loss2, lossorigval, trainloss, e]
+                os.remove(outname+'_params0.pth')
+                break
         
         elif not early_stop:
-            # if no early stopping is False, save loss and parameters for the first few epochs and afterward every patience epoch
-            if ((e%write_steps == 0) or (e<patience)) and ~np.isnan(lossval) and lossval < saveloss[0]:
+            # if early stopping is False, save loss and parameters
+            if (~np.isnan(lossval) and lossval < saveloss[0]) or (~np.isnan(lossval) and np.isnan(saveloss[0])):
                 saveloss = [lossval, loss2, lossorigval, trainloss, e]
                 save_model(model, outname+'_parameter.pth')
+    
     if not keepmodel:
         os.remove(outname+'_parameter.pth')
     return saveloss
@@ -361,10 +482,34 @@ class stop_criterion(nn.Module):
 
 
 
+def reverse_inoutsign(x):
+    x = torch.cat([x, -x], dim = 0)
+    return x
+
+
+# make version so that nothing gets lost and so that array with shifts can be given    
+def shift_sequences(sample_x, shift_back, maxshift = None, mode = 'constant', value = 0, random_shift = False): # 'constant', 'reflect', 'replicate' or 'circular'
+    if maxshift is None:
+        maxshift = np.amax(shift_back)
+    sample_xs = [nn.functional.pad(sample_x, (maxshift, maxshift), mode = mode, value = value)]
+    if random_shift:
+        sb = np.random.choice(shift_back)
+        sample_xs.append(nn.functional.pad(sample_x, (maxshift-sb, maxshift+sb), mode = mode, value = value))
+        sample_xs.append(nn.functional.pad(sample_x, (maxshift+sb, maxshift-sb), mode = mode, value = value))
+    else:
+        for sb in shift_back:
+            sample_xs.append(nn.functional.pad(sample_x, (maxshift-sb, maxshift+sb), mode = mode, value = value))
+            sample_xs.append(nn.functional.pad(sample_x, (maxshift+sb, maxshift-sb), mode = mode, value = value))
+    sample_x = torch.cat(sample_xs, dim = 0)
+    return sample_x
+
+def smooth_onehotfunc(sample_x, ns = 2):
+    sample_x = torch.cat([sample_x, torch.sign(torch.sum(sample_x, dim =1).repeat((ns,1))).unsqueeze(1)*(sample_x.absolute().repeat((ns,1,1)) - torch.rand(ns*sample_x.size(dim=0),ns*sample_x.size(dim=1),ns*sample_x.size(dim=2))*0.5).absolute()], dim = 0)
+    return sample_x
 
 
 # execute one epoch with training or validation set. Training set takes gradient but validation set computes loss without gradient
-def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, device, val_loss = None, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = None, reverse_sign = False, shift_back = 0):
+def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, device, val_loss = None, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = None, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False):
     if val_loss is None:
         val_loss = loss_func
     
@@ -373,60 +518,74 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
     # if size of validation set different from batchsize, then do val_all
     if val_all is not None:
         Ypred_all = torch.empty(val_all.size())
+    
+    yclasses = model.n_classes
+    if 'l_out' in model.__dict__:
+        if model.l_out is not None:
+            yclasses *= model.l_out
+    
     tsize = 1
+    if shift_back is not None:
+        if random_shift:
+            tsize = tsize + tsize*2
+        else:
+            tsize = tsize + tsize*2*len(shift_back)
     if reverse_sign:
         tsize = tsize*2
-    if shift_back > 0:
-        tsize = tsize*2*shift_back
+    if smooth_onehot > 0:
+        tsize = tsize *(smooth_onehot +1)
+    
     
     for sample_x, sample_y, index in dataloader:
-        
         if pwm_out is None:
             saddx = None
         else:
             saddx = pwm_out[index]
+        # Add samples that are shifted by 1 to 'shift_back' positions
+        if shift_back is not None:
+            if multiple_input:
+                sample_x = [shift_sequences(sam_x, shift_back, random_shift = random_shift) for sam_x in sample_x]
+            else:
+                sample_x = shift_sequences(sample_x, shift_back, random_shift = random_shift)
+            if random_shift:
+                sample_y = torch.cat(3*[sample_y])
+            else:
+                sample_y = torch.cat(((len(shift_back)+1)*2-1)*[sample_y])
+            if saddx is not None:
+                if random_shift:
+                    saddx = saddx.repeat(3, 1, 1)
+                else:
+                    saddx = saddx.repeat((len(shift_back)+1)*2-1, 1, 1)
         
         # Add samples with reverse sign in X and Y
         if reverse_sign:
-            sample_x2 = -sample_x
-            sample_y2 = -sample_y
-            sample_x = torch.cat([sample_x, sample_x2], dim = 0)
-            sample_y = torch.cat([sample_y, sample_y2], dim = 0)
+            if multiple_input:
+                sample_x = [reverse_inoutsign(sam_x) for sam_x in sample_x]
+            else:
+                sample_x = reverse_inoutsign(sample_x)
+            sample_y = reverse_inoutsign(sample_y)
             if saddx is not None:
-                saddx = torch.cat([saddx, -saddx], dim = 0)
-            
-        # Add samples that are shifted by 1 to 'shift_back' positions
-        if shift_back > 0:
-            sample_xs = [sample_x]
-            sample_ys = [sample_y]
-            saddxs = [saddx]
-            for sb in range(1, shift_back+1):
-                sample_x2 = torch.zeros_like(sample_x)
-                sample_x2[..., :sb] = sample_x[..., -sb:]
-                sample_x2[..., sb:] = sample_x[..., :-sb]
-                sample_xs.append(sample_x2)
-                sample_x2 = torch.zeros_like(sample_x)
-                sample_x2[..., -sb:] = sample_x[..., :sb]
-                sample_x2[..., :-sb] = sample_x[..., sb:]
-                sample_xs.append(sample_x2)
-                if saddx is not None:
-                    saddx2 = torch.zeros_like(saddx)
-                    saddx2[..., :sb] = saddx[..., -sb:]
-                    saddx2[..., sb:] = saddx[..., :-sb]
-                    saddxs.append(saddx2)
-                    saddx2 = torch.zeros_like(saddx)
-                    saddx2[..., -sb:] = saddx[..., :sb]
-                    saddx2[..., :-sb] = saddx[..., sb:]
-                    saddxs.append(saddx2)
-                sample_ys.append(torch.cat([sample_y, sample_y],dim = 0))
-            sample_x = torch.cat(sample_xs, dim = 0)
-            sample_y = torch.cat(sample_ys, dim = 0)
+                saddx = reverse_inoutsign(saddx)
+        
+        if smooth_onehot > 0:
+            if multiple_input:
+                sample_x = [smooth_onehotfunc(sam_x, ns = smooth_onehot) for sam_x in sample_x]
+            else:
+                sample_x = smooth_onehotfunc(sample_x, ns = smooth_onehot)
+            sample_y = torch.cat((smooth_onehot+1)* [sample_y])
             if saddx is not None:
-                saddx = torch.cat(saddxs, dim = 0)
+                saddx = saddx.repeat(smooth_onehot +1, 1, 1)
             
         if saddx is not None:
-            saddx = saddx.to(device)
-        sample_x, sample_y = sample_x.to(device), sample_y.to(device)
+            if multiple_input:
+                saddx = [sax.to(device) for sax in saddx]
+            else:
+                saddx = saddx.to(device)
+        if multiple_input:
+            sample_x = [sam_x.to(device) for sam_x in sample_x]
+        else:
+            sample_x= sample_x.to(device)
+        sample_y = sample_y.to(device)
         
         if take_grad:
             optimizer.zero_grad()
@@ -434,9 +593,9 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
             loss = loss_func(Ypred, sample_y)
             if sample_weights is not None:
                 loss = loss*sample_weights[index][:,None]
+            # FIX for Correlationclass and Correlationdata
             loss = torch.sum(loss)
             trainloss += float(loss.item())
-            
             if l1reg_last > 0 and last_layertensor is not None:
                 for param_name, tensor in model.named_parameters():
                     if param_name in last_layertensor:
@@ -459,8 +618,10 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
                 loss = loss_func(Ypred, sample_y)
                 if sample_weights is not None:
                     loss = loss*sample_weights[index][:,None]
+                    
                 loss = torch.sum(loss)
                 trainloss += float(loss.item())
+                
         if val_all is not None:
             Ypred_all[index] = Ypred[:len(index)].detach().cpu()
         else:
@@ -468,11 +629,69 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
                 validatloss += float(torch.sum(val_loss(Ypred, sample_y)).item())
     if val_all is not None:
         with torch.no_grad():
-            validatloss += float(torch.sum(val_loss(Ypred_all, val_all)).item())
-    trainloss /= (normsize*tsize)
-    validatloss /= normsize
+            validatloss = float(torch.sum(val_loss(Ypred_all, val_all)).item())
+            
+    trainloss /= (normsize*tsize)*yclasses
+    validatloss /= normsize*yclasses
     return trainloss, validatloss
 
 
-
+# The prediction after training are performed on the cpu
+def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, device = 'cpu', batchsize = None, shift_sequence = None):
+    if shift_sequence is not None:
+        if isinstance(shift_sequence, int):
+            if shift_sequence > 0:
+                shift_sequence = np.arange(1,shift_sequence+1)
+            else:
+                shift_sequence = None
+    model.eval()
+    if device is None:
+        device = model.device
+    model.to(device)
+    # Use no_grad to avoid computation of gradient and graph
+    with torch.no_grad():
+        islist = False
+        if isinstance(X, list):
+            islist = True
+            X = [torch.Tensor(x) for x in X]
+            dsize = X[0].size(dim = 0)
+        else:
+            X = torch.Tensor(X)
+            dsize = X.size(dim = 0)
+        if batchsize is not None:
+            predout = []
+            for i in range(0, int(dsize/batchsize)+int(dsize%batchsize != 0)):
+                if pwm_out is not None:
+                    pwm_outin = pwm_out[i*batchsize:(i+1)*batchsize]
+                    if shift_sequence is not None:
+                        pwm_outin = shift_sequences(pwm_outin, shift_sequence)
+                    pwm_outin = pwm_outin.to(device)
+                else:
+                    pwm_outin = None
+                if islist:
+                    xin = [x[i*batchsize:(i+1)*batchsize] for x in X]
+                    if shift_sequence is not None:
+                        xin = [shift_sequences(x, shift_sequence) for x in X]
+                    xin = [x.to(device) for x in xin]
+                else:
+                    xin = X[i*batchsize:(i+1)*batchsize]
+                    if shift_sequence is not None:
+                        xin = shift_sequences(xin, shift_sequence)
+                    xin = xin.to(device)
+                fpred = model.forward(xin, xadd = pwm_outin, mask = mask,mask_value = mask_value).detach().cpu().numpy()
+                if shift_sequence is not None:
+                    fpred = fpred.reshape(len(shift_sequence),-1,fpred.size(dim=-1)).mean(dim =0)
+                predout.append(fpred)
+            predout = np.concatenate(predout, axis = 0)
+        else:
+            if islist:
+                X = [x.to(device) for x in X]
+            else:
+                X = X.to(device)
+            predout = model.forward(X, xadd = pwm_out, mask = mask, mask_value = mask_value)
+            predout = predout.detach().cpu().numpy()
+            if shift_sequence is not None:
+                # combine predictions for each gene across different shifts
+                predout = predout.reshape(len(shift_sequence),-1,fpred.size(dim=-1)).mean(dim =0)
+    return predout
 

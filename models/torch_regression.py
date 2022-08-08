@@ -345,11 +345,11 @@ class torch_Regression(nn.Module):
         elif self.optimizer == 'Adam':
             optimizer = optim.Adam(self.parameters(), lr=self.lr, betas=self.optim_params)
         
-        self.coef_0 = self.predictor.Linear.weight.clone().detach().numpy()
+        self.coef_0 = self.predictor.Linear.weight.clone().detach().cpu().numpy()
         if self.fit_intercept:
-            self.intercept_0 = self.predictor.Linear.bias.clone().detach().numpy()
+            self.intercept_0 = self.predictor.Linear.bias.clone().detach().cpu().numpy()
         if self.kernel_length is not None:
-            self.kernels_0 = self.feature_extractor.Kernels.weight.clone().detach().numpy()
+            self.kernels_0 = self.feature_extractor.Kernels.weight.clone().detach().cpu().numpy()
         
         self.save_model(self.outname+'_params0.pth')
         self.save_model(self.outname+'_parameter.pth')
@@ -446,7 +446,7 @@ class torch_Regression(nn.Module):
             else:
                 X = X.to(device)
                 predout = self.forward(X)
-                predout.detach().numpy()
+                predout.detach().cpu().numpy()
         return predout
 
 

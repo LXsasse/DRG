@@ -10,12 +10,6 @@ import time
 from joblib import Parallel, delayed
 import multiprocessing
 
-if '--mprocessing' in sys.argv:
-    mprocessing = True
-    num_cores = int(sys.argv[sys.argv.index('--mprocessing')+1])
-else:
-    mprocessing = False
-    num_cores = 1
 
 
 
@@ -146,8 +140,11 @@ def def_region(onehotregkmer):
     
 
 
-def kmer_rep(sequences, kmertype, kmerlength, gapsize, nucleotides = 'ACGT', onehotregion = None, datatype = np.int8):
-    kmers = list(nucleotides)
+def kmer_rep(sequences, kmertype, kmerlength, gapsize = 0, kmers = None, nucleotides = 'ACGT', onehotregion = None, datatype = np.int8, mprocessing = False, num_cores = 1):
+    genkmers = False
+    if kmers is None:
+        genkmers = True
+        kmers = list(nucleotides)
     
     # check conditions if one-hot encoded regions can be added
     selen = seqlen(sequences)
@@ -157,8 +154,10 @@ def kmer_rep(sequences, kmertype, kmerlength, gapsize, nucleotides = 'ACGT', one
     
     # regular kmer counts of lenght kmerlength
     if kmertype == 'regular':
-        for i in range(kmerlength-1):
-            kmers = add_sing(kmers, list(nucleotides))
+        
+        if genkmers:
+            for i in range(kmerlength-1):
+                kmers = add_sing(kmers, list(nucleotides))
         
         
         features = np.zeros((len(sequences), len(kmers)), dtype = datatype)
@@ -207,12 +206,15 @@ def kmer_rep(sequences, kmertype, kmerlength, gapsize, nucleotides = 'ACGT', one
                 
     # all kmers of length 2 to kmerlength
     elif kmertype == 'decreasing':
-        kmerlist = []
-        for i in range(kmerlength-1):
-            kmers = add_sing(kmers, list(nucleotides))
-            kmerlist.append(kmers)
+        if genkmers:
+            kmerlist = []
+            for i in range(kmerlength-1):
+                kmers = add_sing(kmers, list(nucleotides))
+                if i + 2 >= gapsize:
+                    kmerlist.append(kmers)
+            
+            kmers = list(np.concatenate(kmerlist))
         
-        kmers = list(np.concatenate(kmerlist))
         features = np.zeros((len(sequences), len(kmers)), dtype = datatype)
         if addonehot:
             features = np.zeros((len(sequences), len(kmers))*np.shape(onehotregion)[-1], dtype = datatype)
@@ -262,9 +264,10 @@ def kmer_rep(sequences, kmertype, kmerlength, gapsize, nucleotides = 'ACGT', one
                     features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
         
     elif kmertype == 'gapped':
+        if genkmers:
+            for i in range(kmerlength-1-gapsize):
+                kmers = add_sing(kmers, list(nucleotides))
         
-        for i in range(kmerlength-1-gapsize):
-            kmers = add_sing(kmers, list(nucleotides))
         features = np.zeros((len(sequences), len(kmers)), dtype = datatype)
         if addonehot:
             features = np.zeros((len(sequences), len(kmers))*np.shape(onehotregion)[-1], dtype = datatype)
@@ -316,22 +319,23 @@ def kmer_rep(sequences, kmertype, kmerlength, gapsize, nucleotides = 'ACGT', one
                 
     elif kmertype == 'mismatch':
         # generate kmerlist
-        print( 'Generate kmer')
-        
-        for i in range(kmerlength-1-gapsize):
-            kmers = add_sing(kmers, list(nucleotides))
-        rkmerfeat = np.copy(kmers)
-        kmers = []
-        for g in range(gapsize):
-            gappedkmerfeat = []
-            for kmer in rkmerfeat:
-                gkmer = []
-                for i in range(1,len(kmer)):
-                    gkmer.append(kmer[:i]+'X'+kmer[i:])
-                gappedkmerfeat.append(gkmer)
-            rkmerfeat = np.unique(np.concatenate(gappedkmerfeat))
-        kmers = list(rkmerfeat)
-        print( 'kmers done ...')
+        if genkmers:
+            print( 'Generate kmer')
+            
+            for i in range(kmerlength-1-gapsize):
+                kmers = add_sing(kmers, list(nucleotides))
+            rkmerfeat = np.copy(kmers)
+            kmers = []
+            for g in range(gapsize):
+                gappedkmerfeat = []
+                for kmer in rkmerfeat:
+                    gkmer = []
+                    for i in range(1,len(kmer)):
+                        gkmer.append(kmer[:i]+'X'+kmer[i:])
+                    gappedkmerfeat.append(gkmer)
+                rkmerfeat = np.unique(np.concatenate(gappedkmerfeat))
+            kmers = list(rkmerfeat)
+            print( 'kmers done ...')
     
         # generate masks for wildcard elements:
         mask = np.zeros(kmerlength) > 0.
@@ -404,85 +408,95 @@ def kmer_rep(sequences, kmertype, kmerlength, gapsize, nucleotides = 'ACGT', one
                     features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
         
     return features, kmers
-    
-# input files
-fastafile = sys.argv[1]
-genenames, sequences = readinfasta(fastafile)
 
-outname = os.path.splitext(fastafile)[0]
 
-if '--filter_genelength' in sys.argv:
-    maxsize = int(sys.argv[sys.argv.index('--filter_genelength')+1])
+if __name__ == '__main__':
+    if '--mprocessing' in sys.argv:
+        mprocessing = True
+        num_cores = int(sys.argv[sys.argv.index('--mprocessing')+1])
+    else:
+        mprocessing = False
+        num_cores = 1
+        
+    # input files
+    fastafile = sys.argv[1]
+    genenames, sequences = readinfasta(fastafile)
+
+    outname = os.path.splitext(fastafile)[0]
+
     selen = seqlen(sequences)
-    filt = np.array(selen) <= maxsize
-    genenames, sequences = genenames[filt], sequences[filt]
-    outname += '_max'+str(maxsize)
-    print(int(np.sum(~filt)), 'removed because longer than', maxsize)
-    
+    print('Max sequence length', np.amax(selen))
+    if '--filter_genelength' in sys.argv:
+        maxsize = int(sys.argv[sys.argv.index('--filter_genelength')+1])
+        filt = np.array(selen) <= maxsize
+        genenames, sequences = genenames[filt], sequences[filt]
+        outname += '_max'+str(maxsize)
+        print(int(np.sum(~filt)), 'removed because longer than', maxsize)
+        
 
-# optionally provide positions with gneomic regions in transcripts
-# Format:
-# genomic regions are provided as Gene_name, region_name, location, total_length_of_gene
-#### !!! adapt to also provide locations for open RNA fragments, have several locations basically
-genreghot = None
-gregions = None
-if '--genomicregions' in sys.argv:
-    regfile = sys.argv[sys.argv.index('--genomicregions')+1]
-    gennames, genreghot, gregions = readinlocation(regfile)
-    # sort to genenames
-    seqsort = np.argsort(genenames)[np.isin(np.sort(genenames), gennames)]
-    regsort = np.argsort(gennames)[np.isin(np.sort(gennames), genenames)]
-    genenames, sequences = genenames[seqsort], sequences[seqsort]
-    gennames, genreghot = gennames[regsort], genreghot[regsort]
-    print(np.shape(genenames), np.shape(sequences), np.shape(genreghot))
-    outname += '_genreg-'+os.path.splitext(os.path.split(regfile)[1])[0]
+    # optionally provide positions with gneomic regions in transcripts
+    # Format:
+    # genomic regions are provided as Gene_name, region_name, location, total_length_of_gene
+    #### !!! adapt to also provide locations for open RNA fragments, have several locations basically
+    genreghot = None
+    gregions = None
+    if '--genomicregions' in sys.argv:
+        regfile = sys.argv[sys.argv.index('--genomicregions')+1]
+        gennames, genreghot, gregions = readinlocation(regfile)
+        # sort to genenames
+        seqsort = np.argsort(genenames)[np.isin(np.sort(genenames), gennames)]
+        regsort = np.argsort(gennames)[np.isin(np.sort(gennames), genenames)]
+        genenames, sequences = genenames[seqsort], sequences[seqsort]
+        gennames, genreghot = gennames[regsort], genreghot[regsort]
+        print(np.shape(genenames), np.shape(sequences), np.shape(genreghot))
+        outname += '_genreg-'+os.path.splitext(os.path.split(regfile)[1])[0]
 
 
-# Split sequence into k-mers
-if '--kmers' in sys.argv:
-    ftype = sys.argv[sys.argv.index('--kmers')+1] # regular, decreasing, gapped, mismatch
-    klen = int(sys.argv[sys.argv.index('--kmers')+2])
-    gaplen = 0
-    if ftype in ['gapped', 'mismatch']:
-        gaplen = int(sys.argv[sys.argv.index('--kmers')+3])
-    
-    # if other than ACGT
-    nucleotides = 'ACGT'
-    if '--nucleotides' in sys.argv:
-        nucleotides = sys.argv[sys.argv.index('--nucleotides')+1]
-    
-    datatype = np.int8
-    if '--highint' in sys.argv:
-        datatype = int
-    
-    outname += '_kmer-'+ftype+str(klen)+'-'+str(gaplen)
-    seqfeatures = kmer_rep(sequences, ftype, klen, gaplen, nucleotides = nucleotides, onehotregion = genreghot, datatype = datatype)
-    
-else:
-    # If sequences contain nucleotides that can represent all others
-    wildcard_element = None
-    if '--wildcard' in sys.argv:
-        wildcard_element = sys.argv[sys.argv.index('--wildcard_element')+1]
-    nucleotides = 'ACGT'
-    # if other than ACGT
-    if '--nucleotides' in sys.argv:
-        nucleotides = sys.argv[sys.argv.index('--nucleotides')+1]
-    
-    outname += '_onehot-'+nucleotides
-    
-    alignto = 'left'
-    if '--align_sequence' in sys.argv:
-        alignto = sys.argv[sys.argv.index('--align_sequence')+1] # left, right, bidirectional
-    outname += '_align'+alignto
-    
-    #t1 = time.time()
-    #seqfeatures = onehot(sequences, nucleotides, wildcard = wildcard_element, onehotregion = genreghot)
-    #t2 = time.time()
-    seqfeatures = quick_onehot(sequences, nucleotides, wildcard = wildcard_element, onehotregion = genreghot, region_names = gregions, align = alignto)
-    
-# save as npz file containing features and gene names
-print('Saved as \n'+outname+'.npz')
-np.savez_compressed(outname+'.npz', seqfeatures = seqfeatures, genenames = genenames)
+    # Split sequence into k-mers
+    if '--kmers' in sys.argv:
+        ftype = sys.argv[sys.argv.index('--kmers')+1] # regular, decreasing, gapped, mismatch
+        klen = int(sys.argv[sys.argv.index('--kmers')+2])
+        gaplen = 0
+        if ftype in ['gapped', 'mismatch']:
+            gaplen = int(sys.argv[sys.argv.index('--kmers')+3])
+        
+        # if other than ACGT
+        nucleotides = 'ACGT'
+        if '--nucleotides' in sys.argv:
+            nucleotides = sys.argv[sys.argv.index('--nucleotides')+1]
+        
+        datatype = np.int8
+        if '--highint' in sys.argv:
+            datatype = int
+        
+        outname += '_kmer-'+ftype+str(klen)+'-'+str(gaplen)
+        seqfeatures = kmer_rep(sequences, ftype, klen, gaplen, nucleotides = nucleotides, onehotregion = genreghot, datatype = datatype, mprocessing = mprocessing, num_cores =num_cores)
+        
+    else:
+        # If sequences contain nucleotides that can represent all others
+        wildcard_element = None
+        if '--wildcard' in sys.argv:
+            wildcard_element = sys.argv[sys.argv.index('--wildcard_element')+1]
+        nucleotides = 'ACGT'
+        # if other than ACGT
+        if '--nucleotides' in sys.argv:
+            nucleotides = sys.argv[sys.argv.index('--nucleotides')+1]
+        
+        outname += '_onehot-'+nucleotides
+        
+        alignto = 'left'
+        if '--align_sequence' in sys.argv:
+            alignto = sys.argv[sys.argv.index('--align_sequence')+1] # left, right, bidirectional
+        outname += '_align'+alignto
+        
+        #t1 = time.time()
+        #seqfeatures = onehot(sequences, nucleotides, wildcard = wildcard_element, onehotregion = genreghot)
+        #t2 = time.time()
+        seqfeatures = quick_onehot(sequences, nucleotides, wildcard = wildcard_element, onehotregion = genreghot, region_names = gregions, align = alignto)
+        
+    # save as npz file containing features and gene names
+    print('Saved as \n'+outname+'.npz')
+    np.savez_compressed(outname+'.npz', seqfeatures = seqfeatures, genenames = genenames)
 
 
 

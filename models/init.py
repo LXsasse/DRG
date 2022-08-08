@@ -7,41 +7,52 @@ from modules import cosine_loss, cosine_both, correlation_loss, correlation_both
 
 
 
-def load_parameters(model, PATH, translate_dict = None, allow_reduction = False, exclude = []):
+def load_parameters(model, PATH, translate_dict = None, allow_reduction = False, exclude = [], include = False):
     if isinstance(PATH, str):
         state_dict = torch.load(PATH, map_location = 'cpu')
     else:
         state_dict = PATH
     cstate_dict = model.state_dict()
-    for name in state_dict:
-        name0 = name
+    for n, name0 in enumerate(cstate_dict):
+        name = name0
+        #print(name)
         if translate_dict is not None:
             if name in translate_dict:
-                name0 = translate_dict[name0]
-        if name0 in cstate_dict and name0 not in exclude:
+                name = translate_dict[name]
+        #print(name, state_dict.keys())
+        if name in state_dict and ((name0 in exclude) == include):
             print("Loaded", name0 ,'with', name)
+            ntens = None
             if cstate_dict[name0].size() == state_dict[name].size():
                 cstate_dict[name0] = state_dict[name]
             elif allow_reduction:
-                ntens = state_dict[name][cstate_dict[name0].size(dim = 0)]
-                if cstate_dict[name0].size() == ntens.size():
-                    cstate_dict[name0] = ntens
+                if (cstate_dict[name0].size(dim = 0) > state_dict[name].size(dim = 0)) and ((cstate_dict[name0].size(dim = -1) == state_dict[name].size(dim = -1)) or ((len(cstate_dict[name0].size()) ==1) and (len(state_dict[name].size())==1))):
+                    ntens = cstate_dict[name0]
+                    ntens[:state_dict[name].size(dim = 0)] = state_dict[name]
+                elif cstate_dict[name0].size(dim = 0) <= state_dict[name].size(dim = 0) and ((cstate_dict[name0].size(dim = -1) == state_dict[name].size(dim = -1)) or ((len(cstate_dict[name0].size()) ==1) and (len(state_dict[name].size())==1))):
+                    ntens = state_dict[name][:cstate_dict[name0].size(dim = 0)]
+                cstate_dict[name0] = ntens
+            
     model.load_state_dict(cstate_dict)
     
 
 # For custom data sets that that also return the indices for the batch
 class MyDataset(Dataset):
-    def __init__(self, data, targets):
+    def __init__(self, data, targets, axis = 0):
         self.data = data
         self.targets = targets
+        self.axis = axis
         
     def __getitem__(self, index):
-        x = self.data[index]
         y = self.targets[index]
-        return self.data[index], self.targets[index], index
+        if self.axis == 0:
+            x = self.data[index]
+        elif self.axis == 1:
+            x = [dx[index] for dx in self.data]
+        return x, y, index
         
     def __len__(self):
-        return len(self.data)
+        return len(self.targets)
         
 # Either use cpu or use gpu with largest free memory
 def get_device():

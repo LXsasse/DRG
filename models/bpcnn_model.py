@@ -22,36 +22,12 @@ from output import print_averages, save_performance, plot_scatter
 from functions import dist_measures
 from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance 
 from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters
-from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict
+from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, final_convolution
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
 from output import add_params_to_outname
 
-# Include customized non-linear Convolutions: 
-    # CNN network for each convolution, can be interpreted as one complex motif, should not sum over all positions but instead put them into a fully connected network and only sum at the end. So that this network creates outputs for each position instead of the convolution operation
-
-# Include customized pooling to enable equivariant detection of motifs and their distances to each other (either: max, mean, conv_pooling, multiply_pooling(see below)) that incorporates several pooling patterns: several sizes, but also sizes with gaps ( similar to gapped_conv)
-
-# multiply_pooling: instead of summing as in mean, multiply every positon with each other (similar to attention) or every kernel with each other and then sum across to get 1Xkernel representation
-
-# Problem of scales: 
-    #Some Genes have high basis expression (reason are a bunch of TFs)
-    # Changes in there will have higher impact than for small TFs, so we need:
-        # We should train on several scalings across classes to help starting layers with feature extraction, log(1+c) and log(1+c/1+low_reference) or log(c/medium_reference)
-        # This emphasizes changes in one output and the base-state in the other. This will help overall because TFs that are important in base state may be important in change state for another gene
-        # INCLUDE all different normalizations to get best result for data that you're most interested in
-    
-    
-    # How can we include ATTAC-seq into per gene expression:
-        # could add attac signal to onehot encoded input
-        # could add first few principal components of attac to signal (probably NMF)
-        # Could split network at a point, into per gene prediction and per window prediction to predict attac signal
-        
-    # How to include other signals:
-        # include further tracks
-        # Similar to ATTAC-seq track: Need to split network after a few initial layers
-        # at the point where initial inputs represent the region for the epigenetic mark
 
 
 
@@ -59,9 +35,9 @@ from output import add_params_to_outname
 
 
 # highly flexible Convolutional neural network architecture
-class cnn(nn.Module):
-    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, n_classes = 1, l_seqs = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = True, mean_pooling = False, pooling_size = None, pooling_steps = None, dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = None, dilmean_pooling = None, dilpooling_size = None, dilpooling_steps = None, dilpooling_residual = 1, dilresidual_entire = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, maxpool_attention = 0, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = False, trmean_pooling = False, trpooling_size = None, trpooling_steps = None, trpooling_residual = 1, trresidual_entire = False, nfc_layers = 0, nfc_residuals = 0, fc_function = None, layer_widening = 1.1, interaction_layer = False, neuralnetout = 0, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
-        super(cnn, self).__init__()
+class bpcnn(nn.Module):
+    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, pooling_size = None, pooling_steps = None, dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = None, dilmean_pooling = None, dilpooling_size = None, dilpooling_steps = None, dilpooling_residual = 1, dilresidual_entire = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, maxpool_attention = 0, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = False, trmean_pooling = False, trpooling_size = None, trpooling_steps = None, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
+        super(bpcnn, self).__init__()
         
         # Set seed for all random processes in the model: parameter init and other dataloader
         torch.manual_seed(seed)
@@ -77,6 +53,9 @@ class cnn(nn.Module):
         
         self.n_features = n_features # Number of features in one-hot coding
         self.l_seqs = l_seqs # length of padded sequences
+        self.l_out = l_out # number of output regions per sequence
+        if self.l_out is None:
+            self.l_out = l_seqs
         self.n_classes = n_classes # output classes to predict
         
         self.shift_sequence = shift_sequence # During training sequences that are shifted by 'shift_sequence' positions will be added # either integer or array of shifts
@@ -227,18 +206,9 @@ class cnn(nn.Module):
         if self.dilated_convolutions == 0 and self.transformer_convolutions == 0:
              self.conv_increase = 1   
         
-        self.nfc_layers = nfc_layers # Number of fully connected ReLU layers after pooling before last layer
-        self.nfc_residuals = nfc_residuals # Number of layers after which residuals should be added
-        if fc_function is None:
-            fc_function = kernel_function
-        self.fc_function = fc_function # Non-linear transformation after each fully connected layer
-        if self.nfc_layers == 0:
-            self.fc_function = None
-        self.layer_widening = layer_widening # Factor by which number of parameters are increased for each layer
-        
-        self.interaction_layer = interaction_layer # If true last layer multiplies the values of all features from previous layers with each other and weights them for classifation or prediction
-        
-        self.neuralnetout = neuralnetout # Determines the number of fully connected residual layers that are created for each output class
+        self.final_kernel = final_kernel
+        self.final_strides = final_strides
+        self.predict_from_dist = predict_from_dist
         
         self.l2reg_last = l2reg_last # L2 norm for last layer
         self.l1reg_last = l1reg_last # L1 norm for last layer
@@ -442,44 +412,32 @@ class cnn(nn.Module):
             cdim = 0
             modellist = []
             for g, gap_c in enumerate(self.gapped_convs):
-                modellist.append(gap_conv(currdim, currlen, gap_c[2], gap_c[0], gap_c[1], stride=gap_c[3], batch_norm = self.batch_norm, dropout = self.dropout, residual = self.gapconv_residual, pooling= self.gapconv_pooling, activation_function = kernel_function))
-                cdim += gap_c[2] * modellist[-1].out_len
+                modellist.append(gap_conv(currdim, currlen, gap_c[2], gap_c[0], gap_c[1], stride=gap_c[3], batch_norm = self.batch_norm, dropout = self.dropout, residual = self.gapconv_residual, pooling= self.gapconv_pooling, edge_effect = True, activation_function = kernel_function))
+                cdim += gap_c[2]
+                currlen = modellist[-1].out_len
             currdim = cdim
-            self.gapped_convolutions = parallel_module(modellist)
-        else:
-            # If gapped convolutions is not used, the output is flattened
-            currdim = currdim * currlen
+            self.gapped_convolutions = parallel_module(modellist, flatten = False)
         
         if self.verbose:
-            print('Before FCL', currdim)
+            print('outclasses', n_classes, l_out)
         
-        # Initialize fully connected layers
-        if self.nfc_layers > 0:
-            self.nfcs = Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.nfc_layers, layer_widening = layer_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = self.fc_function, residual_after = self.nfc_residuals, bias = True)
-            
-        # Interaction layer multiplies every features with each other and accounts for non-linearities explicitly, often dimension gets to big to use. Parameters are of dimension d + d*(d-1)/2
-        
-        if self.verbose:
-            print('outclasses', n_classes)
-        
+        if l_out > currlen:
+            print(currlen, 'less than l_out\nMake sure that currlen is larger than l_out')
+            sys.exit()
+        cutedges = None
+        if currlen > l_out:
+            cutedges = [int(np.floor((currlen-l_out)/2)), int(np.ceil((currlen-l_out)/2))]
+            print(currlen, 'larger than l_out\nMake sure the outputs are correctly aligned to the input regions if edges are cut', cutedges)
+
         classifier = OrderedDict()
-        if self.batch_norm:
-            classifier['ClassBnorm'] = nn.BatchNorm1d(currdim)
-            
-        if self.interaction_layer:
-            classifier['Interaction_layer'] = interaction_module(currdim, n_classes, classes = self.outclass)
-        elif self.neuralnetout > 0:
-            classifier['Neuralnetout'] = Res_FullyConnect(currdim, outdim = 1, n_classes = n_classes, n_layers = self.neuralnetout, layer_widening = 1.1, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = self.fc_function, residual_after = 1)
-        else:
-            classifier['Linear'] = nn.Linear(currdim, n_classes)
+        classifier['Linear'] = final_convolution(currdim, n_classes, self.final_kernel, cut_sites = cutedges, strides = self.final_strides, batch_norm = self.batch_norm, predict_from_dist = self.predict_from_dist)
         
         if self.outclass == 'Class':
             classifier['Sigmoid'] = nn.Sigmoid()
         elif self.outclass == 'Multi_class':
-            classifier['Softmax'] = nn.Softmax()
-        elif self.outclass == 'Complex':
-            classifier['Complex'] = Complex(n_classes)
-        
+            classifier['Softmax'] = nn.Softmax(dim = 2)
+        elif self.outclass != 'Linear':
+            classifier['OUTFUNC'] = func_dict[self.outclass]
         self.classifier = nn.Sequential(classifier)
         
    
@@ -547,18 +505,9 @@ class cnn(nn.Module):
         
         if self.gapped_convs is not None:
             pred = self.gapped_convolutions(pred)
-        else:
-            pred = torch.flatten(pred, start_dim = 1, end_dim = -1)
         
-        if location == '5':
+        if location == '-1' or location == '5':
             return torch.flatten(pred, start_dim = 1)
-        
-        if self.nfc_layers > 0:
-            pred = self.nfcs(pred)
-        
-        if location == '-1' or location == '6':
-            return torch.flatten(pred, start_dim = 1)
-        
         pred = self.classifier(pred)
         return pred
     
@@ -575,11 +524,6 @@ if __name__ == '__main__':
     inputfile = sys.argv[1]
     outputfile = sys.argv[2]
     
-    # Delimiter for values in output file
-    delimiter = ','
-    if '--delimiter' in sys.argv:
-        delimiter = sys.argv[sys.argv.index('--delimiter')+1]
-    
     # Whether to assign a different regional channel for each input file
     aregion = True
     if '--regionless' in sys.argv:
@@ -590,26 +534,18 @@ if __name__ == '__main__':
     if '--realign_input' in sys.argv:
         mirror = True
     
-    # Whether to combine input files into a single input or keep them split as input for multiple networks
-    combinput = True
-    if '--combine_network' in sys.argv:
-        combinput = False
-    
     # select output tracks to refine network or only train on a specific track from the beginning
     select_track = None
     if '--select_tracks' in sys.argv:
         select_track = sys.argv[sys.argv.index('--select_tracks')+1]
         select_track, select_test = read_separated(select_track)
         
-    X, Y, names, features, experiments = readin(inputfile, outputfile, delimiter = delimiter,return_header = True, assign_region = aregion, mirrorx = mirror, combinex = combinput)
-    
-    
-    if ',' in inputfile:
-        inputfiles = inputfile.split(',')
-        inputfile = inputfiles[0]
-        for inp in inputfiles[1:]:
-            inputfile = create_outname(inp, inputfile, lword = 'and')
-            
+    X, Y, names, features, experiments = readin(inputfile, outputfile, return_header = True, assign_region = aregion, mirrorx = mirror)
+
+    # filter counts with 0 entries
+    ymask = np.sum(Y,axis = (1,2)) >0
+    X, Y, names = X[ymask], Y[ymask], names[ymask]
+
     outname = create_outname(inputfile, outputfile) 
     if '--regionless' in sys.argv:
         outname += '-rgls'
@@ -630,14 +566,6 @@ if __name__ == '__main__':
         outname = sys.argv[sys.argv.index('--outname')+1]
     
     # reads in file that had locations and type of mutations, currently not able to handle mirror=True or multiple inputs, needs to be adjusted to common vcf file format
-    weights = None
-    if '--mutation_file' in sys.argv:
-        mutfile = sys.argv[sys.argv.index('--mutation_file')+1]
-        X,Y,names,experiments,weights = read_mutationfile(mutfile,X,Y,names,experiments)
-        if sys.argv[sys.argv.index('--mutation_file')+2] != 'weighted':
-            weights = None
-        outname = create_outname(mutfile, outname+'.dat', lword = 'with')
-        print(outname)
 
     if '--crossvalidation' in sys.argv:
         folds = check(sys.argv[sys.argv.index('--crossvalidation')+1])
@@ -666,23 +594,27 @@ if __name__ == '__main__':
         print('Test', len(testset), testset)
         print('Val', len(valset))
     
+    
+    if '--maketestvalset' in sys.argv:
+        testset = valset
+        print('Set testset to validation set')
+    
     if '--RANDOMIZE' in sys.argv:
         # randomly permute data and see if model can learn anything
         outname +='_RNDM'
         permute = np.permute(len(X))
         Y = Y[permute]
-        
     
     if '--norm2output' in sys.argv:
         print ('ATTENTION: output has been normalized along data points')
         outname += '-n2out'
-        outnorm =np.sqrt(np.sum(Y*Y, axis = 1))[:, None] 
+        outnorm =np.sqrt(np.sum(np.sum(Y*Y, axis = (1,2))))[:, None, None] 
         Y = Y/outnorm
         
     elif '--norm2outputclass' in sys.argv:
         print('ATTENTION: output has been normalized along data classess')
         outname += '-n2outc'
-        outnorm =np.sqrt(np.sum(Y*Y, axis = 0))
+        outnorm =np.sqrt(np.sum(Y*Y, axis = (0,2)))
         Y = Y/outnorm
     
     pfms = None
@@ -723,7 +655,8 @@ if __name__ == '__main__':
         params['device'] = get_device()
         if '+' in parameters:
             parameters = parameters.split('+')
-            params['n_classes'] = np.shape(Y)[-1]
+            params['n_classes'] = np.shape(Y)[-2]
+            params['l_out'] = np.shape(Y)[-1]
         
         elif os.path.isfile(parameters):
             parameterfile = parameters.replace('model_params.dat', 'parameter.pth')
@@ -746,7 +679,8 @@ if __name__ == '__main__':
                     parameters.append(sys.argv[sys.argv.index('--cnn')+2])
         else:
             parameters = [parameters]
-            params['n_classes'] = np.shape(Y)[-1]
+            params['n_classes'] = np.shape(Y)[-2]
+            params['l_out'] = np.shape(Y)[-1]
         
         for p in parameters:
             if ':' in p and '=' in p:
@@ -759,9 +693,13 @@ if __name__ == '__main__':
         params['outname'] = outname
         print('Device', params['device'])
         params['n_features'], params['l_seqs'] = np.shape(X)[-2], np.shape(X)[-1]
-        model = cnn(**params)
-        
-    if weights is not None:
+        model = bpcnn(**params)
+       
+    weights = None
+    if '--sample_weights' in sys.argv:
+        weights = np.genfromtxt(sys.argv[sys.argv.index('--sample_weights')+1], dtype = str)
+        weights = weights[np.sort(weights[:,0])]
+        weights = weights[np.isin(weights[:,0], names), 1].astype(float)
         weights = weights[trainset]
             
     
@@ -827,7 +765,6 @@ if __name__ == '__main__':
     
     if train_model:
         model.fit(X[trainset], Y[trainset], XYval = [X[valset], Y[valset]], sample_weights = weights)
-    
     Y_pred = model.predict(X[testset])
     
     if '--norm2output' in sys.argv:
@@ -854,7 +791,7 @@ if __name__ == '__main__':
             testclasses = testclasses[tsort][:,1]
         else:
             testclasses = np.zeros(len(Y[0]), dtype = np.int8).astype(str)
-        
+            
         # Sometimes we're not interested in the reconstruction for all genes in the training set and we can define a set of genes that we're most interested in
         if '--significant_genes' in sys.argv:
             siggenes = np.genfromtxt(sys.argv[sys.argv.index('--significant_genes')+1], dtype = str)
@@ -872,7 +809,13 @@ if __name__ == '__main__':
         
     if '--save_predictions' in sys.argv:
         print('SAVED', outname+'_pred.txt')
-        np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
+        np.savez_compressed(outname+'_pred.npz', names = names[testset], counts = Y_pred)
+    
+    if '--save_trainpredictions' in sys.argv:
+        print('SAVED training', outname+'_trainpred.txt')
+        Y_predtrain = model.predict(X[trainset])
+        np.savez_compressed(outname+'_trainpred.npz', names = names[trainset], counts = Y_predtrain)
+    
     
     # Generate PPMs for kernels
     if '--convertedkernel_ppms' in sys.argv:
@@ -925,23 +868,7 @@ if __name__ == '__main__':
             np.savetxt(outname+'_kernel_importance_test.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), motifimpact], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
             np.savetxt(outname+'_kernel_impact_test.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), impact_direction], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
             
-            
-
-
-    # plots scatter plot for each output class
-    if '--plot_correlation_perclass' in sys.argv:
-        plot_scatter(Y[testset], Y_pred, xlabel = 'Measured', ylabel = 'Predicted', titles = experiments, include_lr = False, outname = outname + '_class_scatter.jpg')
-        
-    # plots scatter plot fo n_genes that within the n_genes quartile
-    if '--plot_correlation_pergene' in sys.argv:
-        n_genes = int(sys.argv['--plot_correlation_pergene'])
-        for tclass in np.unique(testclasses):
-            correlation_genes = correlation(Ytest[np.random.permutation(len(Ytest))][:,consider], Y_pred[:,consider], axis = 1)
-            sort = np.argsort(correlation_genes)
-            posi = np.linspace(0,len(correlation_genes), n_genes).astype(int)
-            i = sort[posi] 
-            plot_scatter(Y[test][i].T, Ypred[i].T, xlabel = 'Measured', ylabel = 'Predicted', titles = names[testset][i], outname = outname + '_gene_scatter.jpg')
-         
+    
 
     
     

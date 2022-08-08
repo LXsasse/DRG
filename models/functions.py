@@ -1,8 +1,19 @@
 import numpy as np
 
+def relative_absolute(ypred, ytarget, axis = None):
+    ynorm = np.copy(ytarget)
+    ynorm[ynorm ==0] = 1
+    dist = np.absolute(ytarget - ypred)/ytarget
+    dist = np.mean(dist, axis = axis)
+    return dist
+
+
 # mean squared error between two arrays q and p
-def mse(q,p, axis = None):
-    return np.mean((q-p)**2, axis = axis)
+def mse(q,p, axis = None, sqrt = True):
+    ms = np.mean((q-p)**2, axis = axis)
+    if sqrt:
+        ms = np.sqrt(ms)
+    return ms
 
 #axis = 1 is correlation along columns, so for axis = 0
 def correlation(y1, y2, axis = 1, ctype = 'pearson', distance = True):

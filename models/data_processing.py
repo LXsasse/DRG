@@ -10,9 +10,8 @@ from functools import reduce
 
 
 
-def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_region = True, n_features = 4, combinex = True, mirrorx = False, select_track = None):
-    if select_track is not None:
-        return_header = True
+def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_region = True, n_features = 4, combinex = True, mirrorx = False):
+
     if ',' in inputfile:
         inputfiles = inputfile.split(',')
         X = []
@@ -75,46 +74,67 @@ def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_
             if mirrorx:
                 X = realign(X)
         else: # For fastafiles create onehot encoding 
+            arekmers = False
             inputnames, inseqs = readinfasta(inputfile)
             X, inputfeatures = quick_onehot(inseqs)
             if mirrorx:
                 X = realign(X)
-    
-    Yin = np.genfromtxt(outputfile, dtype = str, delimiter = delimiter)
-    Y, outputnames = Yin[:, 1:].astype(float), Yin[:,0]
+    if os.path.isfile(outputfile):
+        if os.path.splitext(outputfile)[1] == '.npz':
+            Yin = np.load(outputfile, allow_pickle = True)
+            Y, outputnames = Yin['counts'], Yin['names'] # Y should of shape (nexamples, nclasses, l_seq/n_resolution)
+        else:
+            Yin = np.genfromtxt(outputfile, dtype = str, delimiter = delimiter)
+            Y, outputnames = Yin[:, 1:].astype(float), Yin[:,0]
+        hasoutput = True
+    else:
+        print(outputfile, 'not a file')
+        hasoutput = False
+        Y, outputnames = None, None
     #eliminate data points with no features
     if arekmers and combinex:
         Xmask = np.sum(X*X, axis = 1) > 0
         X, inputnames = X[Xmask], inputnames[Xmask]
     
-    sortx = np.argsort(inputnames)[np.isin(np.sort(inputnames), outputnames)]
-    sorty = np.argsort(outputnames)[np.isin(np.sort(outputnames), inputnames)]
+    
+    sortx = np.argsort(inputnames)
+    if hasoutput:
+        sortx = sortx[np.isin(np.sort(inputnames), outputnames)]
+        sorty = np.argsort(outputnames)[np.isin(np.sort(outputnames), inputnames)]
+        
     if combinex:
         X, inputnames = X[sortx], inputnames[sortx]
     else:
         X, inputnames = [x[sortx] for x in X], inputnames[sortx]
-    Y, outputnames = Y[sorty], outputnames[sorty]
-    if return_header:
-        header = open(outputfile, 'r').readline()
-        if '#' in header:
-            header = header.strip('#').strip().split(delimiter)
+    if hasoutput:
+        Y, outputnames = Y[sorty], outputnames[sorty]
+    
+    if return_header and hasoutput:
+        if os.path.splitext(outputfile)[1] == '.npz':
+            if 'celltypes' in Yin.files:
+                header = Yin['celltypes']
+            else:
+                header = ['C'+str(i) for i in range(np.shape(Y)[1])]
         else:
-            header = ['C'+str(i) for i in range(np.shape(Y)[1])]
+            header = open(outputfile, 'r').readline()
+            if '#' in header:
+                header = header.strip('#').strip().split(delimiter)
+            else:
+                header = ['C'+str(i) for i in range(np.shape(Y)[1])]
         header = np.array(header)
     else:
         header  = None
-    if select_track is not None:
-        headermask = [np.array([se in h for se in select_track]).any() for h in header]
-        headermask = np.isin(header,select_track)
-        Y = Y[:,headermask]
-        header = header[headermask]
     
     if not arekmers:
         if combinex:
             X = np.transpose(X, axes = [0,2,1])
         else:
             X = [np.transpose(x, axes = [0,2,1]) for x in X]
-    print('Input shapes', np.shape(X), np.shape(Y))
+    if combinex:
+        print('Input shapes', np.shape(X), np.shape(Y))
+    else:
+        print('Input shapes', [np.shape(x) for x in X], np.shape(Y))
+    
     
     return X, Y, inputnames, inputfeatures, header
 
@@ -128,7 +148,7 @@ def realign(X):
         Xmirror.append(xmir)
     return np.append(X, np.array(Xmirror), axis = -2)
 
-def readinfasta(fatafile, minlen = 10):
+def readinfasta(fastafile, minlen = 10, upper = True):
     obj = open(fastafile, 'r').readlines()
     genes = []
     sequences = []
@@ -137,10 +157,26 @@ def readinfasta(fatafile, minlen = 10):
             sequence = obj[l+1].strip()
             if sequence != 'Sequence unavailable' and len(sequence) > minlen:
                 genes.append(line[1:].strip())
+                if upper:
+                    sequence = sequence.upper()
                 sequences.append(sequence)
     sortgen = np.argsort(genes)
     genes, sequences = np.array(genes)[sortgen], np.array(sequences)[sortgen]
     return genes, sequences
+
+def seqlen(arrayofseqs):
+    return np.array([len(seq) for seq in arrayofseqs])
+
+def check_addonehot(onehotregion, shapeohvec1, selen):
+    # check conditions if one-hot encoded regions can be added
+    addonehot = False
+    if onehotregion is not None:
+        if np.shape(onehotregion)[1] == shapeohvec1 :
+            addonehot = True
+        else:
+            print("number of genetic regions do not match sequences")
+            sys.exit()
+    return addonehot
 
 # generates one-hot encoding by comparing arrays
 def quick_onehot(sequences, nucs = 'ACGT', wildcard = None, onehotregion = None, align = 'left'):
@@ -256,8 +292,8 @@ def create_sets(n_samples, folds, fold, seed = 1010, Yclass = None, genenames = 
             if line[0] != '#':
                 line = line.strip().split()
                 sets.append(np.where(np.isin(genenames,line))[0])
-        testset = sets[fold]
-        valset = sets[(fold+1)%len(sets)]
+        testset = sets[fold+1]
+        valset = sets[fold]
         trainset = np.delete(np.arange(len(genenames), dtype = int),np.append(testset,valset))
     return trainset, testset, valset
 
@@ -265,7 +301,7 @@ def create_sets(n_samples, folds, fold, seed = 1010, Yclass = None, genenames = 
 
 # Combine filenames to a new output file name, removing text that is redundant in both filenames    
 def create_outname(name1, name2, lword = 'on'):
-    name1s = os.path.split(name1)[1].replace('.dat','').replace('.txt','').replace('.npz','').replace('.list','').replace('.csv','').replace('.tsv','').replace('.tab','').replace('-', "_").split('_')
+    name1s = os.path.split(name1)[1].replace('.dat','').replace('.hmot','').replace('.txt','').replace('.npz','').replace('.list','').replace('.csv','').replace('.tsv','').replace('.tab','').replace('-', "_").replace('.fasta','').replace('.fa','').split('_')
     name2s = name2.replace('-', "_").split('_')
     diffmask = np.ones(len(name1s)) == 1
     for n, na1 in enumerate(name1s):
@@ -273,7 +309,9 @@ def create_outname(name1, name2, lword = 'on'):
             if na1 in na2:
                 diffmask[n] = False
     diff = np.array(name1s)[diffmask]
-    outname = os.path.split(name2)[1].replace('.dat','').replace('.txt','').replace('.npz','').replace('.list','').replace('.csv','').replace('.tsv','').replace('.tab','')+'_'+lword+'_'+'_'.join(diff)
+    outname = os.path.split(name2)[1].replace('.dat','').replace('.hmot','').replace('.txt','').replace('.npz','').replace('.list','').replace('.csv','').replace('.tsv','').replace('.tab','').replace('.fasta','').replace('.fa','')
+    if len(diff) > 0:
+        outname+=lword+'_'.join(diff)
     return outname
 
 
@@ -316,7 +354,7 @@ def check(inbool):
     else:
         inbool = numbertype(inbool)
     return inbool
-
+'''
 # Read text files with PWMs
 def read_pwm(pwmlist):
     names = []
@@ -338,6 +376,30 @@ def read_pwm(pwmlist):
             pwms.append(np.array(pwm).T)
             pwm = []
     return pwms, names
+'''
+# Read text files with PWMs
+def read_pwm(pwmlist, nameline = 'Motif'):
+    names = []
+    pwms = []
+    pwm = []
+    obj = open(pwmlist, 'r').readlines()
+    for l, line in enumerate(obj):
+        line = line.strip().split('\t')
+        if ((len(line) == 0) or (line[0] == '')) and len(pwm) > 0:
+            pwm = np.array(pwm, dtype = float)
+            pwms.append(np.array(pwm))
+            pwm = []
+            names.append(name)
+        elif len(line) > 0:
+            if line[0] == nameline:
+                name = line[1]
+                pwm = []
+            elif line[0] == 'Pos':
+                nts = line[1:]
+            elif isinstance(numbertype(line[0]), int):
+                pwm.append(line[1:])
+        
+    return pwms, names
 
 def rescale_pwm(pfms, infcont = False, psam = False, norm = False):
     pwms = []
@@ -346,7 +408,9 @@ def rescale_pwm(pfms, infcont = False, psam = False, norm = False):
             pwm = np.log2((pwm+0.001)*float(len(pwm)))
             pwm[pwm<0] = 0
         if psam:
-            pwm = pwm/np.amax(pwm, axis = 0)
+            pnorm = np.amax(pwm, axis = 0)
+            pnorm[pnorm == 0] = 1
+            pwm = pwm/pnorm
         pwms.append(pwm)
     if norm:
         len_pwms = [np.sum(pwm) for pwm in pwms]
