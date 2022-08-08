@@ -8,14 +8,36 @@ from torch.nn.parameter import Parameter
 import math
 import torch.nn.functional as F
 
+class EXPmax(nn.Module):
+    def __init__(self, crop_max = 128):
+        super(EXPmax, self).__init__()
+        self.cmax = np.log(crop_max)
+        self.thresh = nn.Threshold(-self.cmax, -self.cmax)
+    def forward(self, x):
+        x = -self.thresh(-x)
+        return torch.exp(x)
 
+class POWmax(nn.Module):
+    def __init__(self, crop_max = 128, exponent = 2):
+        super(POWmax, self).__init__()
+        self.cmax = crop_max**(1./exponent)
+        self.thresh = nn.Threshold(-self.cmax, -self.cmax)
+        self.exponent
+    def forward(self, x):
+        x = -self.thresh(-x)
+        return torch.pow(x, self.exponent)
+
+    
 
 func_dict = {'ReLU': nn.ReLU(), 
              'GELU': nn.GELU(),
              'Sigmoid': nn.Sigmoid(),
              'Tanh': nn.Tanh(),
              'Id0': nn.Identity(),
-             'Softmax' : nn.Softmax()}
+             'Softmax' : nn.Softmax(),
+             'EXP' : EXPmax(),
+             'SQUARED': POWmax(exponent = 2),
+             'THIRD': POWmax(exponent = 3)}
 
 class fcc_convolution(nn.Module):
     def __init__(self, n_in, n_out, l_kernel, n_layers, connect_function = 'GELU'):
@@ -31,38 +53,134 @@ class fcc_convolution(nn.Module):
 # Second layer of gapped convolutions for interactions (e.g. 10,20,30.. gap, 5 conv each side, 6 convolutions for each)
 # Gapped convolutions have gap between two convolutional filters: 
 class gap_conv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, kernel_gap, stride=1):
+    def __init__(self, in_channels, in_len, out_channels, kernel_size, kernel_gap, stride=1, pooling = False, residual = False, batch_norm = False, dropout= 0., edge_effect = True, activation_function = 'GELU'):
         super(gap_conv, self).__init__()
         # kernel_size defines the size of two kernels on each side of the gap
         self.kernel_gap = kernel_gap
         self.kernel_size = kernel_size
-        self.leftcov = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, bias = True)
-        self.rightcov = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, bias = True)
+        self.edge_effect = edge_effect
         
+        if batch_norm:
+            #batchnorm before giving input to 
+            self.batch_norm = nn.BarchNorm1d(in_channels)
+        
+        padding = int(np.floor(kernel_size/2))
+        self.leftcov = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, bias = True, padding = padding)
+        self.rightcov = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, bias = True, padding = padding)
+        
+        self.out_len = int(np.floor((in_len + 2*padding - kernel_size)/stride +1))
+        
+        self.pooling = None
+        if pooling: # pooling max
+            pooling_padding = int(np.ceil((kernel_size - self.out_len%int(kernel_size/2))*int(self.out_len%int(kernel_size/2)>0)/2))
+            self.pooling = nn.MaxPool1d(kernel_size, stride = int(kernel_size/2), padding = pooling_padding)
+            self.kernel_gap = int(self.kernel_gap/int(kernel_size/2))
+            self.kernel_size = int(self.kernel_size/int(kernel_size/2))
+            # pool with kernel_size but stride kernel_size/2
+            # gap becomes gap*2/kernelsize 
+            self.out_len = int((self.out_len+2*pooling_padding-kernel_size)/int(kernel_size/2))+1
+        if not self.edge_effect:
+            self.out_len = self.out_len - self.kernel_gap - self.kernel_size
+        
+        self.residual = None
+        if residual:
+            self.residual = OrderedDict()
+            if in_channels != out_channels:
+                self.residual['ResConv'] = nn.Conv1d(in_channels, out_channels, kernel_size = 1, bias = False)
+            self.residual['AvgPool'] = nn.AvgPool1d(kernel_size, stride = stride, padding = padding, count_include_pad=False)
+            self.residual = nn.Sequential(self.residual)
+            #add residual to every to every gapped kernel 
+        self.dropout = None
+        if dropout > 0:
+            self.dropout = nn.Dropout(dropout)
+            
+        self.act_func = func_dict[activation_function]
+    
     def forward(self, x):
         """
         Forward propagation of a batch.
         """
-        outleft = self.leftcov(x[:,:,:-self.kernel_gap-self.kernel_size]) # returns tensor of shape nseq, lseq-lker+1, nkernel
-        outright = self.rightcov(x[:,:,self.kernel_gap+self.kernel_size:])
-        #print(outleft.size(), outright.size())
-        out = outleft + outright
+        outleft = self.leftcov(x)
+        outright = self.rightcov(x)
+        if self.pooling is not None:
+            outleft = self.pooling(outleft)
+            outright = self.pooling(outright)
+        if self.edge_effect:
+            out = F.pad(outleft, (self.kernel_gap+self.kernel_size,0)) + F.pad(outright, (0, self.kernel_gap+self.kernel_size))
+        else:
+            out = outleft[:,:,:-self.kernel_gap-self.kernel_size] + outright[:,:,self.kernel_gap+self.kernel_size:]
+        out = self.act_func(out)
+        if self.residual is not None:
+            res = self.residual(x)
+            if self.pooling is not None:
+                res = self.pooling(res)
+            if self.edge_effect:
+                # instead of using this, we can just pad them on different sides
+                res = F.pad(res, (self.kernel_gap+self.kernel_size, 0)) + F.pad(res, (0, self.kernel_gap+self.kernel_size))
+            else:
+                res = res[:,:,:-self.kernel_gap-self.kernel_size] + res[:,:,self.kernel_gap+self.kernel_size:]
+            out = out + res
         return out
 
 # parallel module execute a list of modules with the same input and concatenate their output after flattening the last dimensions
 class parallel_module(nn.Module):
-    def __init__(self, modellist):
+    def __init__(self, modellist, flatten = True):
         super(parallel_module, self).__init__()
         self.modellist = nn.ModuleList(modellist)
+        self.flatten = True
+        if not self.flatten:
+            outlens = len(np.unique([m.out_len for m in self.modellist])) == 1
+            if not outlens:
+                raise Warning("Module outputs cannot be concatenated along dim = -1")
         
     def forward(self, x):
         out = []
         for m in self.modellist:
             outadd = m(x)
-            out.append(torch.flatten(m(x), start_dim = 1, end_dim = -1))
-            
-        out = torch.cat(out, dim = 1)
+            if self.flatten:
+                out.append(torch.flatten(m(x), start_dim = 1, end_dim = -1))
+            else:
+                out.append(m(x))
+        out = torch.cat(out, dim = -1)
         return out
+
+
+
+class final_convolution(nn.Module):
+    def __init__(self, indim, out_classes, l_kernels, cut_sites = None, strides = 1, bias = True, batch_norm = False, padding = 'same', predict_from_dist = True):
+        super(final_convolution, self).__init__()
+        
+        self.batch_norm = batch_norm
+        self.cut_sites = cut_sites
+        if self.cut_sites is None:
+            self.cut_sites = [0,0]
+        elif isinstance(self.cut_sites,int):
+            self.cut_sites = [cut_sites, cut_sites]
+        else:
+            self.cut_sites = cut_sites
+        if batch_norm:
+            self.Bnorm = self.nn.BatchNorm1d(currdim)
+
+        self.predict_from_dist = predict_from_dist
+        if self.predict_from_dist:
+            self.cpred = nn.Linear(indim, out_classes)
+            self.spred = nn.Softmax(dim = -1)
+        
+        if padding == 'same':
+            convpad = int(np.floor(l_kernels/2))
+        self.fconvlayer = nn.Conv1d(indim, out_classes, kernel_size = l_kernels, bias = bias, stride = strides, padding = convpad)
+    
+    def forward(self, x):
+        if self.batch_norm:
+            x = self.Bnorm(x)
+        x = self.fconvlayer(x)
+        x = x[..., self.cut_sites[0]:x.size(dim=-1)-self.cut_sites[1]]
+        if self.predict_from_dist:
+            mx = x.mean(dim = -1)
+            mcounts = self.cpred(mx)
+            x = self.spred(x)
+            x = x * mcounts.unsqueeze(-1)
+        return x
 
 
 # Interaction module creates non-linear interactions between all features by multiplying them with each other and then multiplies a weight matrix to them
@@ -93,7 +211,7 @@ class interaction_module(nn.Module):
 
 # Custom pooling layer that can max and mean pool 
 class pooling_layer(nn.Module):
-    def __init__(self, max_pooling, mean_pooling = False, conv_pooling = False, pooling_size = None, stride = None):
+    def __init__(self, max_pooling, mean_pooling = False, conv_pooling = False, pooling_size = None, stride = None, padding = 0):
         super(pooling_layer, self).__init__()
         self.mean_pooling = mean_pooling
         self.max_pooling = max_pooling
@@ -103,17 +221,17 @@ class pooling_layer(nn.Module):
             stride = pooling_size
         
         if mean_pooling and max_pooling:
-            self.poola = nn.AvgPool1d(pooling_size, stride=stride)
-            self.poolb = nn.MaxPool1d(pooling_size, stride=stride)
+            self.poola = nn.AvgPool1d(pooling_size, stride=stride, padding = padding, count_include_pad = False)
+            self.poolb = nn.MaxPool1d(pooling_size, stride=stride, padding = padding )
             
         elif max_pooling and not mean_pooling:
-            self.pool = nn.MaxPool1d(pooling_size, stride=stride)
+            self.pool = nn.MaxPool1d(pooling_size, stride=stride, padding = padding)
         
         elif mean_pooling and not max_pooling:
-            self.pool = nn.AvgPool1d(pooling_size, stride=stride)
+            self.pool = nn.AvgPool1d(pooling_size, stride=stride, padding = padding, count_include_pad = False)
 
         elif conv_pooling:
-            self.pool = nn.Conv1d(insize, insize, kernel_size = pooling_size, stride = stride, bias = False)
+            self.pool = nn.Conv1d(insize, insize, kernel_size = pooling_size, stride = stride, bias = False, padding = padding)
         
     def forward(self, barray):
         if self.mean_pooling and self.max_pooling:
@@ -128,11 +246,12 @@ class pooled_conv():
 
 # Module that computes the correlation as a loss function 
 class correlation_loss(nn.Module):
-    def __init__(self, dim = 0, reduction = 'mean'):
+    def __init__(self, dim = 0, reduction = 'mean', eps = 1e-8):
         super(correlation_loss, self).__init__()
         self.dim = dim
         self.reduction = reduction
-    
+        self.eps = eps
+        
     def forward(self, outy, tary):
         if self.dim == 0 :
             outy = outy - torch.mean(outy, dim = self.dim)[None, :]
@@ -140,27 +259,48 @@ class correlation_loss(nn.Module):
         else:
             outy = outy - torch.mean(outy, dim = self.dim)[:, None]
             tary = tary - torch.mean(tary, dim = self.dim)[:,None]
-        out = 1. - torch.sum(outy*tary, dim = self.dim)/torch.sqrt(torch.sum(outy**2, dim = self.dim) * torch.sum(tary**2, dim = self.dim))
+        out = 1. - torch.sum(outy*tary, dim = self.dim)/(self.eps+torch.sqrt(torch.sum(outy**2, dim = self.dim) * torch.sum(tary**2, dim = self.dim)))
         if self.reduction != 'none':
             if self.reduction == 'mean':
-                out = multi * torch.mean(out)
+                out = torch.mean(out)
             if self.reduction == 'sum':
                 out = torch.sum(out)
+        else:
+            out = out.unsqueeze(self.dim).expand(outy.size())
         return out
 
 # Loss with correlation along x and y axis, cannot use reduce
 class correlation_both(nn.Module):
-    def __init__(self, reduction = 'mean'):
+    def __init__(self, reduction = 'mean', ratio = 0.5):
         super(correlation_both, self).__init__()
         self.reduction = reduction
+        self.ratio = ratio
+        self.correlation0 = correlation_loss()
+        self.correlation1 = correlation_loss(dim = 1)
+    
     def forward(self, outy, tary):
-        outymean0, tarymean0 = outy - torch.mean(outy, dim = 0), tary - torch.mean(tary, dim = 0)
-        outymean1, tarymean1 = outy - torch.mean(outy, dim = 1)[:,None], tary - torch.mean(tary, dim = 1)[:,None]
-        if self.reduction == 'sum':
-            multi = float(outy.size(dim=0))
+        if self.reduction == 'none' or self.reduction == 'sum':
+            multi = float(np.prod(outy.size()))
         else:
             multi = 1.
-        return multi * torch.mean(1. - torch.sum(outymean1*tarymean1, dim = 1)/torch.sqrt(torch.sum(outymean1**2, dim = 1) * torch.sum(tarymean1**2, dim = 1))) + torch.mean(1. - torch.sum(outymean0*tarymean0, dim = 0)/torch.sqrt(torch.sum(outymean0**2, dim = 0) * torch.sum(tarymean0**2, dim = 0)))
+        return multi *(self.ratio* self.correlation1(outy, tary) + (1.-self.ratio)*self.correlation0(outy,tary))
+
+
+class correlation_mse(nn.Module):
+    def __init__(self, reduction = 'mean', ratio = 0.95, dimcorr = 1):
+        super(correlation_mse, self).__init__()
+        self.reduction = reduction
+        self.ratio = ratio
+        self.correlation0 = nn.MSELoss(reduction = 'mean')
+        self.correlation1 = correlation_loss(dim = dimcorr)
+    
+    def forward(self, outy, tary):
+        if self.reduction == 'none' or self.reduction == 'sum':
+            multi = float(np.prod(outy.size()))
+        else:
+            multi = 1.
+        return multi *(self.ratio* self.correlation1(outy, tary) + (1.-self.ratio)*self.correlation0(outy,tary))
+
         
 # Cosine loss along defined dimension
 class cosine_loss(nn.Module):
@@ -172,22 +312,27 @@ class cosine_loss(nn.Module):
         out = 1. - torch.sum(outy*tary, dim = self.dim)/torch.sqrt(torch.sum(outy**2, dim = self.dim) * torch.sum(tary**2, dim = self.dim))
         if self.reduction != 'none':
             if self.reduction == 'mean':
-                out = multi * torch.mean(out)
+                out = torch.mean(out)
             if self.reduction == 'sum':
                 out = torch.sum(out)
+        else:
+            out = out.unsqueeze(self.dim).expand(outy.size())
         return out
 
 # Cosine loss module for rows and columns
 class cosine_both(nn.Module):
-    def __init__(self, reduction = 'mean'):
+    def __init__(self, reduction = 'mean', ratio = 0.5):
         super(cosine_both, self).__init__()
         self.reduction = reduction
+        self.ratio = ratio
+        self.cosine0 = cosine_loss()
+        self.cosine1 = cosine_loss(dim = 1)
     def forward(self, outy, tary):
-        if self.reduction == 'sum':
-            multi = float(outy.size(dim=0))
+        if self.reduction == 'none' or self.reduction == 'sum':
+            multi = float(np.prod(outy.size()))
         else:
             multi = 1.
-        return multi * torch.mean(1. - torch.sum(outy*tary, dim = 0)/torch.sqrt(torch.sum(outy**2, dim = 0) * torch.sum(tary**2, dim = 0))) + torch.mean(1. - torch.sum(outy*tary, dim = 1)/torch.sqrt(torch.sum(outy**2, dim = 1) * torch.sum(tary**2, dim = 1)))
+        return multi * (self.ratio *self.cosine1(outy, tary) + (1.-self.ratio)*self.cosine0(outy, tary))
 
 # Dummy loss for unpenalized regression
 class zero_loss(nn.Module):
@@ -196,6 +341,116 @@ class zero_loss(nn.Module):
         
     def forward(self, outy, tary):
         return 0.
+
+# include possibility to use mse in window size Z, e.g 25 bp windows
+class JSD(nn.Module):
+    def __init__(self, sum_axis = -1, norm_last = True, reduction = 'none', eps = 1e-8, include_mse = True, mse_ratio = 10., mean_size = 25):
+        super(JSD, self).__init__()
+        self.kl = nn.KLDivLoss(reduction='none', log_target=True)
+        self.mse = None
+        if include_mse:
+            self.mse = nn.MSELoss(reduction = reduction)
+            self.mean_size = mean_size
+            self.meanpool = None    
+        self.mse_ratio = mse_ratio
+        self.sum_axis = sum_axis
+        self.norm_last = norm_last
+        self.reduction = reduction
+        self.eps = eps
+        
+    def forward(self, p: torch.tensor, q: torch.tensor):
+        if self.mse is not None:
+            if self.mean_size is None:
+                self.mean_size = p.size(dim = -1)
+            if self.meanpool is None:
+                self.meanpool = nn.AvgPool1d(self.mean_size, padding = int(p.size(dim = -1)%self.mean_size)/2, count_include_pad = False)
+            pn = p.mean(dim = -1).unsqueeze(-1).expand(p.size())
+            qn = q.mean(dim = -1).unsqueeze(-1).expand(q.size())
+            
+        p = p-torch.min(p,dim =-1)[0].unsqueeze(dim=-1)
+        q = q-torch.min(q,dim =-1)[0].unsqueeze(dim=-1)
+        if self.norm_last:
+            normp, normq = p.sum(dim = -1)[...,None], q.sum(dim = -1)[...,None]
+            normp[normp == 0] = 1.
+            normq[normq == 0] = 1.
+            p = p/normp
+            q = q/normq
+        m = (0.5 * (p + q) + self.eps).log()
+        p = (p+self.eps).log()
+        q = (q+self.eps).log()
+        kl = 0.5 * (self.kl(m, p) + self.kl(m, q)) 
+        if self.sum_axis is not None:
+            klsize = kl.size()
+            if self.sum_axis == -1:
+                self.sum_axis = len(klsize) -1
+            kl = kl.sum(dim = self.sum_axis)
+            if self.reduction == 'none':
+                kl = kl.unsqueeze(self.sum_axis).expand(klsize) #self.expand)
+        if self.mse is not None:
+            kl = kl + self.mse_ratio* self.mse(pn, qn)
+        return kl
+
+
+class LogMSELoss(nn.Module):
+    def __init__(self, reduction = 'none', eps = 1., log_prediction = False):
+        super(LogMSELoss, self).__init__()
+        self.mse = nn.MSELoss(reduction = reduction)
+        self.eps = eps
+    def forward(self, p, q):
+        minq = torch.min(q,dim =-1)[0]
+        q = q-minq.unsqueeze(-1)
+        q =torch.log(q+self.eps)
+        if self.log_prediction:
+            p = p-minp.unsqueeze(-1)
+            minp = torch.min(p,dim =-1)[0]
+            p =torch.log(p+self.eps)
+        return self.mse(p,q)
+    
+class LogL1Loss(nn.Module):
+    def __init__(self, reduction = 'none', eps = 1.):
+        super(LogL1Loss, self).__init__()
+        self.mse = nn.L1Loss(reduction = reduction)
+        self.eps = eps
+    def forward(self, p, q):
+        minp = torch.min(p,dim =-1)[0]
+        minq = torch.min(q,dim =-1)[0]
+        p = p-minp.unsqueeze(-1)
+        q = q-minq.unsqueeze(-1)
+        p =torch.log(p+self.eps)
+        q =torch.log(q+self.eps)
+        return self.mse(p,q)   
+        
+class LogCountDistLoss(nn.Module):
+    def __init__(self, reduction = 'none', eps = 1., log_counts = False, sum_counts = True, ratio = 10.):
+        super(LogCountDistLoss, self).__init__()
+        self.mse = nn.MSELoss(reduction = reduction)
+        self.eps = eps
+        self.log_counts = log_counts
+        self.sum_counts = sum_counts
+        self.ratio = ratio
+    def forward(self, p, q):
+        minp = torch.min(p,dim =-1)[0]
+        minq = torch.min(q,dim =-1)[0]
+        pn = p-minp.unsqueeze(-1)
+        qn = q-minq.unsqueeze(-1)
+        normp, normq = pn.sum(dim = -1).unsqueeze(-1), qn.sum(dim = -1).unsqueeze(-1)
+        normp[normp == 0] = 1.
+        normq[normq == 0] = 1.
+        pn = pn/normp
+        qn = qn/normq
+        if self.log_counts:
+            p =torch.log(p+self.eps)
+            q =torch.log(q+self.eps)
+        if self.sum_counts:
+            psize = p.size()
+            p = p.mean(dim = -1).unsqueeze(-1).expand(psize)
+            q = q.mean(dim = -1).unsqueeze(-1).expand(psize)
+        return self.mse(p,q) + self.ratio * self.mse(pn,qn)
+
+        
+    
+    
+# try an error that measures the error of counts and the error of probabilities within one sequence    
 
 # non-linearly converts the output by b*exp(ax) + c*x^d
 # does not work yet, need probably a significantly smaller learning rate
@@ -251,7 +506,7 @@ class Expanding_linear(nn.Module):
 
 
 class Res_FullyConnect(nn.Module):
-    def __init__(self, indim, outdim = None, n_classes = None, n_layers = 1, layer_widening = 1., batch_norm = False, dropout = 0., activation_function = 'ReLU', residual_after = 1, bias = True):
+    def __init__(self, indim, outdim = None, n_classes = None, n_layers = 1, layer_widening = 1., batch_norm = False, dropout = 0., activation_function = 'GELU', residual_after = 1, bias = True):
         super(Res_FullyConnect, self).__init__()
         # Initialize fully connected layers
         self.nfcs = nn.ModuleDict()
@@ -269,12 +524,13 @@ class Res_FullyConnect(nn.Module):
         resdim = np.copy(indim)
         for n in range(int(self.n_layers/2.)):
             currdim2 = int(layer_widening*currdim)
+            if self.batch_norm:
+                self.nfcs['Bnorm_fullyconnected'+str(n)] = nn.BatchNorm1d(currdim)
             if n_classes is None:
                 self.nfcs['Fullyconnected'+str(n)] = nn.Linear(currdim, currdim2, bias = bias)
             else:
                 self.nfcs['MultiFullyconnected'+str(n)] = Expanding_linear(currdim, [n_classes, currdim2], bias = bias)
-            if self.batch_norm:
-                self.nfcs['Bnorm_fullyconnected'+str(n)] = nn.BatchNorm1d(currdim2)
+            
             if self.dropout > 0:
                 self.nfcs['Dropout_fullyconnected'+str(n)] = nn.Dropout(p=self.dropout)
             self.nfcs['Actfunc'+str(n)] = self.act_function
@@ -288,15 +544,16 @@ class Res_FullyConnect(nn.Module):
 
         # for-loops for center layer, if odd number of layers
         for n in range(int(self.n_layers/2.), int(self.n_layers/2.)+int(self.n_layers%2.==1)):
+            if self.batch_norm:
+                self.nfcs['Bnorm_fullyconnected'+str(n)] = nn.BatchNorm1d(currdim)
+            
             if n_classes is None:
                 self.nfcs['Fullyconnected'+str(n)] = nn.Linear(currdim, currdim, bias = bias)
             else:
                 self.nfcs['MultiFullyconnected'+str(n)] = Expanding_linear(currdim, [n_classes, currdim], bias = bias)
             
-            if self.batch_norm:
-                self.nfcs['Bnorm_fullyconnected'+str(n)] = nn.BatchNorm1d(currdim)
             if self.dropout > 0:
-                convlayers['Dropout_fullyconnected'+str(n)] = nn.Dropout(p=self.dropout)
+                self.nfcs['Dropout_fullyconnected'+str(n)] = nn.Dropout(p=self.dropout)
             self.nfcs['Actfunc'+str(n)] = self.act_function
             if residual_after > 0 and (n+1)%residual_after == 0:
                 if n_classes is None:
@@ -307,6 +564,8 @@ class Res_FullyConnect(nn.Module):
             
         # for loops with decreasing number of features
         for n in range(int(self.n_layers/2.)+int(self.n_layers%2.==1), int(self.n_layers)):
+            if self.batch_norm:
+                self.nfcs['Bnorm_fullyconnected'+str(n)] = nn.BatchNorm1d(currdim)
             if n == int(self.n_layers) -1:
                 currdim2 = outdim
             else:
@@ -315,10 +574,8 @@ class Res_FullyConnect(nn.Module):
                 self.nfcs['Fullyconnected'+str(n)] = nn.Linear(currdim, currdim2, bias = bias)
             else:
                 self.nfcs['MultiFullyconnected'+str(n)] = Expanding_linear(currdim, [n_classes, currdim2], bias = bias)
-            if self.batch_norm:
-                self.nfcs['Bnorm_fullyconnected'+str(n)] = nn.BatchNorm1d(currdim2)
             if self.dropout> 0:
-                convlayers['Dropout_fullyconnected'+str(n)] = nn.Dropout(p=self.dropout)
+                self.nfcs['Dropout_fullyconnected'+str(n)] = nn.Dropout(p=self.dropout)
             self.nfcs['Actfunc'+str(n)] = self.act_function
             if residual_after > 0 and (n+1)%residual_after == 0:
                 if n_classes is None:
@@ -340,6 +597,48 @@ class Res_FullyConnect(nn.Module):
                 pred = item(pred)
         return pred
     
+# This average pooling can use dilation and also include padding that is larger than half of the kernel_size to cover kernel_size*dilation/2
+class Padded_AvgPool1d(nn.Module):
+    def __init__(self, kernel_size, stride=None, padding=0, dilation = 1, count_include_pad=True):
+        super(Padded_AvgPool1d, self).__init__()
+        if stride is None:
+            stride = kernel_size
+        self.kernel_size = kernel_size
+        self.stride = stride
+        #print('stride', stride)
+        self.dilation = dilation
+        self.padding = padding
+        self.count_include_pad = count_include_pad
+        self.register_buffer('weight', torch.ones(1,1,1,kernel_size)/kernel_size)
+        self.register_buffer('norm',None)
+    def forward(self, x):
+        xs = x.size()
+        if self.norm is None:
+            #print(self.norm, dict(self.named_buffers()))
+            self.norm = torch.ones(xs[1:]).unsqueeze(0).unsqueeze(0)
+            #print(self.norm, dict(self.named_buffers()))
+            #print('normsize', self.norm.size())
+            if self.padding > 0:
+                if self.count_include_pad:
+                    val = 1
+                else:
+                    val = 0
+                self.norm = F.pad(self.norm, (self.padding, self.padding), value = val)
+            if self.weight.is_cuda:
+                devicetobe = self.weight.get_device()
+                self.norm = self.norm.to('cuda:'+str(devicetobe))
+            self.norm = F.conv2d(self.norm, self.weight, stride = (1,self.stride), dilation = (1,self.dilation))
+            #print('fnormsize', self.norm.size(), self.norm[0,0,0])
+        if self.padding > 0:
+            x = F.pad(x, (self.padding, self.padding))
+        x = F.conv2d(x.unsqueeze(1), self.weight, stride = self.stride, dilation = self.dilation)
+        #print('xsize', x.size())
+        x = x/self.norm
+        x = x.squeeze(1)
+        #print('fxsize', x.size())
+        return x
+            
+        
     
 class Residual_convolution(nn.Module):
     def __init__(self, resdim, currdim, pool_lengths):
@@ -350,9 +649,15 @@ class Residual_convolution(nn.Module):
             self.rconv['conv'] = nn.Conv1d(resdim, currdim, kernel_size = 1, bias = False, stride = 1)
             self.compute_residual = True
         if len(pool_lengths) > 0:
-            plen, slen = pool_lengths
-            for p, pl in enumerate(plen):
-                self.rconv['pool'+str(p)] = nn.AvgPool1d(pl, stride = slen[p]) 
+            for p, plen in enumerate(pool_lengths):
+                pl, slen, pool_type, pad, dilation = plen
+                if pool_type == 'Avg' or pool_type == 'Mean' or pool_type == 'mean':
+                    self.rconv['pool'+str(p)] = Padded_AvgPool1d(pl, stride = slen, padding = pad, dilation = dilation, count_include_pad = False) 
+                elif pool_type == 'Max' or pool_type == 'MAX' or pool_type[p] == 'max':
+                    if pad > 0:
+                        self.rconv['Padding'] = nn.ZeroPad2d((pad,pad, 0,0))
+                    self.rconv['pool'+str(p)] = nn.MaxPool1d(pl, stride = slen, dilation = dilation)
+                
             self.compute_residual = True
         self.rconv = nn.Sequential(self.rconv)
         
@@ -361,12 +666,39 @@ class Residual_convolution(nn.Module):
             return self.rconv(x)
         return x
 
+class Padded_Conv1d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=None, dilation=1, bias=True, padding_mode='zeros', value = None):
+        super(Padded_Conv1d, self).__init__()
+        self.in_channels = in_channels, 
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride 
+        self.padding = padding 
+        if isinstance(self.padding, int):
+            self.padding = [padding, padding]
+        self.dilation = dilation
+        self.bias = bias
+        self.padding_mode = padding_mode
+        self.value = value
+        if padding_mode == 'zeros':
+            self.padding_mode = 'constant'
+            self.value = 0
+        self.conv1d = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=0, dilation=dilation, bias=bias)
+    
+    def forward(self, x):
+        if self.padding is not None:
+            x = F.pad(x, self.padding, mode = self.padding_mode, value = self.value)
+        x = self.conv1d(x)
+        return x
+        
+
 class Res_Conv1d(nn.Module):
-    def __init__(self, indim, inlen, n_kernels, l_kernels, n_layers, kernel_increase = 1., max_pooling = 0, mean_pooling=0, residual_after = 1, activation_function = 'ReLU', strides = 1, dilations = 1, bias = True, dropout = 0., batch_norm = False):
+    def __init__(self, indim, inlen, n_kernels, l_kernels, n_layers, kernel_increase = 1., max_pooling = 0, mean_pooling=0, residual_after = 1, activation_function = 'GELU', strides = 1, dilations = 1, bias = True, dropout = 0., batch_norm = False, act_func_before = True, residual_entire = False):
         super(Res_Conv1d, self).__init__()
         self.residual_after = residual_after
         self.convlayers = nn.ModuleDict()
         self.kernel_function = func_dict[activation_function]
+        self.residual_entire = residual_entire
         
         if isinstance(l_kernels, list) or isinstance(l_kernels, np.ndarray):
             l_kernels = np.array(l_kernels)
@@ -386,55 +718,77 @@ class Res_Conv1d(nn.Module):
         currdim, currlen = np.copy(indim), np.copy(inlen)
         if residual_after > 0:
             resdim = np.copy(currdim)
-        reswindows = [[],[]]
+            
+        reswindows = []
+        if residual_entire:
+            resentire = []
+            resedim = np.copy(currdim)
+            
         for n in range(n_layers):
             
-            if int(np.floor((currlen - dilations[n]*(l_kernels[n]-1)-1)/strides[n]+1)) <= 0:
+            if currlen < l_kernels[n]:
                 break
+            
             if batch_norm:
                 self.convlayers['Bnorm'+str(n)] = self.nn.BatchNorm1d(currdim)
-                
-            self.convlayers['Conv'+str(n)] = nn.Conv1d(currdim, int(currdim*kernel_increase), kernel_size = l_kernels[n], bias = bias, stride = strides[n], dilation = dilations[n])
-            self.convlayers['Conv_func'+str(n)] = self.kernel_function
-            reswindows[0].append(l_kernels[n])
-            reswindows[1].append(strides[n])
-            currdim = int(currdim*kernel_increase)
-            currlen = int((currlen - dilations[n]*(l_kernels[n]-1)-1)/strides[n])+1
+            if act_func_before:
+                self.convlayers['Conv_func'+str(n)] = self.kernel_function
             
-            if max_pooling > 0 or mean_pooling > 0:
-                if max_pooling > currlen or mean_pooling > currlen:
-                    if residual_after > 0 and (n+1)%residual_after == 0:
-                        self.convlayers['ResiduallayerConv'+str(n)] = Residual_convolution(resdim, currdim, reswindows)
-                        reswindows = [[],[]]
-                        resdim = np.copy(currdim)
-                    if dropout > 0.:
-                        self.convlayers['Dropout_Convs'+str(n)] = nn.Dropout(p=dropout)
-                    break
-                self.convlayers['Poolingconvs'+str(n)] = pooling_layer(max_pooling > 0, mean_pooling > 0, pooling_size = max(max_pooling, mean_pooling), stride=max(max_pooling, mean_pooling))
-                reswindows[0].append(max(max_pooling, mean_pooling))
-                reswindows[1].append(max(max_pooling, mean_pooling))
-                currlen = int(1. + (currlen - (max(max_pooling, mean_pooling)-1)-1)/max(max_pooling, mean_pooling))
-                currdim = (int(max_pooling > 0) + int(mean_pooling>0)) * currdim
+            convpad = int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))
+            self.convlayers['Conv'+str(n)] = Padded_Conv1d(currdim, int(currdim*kernel_increase), kernel_size = l_kernels[n], bias = bias, stride = strides[n], dilation = dilations[n], padding = convpad)
+            if not act_func_before:
+                self.convlayers['Conv_func'+str(n)] = self.kernel_function
+            reswindows.append([l_kernels[n], strides[n], 'Mean', convpad, dilations[n]])
+            if residual_entire:
+                resentire.append(reswindows[-1])
+            currdim = int(currdim*kernel_increase)
+            currlen = int(np.floor((currlen +2*convpad- dilations[n]*(l_kernels[n]-1)-1)/strides[n]+1))
+            
             if residual_after > 0 and (n+1)%residual_after == 0:
                 self.convlayers['ResiduallayerConv'+str(n)] = Residual_convolution(resdim, currdim, reswindows)
-                reswindows = [[],[]]
+                reswindows = []
                 resdim = np.copy(currdim)
                 
             if dropout > 0.:
                 self.convlayers['Dropout_Convs'+str(n)] = nn.Dropout(p=dropout)
+            
+            if max_pooling > 0 or mean_pooling > 0:
+                if max_pooling > currlen or mean_pooling > currlen:
+                    break
+                maxpad = int(np.ceil((max(max_pooling, mean_pooling) - currlen%max(max_pooling, mean_pooling))/2))*int(currlen%max(max_pooling, mean_pooling)>0)
+                self.convlayers['Poolingconvs'+str(n)] = pooling_layer(max_pooling > 0, mean_pooling > 0, pooling_size = max(max_pooling, mean_pooling), stride=max(max_pooling, mean_pooling), padding = maxpad)
+                if max_pooling > 0:
+                    reswindows.append([max(max_pooling, mean_pooling),max(max_pooling, mean_pooling),'Max', maxpad, 1])
+                else:
+                    reswindows.append([max(max_pooling, mean_pooling),max(max_pooling, mean_pooling),'Mean',maxpad,1])
+                if residual_entire:
+                    resentire.append(reswindows[-1])
+                currdim = (int(max_pooling > 0) + int(mean_pooling>0)) * currdim
+                currlen = int(np.ceil(currlen/max(max_pooling, mean_pooling)))
+                
+                
+        if residual_entire:
+            self.residual_entire = Residual_convolution(resedim,currdim, resentire)
+        else:
+            self.residual_entire = None
         self.currdim, self.currlen = currdim, currlen
-    
+        
     def forward(self,x):
+        if self.residual_entire is not None:
+            res0 = x
         if self.residual_after > 0:
             res = x
         pred = x
         for key, item in self.convlayers.items():
             if "Residuallayer" in key:
                 residual = item(res)
-                pred = pred + residual
                 res = pred
+                pred = pred + residual
             else:
                 pred = item(pred)
+            
+        if self.residual_entire is not None:
+            pred = pred + self.residual_entire(res0)
         return pred
 
 # if attention should not spread along the entire sequence, use mask to set entries beyond a certain distance to zero
@@ -641,7 +995,7 @@ class MyDataParallel(nn.DataParallel):
 
 # dictionary with loss functions
 loss_dict = {'MSE':nn.MSELoss(reduction = 'none'), 
-             'L1loss':nn.L1Loss(reduction = 'none'),
+             'L1Loss':nn.L1Loss(reduction = 'none'),
              'CrossEntropy': nn.CrossEntropyLoss(reduction = 'none'),
              'BCE': nn.BCELoss(reduction = 'none'),
              'KL': nn.KLDivLoss(reduction = 'none'),
@@ -653,7 +1007,17 @@ loss_dict = {'MSE':nn.MSELoss(reduction = 'none'),
              'Cosineboth': cosine_both(reduction = 'none'),
              'Correlationdata': correlation_loss(dim = 1, reduction = 'none'),
              'Correlationclass': correlation_loss(dim = 0, reduction = 'none'),
-             'Correlationboth': correlation_both(reduction = 'none')}
+             'Correlationmse': correlation_mse(reduction = 'none'),
+             'MSECorrelation': correlation_mse(reduction = 'none', dimcorr = 0),
+             'Correlationboth': correlation_both(reduction = 'none'),
+             'JensenShannon': JSD(reduction = 'none', mean_size = 25),
+             'JensenShannonCount': JSD(reduction = 'none', mean_size = None),
+             'DLogMSE': LogMSELoss(reduction = 'none', log_prediction = False),
+             'LogMSE': LogMSELoss(reduction = 'none', log_prediction = False),
+             'LogL1Loss': LogL1Loss(reduction = 'none'),
+             'LogCountDistLoss': LogCountDistLoss(reduction = 'none', log_counts = True),
+             'CountDistLoss': LogCountDistLoss(reduction = 'none')}
+
 
 
 
