@@ -22,7 +22,7 @@ from output import print_averages, save_performance, plot_scatter
 from functions import dist_measures
 from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance 
 from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters
-from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, final_convolution
+from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, Padded_Conv1d, final_convolution
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
@@ -297,7 +297,8 @@ class bpcnn(nn.Module):
             print('In features', currdim, currlen)
         # initialize convolutional layer and compute new feature dimension and length of sequence
         if self.num_kernels > 0:
-            self.convolutions = nn.Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = int(self.l_kernels/2) )
+            #self.convolutions = nn.Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = int(self.l_kernels/2))
+            self.convolutions = Padded_Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = [int(self.l_kernels/2)-int(self.l_kernels%2==0), int(self.l_kernels/2)])
             currdim = np.copy(self.num_kernels)
         
         if self.fixed_kernels is not None:
@@ -435,7 +436,7 @@ class bpcnn(nn.Module):
         if self.outclass == 'Class':
             classifier['Sigmoid'] = nn.Sigmoid()
         elif self.outclass == 'Multi_class':
-            classifier['Softmax'] = nn.Softmax(dim = 2)
+            classifier['Softmax'] = nn.Softmax(dim = -1)
         elif self.outclass != 'Linear':
             classifier['OUTFUNC'] = func_dict[self.outclass]
         self.classifier = nn.Sequential(classifier)
@@ -509,6 +510,7 @@ class bpcnn(nn.Module):
         if location == '-1' or location == '5':
             return torch.flatten(pred, start_dim = 1)
         pred = self.classifier(pred)
+        
         return pred
     
     
@@ -545,6 +547,12 @@ if __name__ == '__main__':
     # filter counts with 0 entries
     ymask = np.sum(Y,axis = (1,2)) >0
     X, Y, names = X[ymask], Y[ymask], names[ymask]
+
+    if '--testrandom' in sys.argv:
+        trand = int(sys.argv[sys.argv.index('--testrandom')+1])
+        mask = np.random.permutation(len(X))[:trand]
+        X, Y, names = X[mask], Y[mask], names[mask]
+        
 
     outname = create_outname(inputfile, outputfile) 
     if '--regionless' in sys.argv:
@@ -615,6 +623,12 @@ if __name__ == '__main__':
         print('ATTENTION: output has been normalized along data classess')
         outname += '-n2outc'
         outnorm =np.sqrt(np.sum(Y*Y, axis = (0,2)))
+        Y = Y/outnorm
+    
+    elif '--norm1outputbins' in sys.argv:
+        print('ATTENTION: output has been normalized along bins')
+        outname += '-n2outc'
+        outnorm =np.sum(Y, axis = 2)[...,None]
         Y = Y/outnorm
     
     pfms = None
@@ -774,6 +788,8 @@ if __name__ == '__main__':
     elif '--norm2outputclass' in sys.argv:
         Y *= outnorm
         Y_pred *= outnorm
+    
+    
     
     if model.outname is not None and model.outname != outname:
         outname = model.outname

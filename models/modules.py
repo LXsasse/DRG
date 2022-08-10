@@ -8,6 +8,10 @@ from torch.nn.parameter import Parameter
 import math
 import torch.nn.functional as F
 
+# Introduce mixture of MSE and BCELOss
+
+
+
 class EXPmax(nn.Module):
     def __init__(self, crop_max = 128):
         super(EXPmax, self).__init__()
@@ -22,7 +26,7 @@ class POWmax(nn.Module):
         super(POWmax, self).__init__()
         self.cmax = crop_max**(1./exponent)
         self.thresh = nn.Threshold(-self.cmax, -self.cmax)
-        self.exponent
+        self.exponent = exponent
     def forward(self, x):
         x = -self.thresh(-x)
         return torch.pow(x, self.exponent)
@@ -166,18 +170,25 @@ class final_convolution(nn.Module):
             self.cpred = nn.Linear(indim, out_classes)
             self.spred = nn.Softmax(dim = -1)
         
-        if padding == 'same':
-            convpad = int(np.floor(l_kernels/2))
-        self.fconvlayer = nn.Conv1d(indim, out_classes, kernel_size = l_kernels, bias = bias, stride = strides, padding = convpad)
+        self.padding = padding 
+        if isinstance(self.padding, int):
+            self.padding = [padding, padding]
+        if self.padding == 'same':
+            self.padding = [int(np.floor(l_kernels/2))-int(l_kernels%2==0), int(np.floor(l_kernels/2))]
+        
+        self.fconvlayer = nn.Conv1d(indim, out_classes, kernel_size = l_kernels, bias = bias, stride = strides)
     
     def forward(self, x):
-        if self.batch_norm:
-            x = self.Bnorm(x)
-        x = self.fconvlayer(x)
-        x = x[..., self.cut_sites[0]:x.size(dim=-1)-self.cut_sites[1]]
         if self.predict_from_dist:
             mx = x.mean(dim = -1)
             mcounts = self.cpred(mx)
+        if self.batch_norm:
+            x = self.Bnorm(x)
+        if self.padding is not None:
+            x = F.pad(x, self.padding, mode = 'constant', value = 0)
+        x = self.fconvlayer(x)
+        x = x[..., self.cut_sites[0]:x.size(dim=-1)-self.cut_sites[1]]
+        if self.predict_from_dist:
             x = self.spred(x)
             x = x * mcounts.unsqueeze(-1)
         return x
@@ -363,9 +374,10 @@ class JSD(nn.Module):
             if self.mean_size is None:
                 self.mean_size = p.size(dim = -1)
             if self.meanpool is None:
-                self.meanpool = nn.AvgPool1d(self.mean_size, padding = int(p.size(dim = -1)%self.mean_size)/2, count_include_pad = False)
-            pn = p.mean(dim = -1).unsqueeze(-1).expand(p.size())
-            qn = q.mean(dim = -1).unsqueeze(-1).expand(q.size())
+                self.meanpool = nn.AvgPool1d(self.mean_size, padding = int((p.size(dim = -1)%self.mean_size)/2), count_include_pad = False)
+                self.l_out = int(np.ceil(p.size(dim = -1)/self.mean_size))
+            pn = self.meanpool(p).repeat(1,1,self.mean_size)
+            qn = self.meanpool(q).repeat(1,1,self.mean_size)
             
         p = p-torch.min(p,dim =-1)[0].unsqueeze(dim=-1)
         q = q-torch.min(q,dim =-1)[0].unsqueeze(dim=-1)
@@ -390,6 +402,37 @@ class JSD(nn.Module):
             kl = kl + self.mse_ratio* self.mse(pn, qn)
         return kl
 
+
+class BCEMSE(nn.Module):
+    def __init__(self, reduction = 'none', log_counts = True, eps = 1, mse_ratio = 10., mean_size = None):
+        super(BCEMSE, self).__init__()
+        self.bce = nn.BCELoss(reduction=reduction)
+        self.mse = nn.MSELoss(reduction = reduction)
+        self.mean_size = mean_size
+        self.meanpool = None    
+        self.mse_ratio = mse_ratio
+        self.log_counts = log_counts
+        self.eps = eps
+        
+    def forward(self, p: torch.tensor, q: torch.tensor):
+        if self.mean_size is None:
+            self.mean_size = p.size(dim = -1)
+        if self.meanpool is None:
+            self.meanpool = nn.AvgPool1d(self.mean_size, padding = int((p.size(dim = -1)%self.mean_size)/2), count_include_pad = False)
+        pn = self.meanpool(p).repeat(1,1,self.mean_size)
+        qn = self.meanpool(q).repeat(1,1,self.mean_size)
+        if self.log_counts:
+            pn = (pn+self.eps).log()
+            qn = (qn+self.eps).log()
+        p = p-torch.min(p,dim =-1)[0].unsqueeze(dim=-1)
+        q = q-torch.min(q,dim =-1)[0].unsqueeze(dim=-1)
+        normp, normq = p.sum(dim = -1)[...,None], q.sum(dim = -1)[...,None]
+        normp[normp == 0] = 1.
+        normq[normq == 0] = 1.
+        p = p/normp
+        q = q/normq
+        loss = self.bce(p,q) + self.mse_ratio* self.mse(pn, qn)
+        return loss
 
 class LogMSELoss(nn.Module):
     def __init__(self, reduction = 'none', eps = 1., log_prediction = False):
@@ -608,6 +651,13 @@ class Padded_AvgPool1d(nn.Module):
         #print('stride', stride)
         self.dilation = dilation
         self.padding = padding
+        self.gopad = False
+        if isinstance(self.padding, int):
+            if self.padding > 0:
+                self.padding = (padding, padding)
+                self.gopad = True
+        elif isinstance(self.padding, list):
+            self.gopad = True
         self.count_include_pad = count_include_pad
         self.register_buffer('weight', torch.ones(1,1,1,kernel_size)/kernel_size)
         self.register_buffer('norm',None)
@@ -618,21 +668,21 @@ class Padded_AvgPool1d(nn.Module):
             self.norm = torch.ones(xs[1:]).unsqueeze(0).unsqueeze(0)
             #print(self.norm, dict(self.named_buffers()))
             #print('normsize', self.norm.size())
-            if self.padding > 0:
+            if self.gopad:
                 if self.count_include_pad:
                     val = 1
                 else:
                     val = 0
-                self.norm = F.pad(self.norm, (self.padding, self.padding), value = val)
-            if self.weight.is_cuda:
+                self.norm = F.pad(self.norm, self.padding, value = val)
+            if self.weight.is_cuda and not self.norm.is_cuda:
                 devicetobe = self.weight.get_device()
                 self.norm = self.norm.to('cuda:'+str(devicetobe))
             self.norm = F.conv2d(self.norm, self.weight, stride = (1,self.stride), dilation = (1,self.dilation))
             #print('fnormsize', self.norm.size(), self.norm[0,0,0])
-        if self.padding > 0:
-            x = F.pad(x, (self.padding, self.padding))
+        if self.gopad:
+            x = F.pad(x, self.padding)
         x = F.conv2d(x.unsqueeze(1), self.weight, stride = self.stride, dilation = self.dilation)
-        #print('xsize', x.size())
+        #print(self.weight, self.norm)
         x = x/self.norm
         x = x.squeeze(1)
         #print('fxsize', x.size())
@@ -643,23 +693,31 @@ class Padded_AvgPool1d(nn.Module):
 class Residual_convolution(nn.Module):
     def __init__(self, resdim, currdim, pool_lengths):
         super(Residual_convolution, self).__init__()
-        self.rconv = OrderedDict()
+        rconv = OrderedDict()
         self.compute_residual = False
         if resdim != currdim:
-            self.rconv['conv'] = nn.Conv1d(resdim, currdim, kernel_size = 1, bias = False, stride = 1)
+            rconv['conv'] = nn.Conv1d(resdim, currdim, kernel_size = 1, bias = False, stride = 1)
             self.compute_residual = True
         if len(pool_lengths) > 0:
             for p, plen in enumerate(pool_lengths):
                 pl, slen, pool_type, pad, dilation = plen
                 if pool_type == 'Avg' or pool_type == 'Mean' or pool_type == 'mean':
-                    self.rconv['pool'+str(p)] = Padded_AvgPool1d(pl, stride = slen, padding = pad, dilation = dilation, count_include_pad = False) 
+                    rconv['pool'+str(p)] = Padded_AvgPool1d(pl, stride = slen, padding = pad, dilation = dilation, count_include_pad = False) 
                 elif pool_type == 'Max' or pool_type == 'MAX' or pool_type[p] == 'max':
-                    if pad > 0:
-                        self.rconv['Padding'] = nn.ZeroPad2d((pad,pad, 0,0))
-                    self.rconv['pool'+str(p)] = nn.MaxPool1d(pl, stride = slen, dilation = dilation)
+                    gopad = False
+                    if isinstance(pad, int):
+                        if pad > 0:
+                            pad = (pad, pad, 0, 0)
+                            gopad = True
+                    elif isinstance(pad,list):
+                        pad = pad + (0,0)
+                        gopad = True
+                    if gopad:
+                        rconv['Padding'] = nn.ZeroPad2d(pad)
+                    rconv['pool'+str(p)] = nn.MaxPool1d(pl, stride = slen, dilation = dilation)
                 
             self.compute_residual = True
-        self.rconv = nn.Sequential(self.rconv)
+        self.rconv = nn.Sequential(rconv)
         
     def forward(self, x):
         if self.compute_residual:
@@ -693,7 +751,7 @@ class Padded_Conv1d(nn.Module):
         
 
 class Res_Conv1d(nn.Module):
-    def __init__(self, indim, inlen, n_kernels, l_kernels, n_layers, kernel_increase = 1., max_pooling = 0, mean_pooling=0, residual_after = 1, activation_function = 'GELU', strides = 1, dilations = 1, bias = True, dropout = 0., batch_norm = False, act_func_before = True, residual_entire = False):
+    def __init__(self, indim, inlen, n_kernels, l_kernels, n_layers, kernel_increase = 1., max_pooling = 0, mean_pooling=0, residual_after = 1, residual_same_len = False, activation_function = 'GELU', strides = 1, dilations = 1, bias = True, dropout = 0., batch_norm = False, act_func_before = True, residual_entire = False):
         super(Res_Conv1d, self).__init__()
         self.residual_after = residual_after
         self.convlayers = nn.ModuleDict()
@@ -718,6 +776,7 @@ class Res_Conv1d(nn.Module):
         currdim, currlen = np.copy(indim), np.copy(inlen)
         if residual_after > 0:
             resdim = np.copy(currdim)
+            reslen = np.copy(currlen)
             
         reswindows = []
         if residual_entire:
@@ -734,7 +793,7 @@ class Res_Conv1d(nn.Module):
             if act_func_before:
                 self.convlayers['Conv_func'+str(n)] = self.kernel_function
             
-            convpad = int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))
+            convpad = [int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))-int((dilations[n]*(l_kernels[n]-1)+1)%2==0), int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))]
             self.convlayers['Conv'+str(n)] = Padded_Conv1d(currdim, int(currdim*kernel_increase), kernel_size = l_kernels[n], bias = bias, stride = strides[n], dilation = dilations[n], padding = convpad)
             if not act_func_before:
                 self.convlayers['Conv_func'+str(n)] = self.kernel_function
@@ -742,9 +801,9 @@ class Res_Conv1d(nn.Module):
             if residual_entire:
                 resentire.append(reswindows[-1])
             currdim = int(currdim*kernel_increase)
-            currlen = int(np.floor((currlen +2*convpad- dilations[n]*(l_kernels[n]-1)-1)/strides[n]+1))
+            currlen = int(np.floor((currlen +convpad[0]+convpad[1]- dilations[n]*(l_kernels[n]-1)-1)/strides[n]+1))
             
-            if residual_after > 0 and (n+1)%residual_after == 0:
+            if (residual_after > 0 and (n+1)%residual_after == 0) and (residual_same_len or reslen != currlen):
                 self.convlayers['ResiduallayerConv'+str(n)] = Residual_convolution(resdim, currdim, reswindows)
                 reswindows = []
                 resdim = np.copy(currdim)
@@ -997,7 +1056,8 @@ class MyDataParallel(nn.DataParallel):
 loss_dict = {'MSE':nn.MSELoss(reduction = 'none'), 
              'L1Loss':nn.L1Loss(reduction = 'none'),
              'CrossEntropy': nn.CrossEntropyLoss(reduction = 'none'),
-             'BCE': nn.BCELoss(reduction = 'none'),
+             'BCELoss': nn.BCELoss(reduction = 'none'),
+             'BCEMSE': BCEMSE(reduction = 'none'),
              'KL': nn.KLDivLoss(reduction = 'none'),
              'PoissonNNL':nn.PoissonNLLLoss(reduction = 'none'),
              'GNLL': nn.GaussianNLLLoss(reduction = 'none'),
@@ -1012,7 +1072,7 @@ loss_dict = {'MSE':nn.MSELoss(reduction = 'none'),
              'Correlationboth': correlation_both(reduction = 'none'),
              'JensenShannon': JSD(reduction = 'none', mean_size = 25),
              'JensenShannonCount': JSD(reduction = 'none', mean_size = None),
-             'DLogMSE': LogMSELoss(reduction = 'none', log_prediction = False),
+             'DLogMSE': LogMSELoss(reduction = 'none', log_prediction = True),
              'LogMSE': LogMSELoss(reduction = 'none', log_prediction = False),
              'LogL1Loss': LogL1Loss(reduction = 'none'),
              'LogCountDistLoss': LogCountDistLoss(reduction = 'none', log_counts = True),
