@@ -19,4 +19,4 @@ This directory contains cnn modules (i.e. cnn_model.py, bpcnn_model.py, cnn_mode
 		
 		$python bpcnn_model.py <one-hot_input.npz> <None or matching_outputtotestperformance.npz> --outdir preferred_dir/ --predictnew --cnn cnn_outputfile_model_params.dat --save_predictions
 
-
+# This is a pull request test
