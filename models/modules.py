@@ -8,8 +8,6 @@ from torch.nn.parameter import Parameter
 import math
 import torch.nn.functional as F
 
-# Introduce mixture of MSE and BCELOss
-
 
 
 class EXPmax(nn.Module):
@@ -53,207 +51,6 @@ class fcc_convolution(nn.Module):
         # Include customized Convolutions: 
     # CNN network for each convolution, can be interpreted as one complex motif, should not sum over all positions but instead put them into a fully connected network and only sum at the end. So that this network creates outputs for each position 
 
-
-# Second layer of gapped convolutions for interactions (e.g. 10,20,30.. gap, 5 conv each side, 6 convolutions for each)
-# Gapped convolutions have gap between two convolutional filters: 
-class gap_conv(nn.Module):
-    def __init__(self, in_channels, in_len, out_channels, kernel_size, kernel_gap, stride=1, pooling = False, residual = False, batch_norm = False, dropout= 0., edge_effect = True, activation_function = 'GELU'):
-        super(gap_conv, self).__init__()
-        # kernel_size defines the size of two kernels on each side of the gap
-        self.kernel_gap = kernel_gap
-        self.kernel_size = kernel_size
-        self.edge_effect = edge_effect
-        
-        if batch_norm:
-            #batchnorm before giving input to 
-            self.batch_norm = nn.BarchNorm1d(in_channels)
-        
-        padding = int(np.floor(kernel_size/2))
-        self.leftcov = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, bias = True, padding = padding)
-        self.rightcov = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, bias = True, padding = padding)
-        
-        self.out_len = int(np.floor((in_len + 2*padding - kernel_size)/stride +1))
-        
-        self.pooling = None
-        if pooling: # pooling max
-            pooling_padding = int(np.ceil((kernel_size - self.out_len%int(kernel_size/2))*int(self.out_len%int(kernel_size/2)>0)/2))
-            self.pooling = nn.MaxPool1d(kernel_size, stride = int(kernel_size/2), padding = pooling_padding)
-            self.kernel_gap = int(self.kernel_gap/int(kernel_size/2))
-            self.kernel_size = int(self.kernel_size/int(kernel_size/2))
-            # pool with kernel_size but stride kernel_size/2
-            # gap becomes gap*2/kernelsize 
-            self.out_len = int((self.out_len+2*pooling_padding-kernel_size)/int(kernel_size/2))+1
-        if not self.edge_effect:
-            self.out_len = self.out_len - self.kernel_gap - self.kernel_size
-        
-        self.residual = None
-        if residual:
-            self.residual = OrderedDict()
-            if in_channels != out_channels:
-                self.residual['ResConv'] = nn.Conv1d(in_channels, out_channels, kernel_size = 1, bias = False)
-            self.residual['AvgPool'] = nn.AvgPool1d(kernel_size, stride = stride, padding = padding, count_include_pad=False)
-            self.residual = nn.Sequential(self.residual)
-            #add residual to every to every gapped kernel 
-        self.dropout = None
-        if dropout > 0:
-            self.dropout = nn.Dropout(dropout)
-            
-        self.act_func = func_dict[activation_function]
-    
-    def forward(self, x):
-        """
-        Forward propagation of a batch.
-        """
-        outleft = self.leftcov(x)
-        outright = self.rightcov(x)
-        if self.pooling is not None:
-            outleft = self.pooling(outleft)
-            outright = self.pooling(outright)
-        if self.edge_effect:
-            out = F.pad(outleft, (self.kernel_gap+self.kernel_size,0)) + F.pad(outright, (0, self.kernel_gap+self.kernel_size))
-        else:
-            out = outleft[:,:,:-self.kernel_gap-self.kernel_size] + outright[:,:,self.kernel_gap+self.kernel_size:]
-        out = self.act_func(out)
-        if self.residual is not None:
-            res = self.residual(x)
-            if self.pooling is not None:
-                res = self.pooling(res)
-            if self.edge_effect:
-                # instead of using this, we can just pad them on different sides
-                res = F.pad(res, (self.kernel_gap+self.kernel_size, 0)) + F.pad(res, (0, self.kernel_gap+self.kernel_size))
-            else:
-                res = res[:,:,:-self.kernel_gap-self.kernel_size] + res[:,:,self.kernel_gap+self.kernel_size:]
-            out = out + res
-        return out
-
-# parallel module execute a list of modules with the same input and concatenate their output after flattening the last dimensions
-class parallel_module(nn.Module):
-    def __init__(self, modellist, flatten = True):
-        super(parallel_module, self).__init__()
-        self.modellist = nn.ModuleList(modellist)
-        self.flatten = True
-        if not self.flatten:
-            outlens = len(np.unique([m.out_len for m in self.modellist])) == 1
-            if not outlens:
-                raise Warning("Module outputs cannot be concatenated along dim = -1")
-        
-    def forward(self, x):
-        out = []
-        for m in self.modellist:
-            outadd = m(x)
-            if self.flatten:
-                out.append(torch.flatten(m(x), start_dim = 1, end_dim = -1))
-            else:
-                out.append(m(x))
-        out = torch.cat(out, dim = -1)
-        return out
-
-
-
-class final_convolution(nn.Module):
-    def __init__(self, indim, out_classes, l_kernels, cut_sites = None, strides = 1, bias = True, batch_norm = False, padding = 'same', predict_from_dist = True):
-        super(final_convolution, self).__init__()
-        
-        self.batch_norm = batch_norm
-        self.cut_sites = cut_sites
-        if self.cut_sites is None:
-            self.cut_sites = [0,0]
-        elif isinstance(self.cut_sites,int):
-            self.cut_sites = [cut_sites, cut_sites]
-        else:
-            self.cut_sites = cut_sites
-        if batch_norm:
-            self.Bnorm = self.nn.BatchNorm1d(currdim)
-
-        self.predict_from_dist = predict_from_dist
-        if self.predict_from_dist:
-            self.cpred = nn.Linear(indim, out_classes)
-            self.spred = nn.Softmax(dim = -1)
-        
-        self.padding = padding 
-        if isinstance(self.padding, int):
-            self.padding = [padding, padding]
-        if self.padding == 'same':
-            self.padding = [int(np.floor(l_kernels/2))-int(l_kernels%2==0), int(np.floor(l_kernels/2))]
-        
-        self.fconvlayer = nn.Conv1d(indim, out_classes, kernel_size = l_kernels, bias = bias, stride = strides)
-    
-    def forward(self, x):
-        if self.predict_from_dist:
-            mx = x.mean(dim = -1)
-            mcounts = self.cpred(mx)
-        if self.batch_norm:
-            x = self.Bnorm(x)
-        if self.padding is not None:
-            x = F.pad(x, self.padding, mode = 'constant', value = 0)
-        x = self.fconvlayer(x)
-        x = x[..., self.cut_sites[0]:x.size(dim=-1)-self.cut_sites[1]]
-        if self.predict_from_dist:
-            x = self.spred(x)
-            x = x * mcounts.unsqueeze(-1)
-        return x
-
-
-# Interaction module creates non-linear interactions between all features by multiplying them with each other and then multiplies a weight matrix to them
-class interaction_module(nn.Module):
-    def __init__(self, indim, outdim):
-        super(interaction_module, self).__init__()
-        self.outdim = outdim # if outdim is 1 then use softmax output
-        # else use RelU
-        self.indim = indim
-        self.lineara = nn.Linear(indim, outdim, bias = False)
-        self.linearb = nn.Linear((indim*(indim-1))/2, outdim, bias = False)
-        self.classes = classes
-    def forward(self, barray):
-        insquare = torch.bmm(torch.unsqueeze(barray,-1), torch.unsqueeze(barray,-2))
-        loc = torch.triu_indices(self.indim, self.indim, 1)
-        insquare = insquare[:, loc[0], loc[1]]
-        # could also concatenate and then use linear, then bias would be possible but all parameters would get same regularization treatment
-        outflat = self.lineara(barray)
-        outsquare = self.linearb(insquare.flatten(-2,-1)) # flatten
-        out = outflat + outsquare
-        return out
-
-# Options:
-# maxpooling
-# mean_pooling
-# conv_pooling
-# Conv pooling with softmax over positions can get you attention pooling 
-
-# Custom pooling layer that can max and mean pool 
-class pooling_layer(nn.Module):
-    def __init__(self, max_pooling, mean_pooling = False, conv_pooling = False, pooling_size = None, stride = None, padding = 0):
-        super(pooling_layer, self).__init__()
-        self.mean_pooling = mean_pooling
-        self.max_pooling = max_pooling
-        self.conv_pooling = conv_pooling
-
-        if stride is None:
-            stride = pooling_size
-        
-        if mean_pooling and max_pooling:
-            self.poola = nn.AvgPool1d(pooling_size, stride=stride, padding = padding, count_include_pad = False)
-            self.poolb = nn.MaxPool1d(pooling_size, stride=stride, padding = padding )
-            
-        elif max_pooling and not mean_pooling:
-            self.pool = nn.MaxPool1d(pooling_size, stride=stride, padding = padding)
-        
-        elif mean_pooling and not max_pooling:
-            self.pool = nn.AvgPool1d(pooling_size, stride=stride, padding = padding, count_include_pad = False)
-
-        elif conv_pooling:
-            self.pool = nn.Conv1d(insize, insize, kernel_size = pooling_size, stride = stride, bias = False, padding = padding)
-        
-    def forward(self, barray):
-        if self.mean_pooling and self.max_pooling:
-            return torch.cat((self.poola(barray), self.poolb(barray)), dim = -2)
-        else:
-            return self.pool(barray)
-
-# Custom class that performs convolutions within the pooling size, then pools it to avoid a large intermediate matrix. 
-class pooled_conv():
-    def __init__(self):
-        return NotImplementedError
 
 # Module that computes the correlation as a loss function 
 class correlation_loss(nn.Module):
@@ -503,9 +300,9 @@ class Complex(nn.Module):
         super(Complex, self).__init__()
         self.variables = Parameter(torch.ones(1, outclasses, 2))
         self.exponents = Parameter(torch.zeros(1, outclasses, 2))
-        
+        self.exp = EXPmax()
     def forward(self, pred):
-        x1 = torch.exp(pred)
+        x1 = self.exp(pred)
         pred2 = torch.cat([pred.unsqueeze(-1), x1.unsqueeze(-1)], dim = -1)
         pred2 = pred2**torch.log2(2+self.exponents)
         pred2 = pred2 * self.variables
@@ -548,6 +345,8 @@ class Expanding_linear(nn.Module):
     
 
 
+# add: if size does not change between layers then don't perform extra linear layer for residual
+# special case of residuals between layers that have the same number of features (U-net? )
 class Res_FullyConnect(nn.Module):
     def __init__(self, indim, outdim = None, n_classes = None, n_layers = 1, layer_widening = 1., batch_norm = False, dropout = 0., activation_function = 'GELU', residual_after = 1, bias = True):
         super(Res_FullyConnect, self).__init__()
@@ -850,120 +649,400 @@ class Res_Conv1d(nn.Module):
             pred = pred + self.residual_entire(res0)
         return pred
 
+
+
+
+
+
+# Second layer of gapped convolutions for interactions (e.g. 10,20,30.. gap, 5 conv each side, 6 convolutions for each)
+# Gapped convolutions have gap between two convolutional filters: 
+class gap_conv(nn.Module):
+    def __init__(self, in_channels, in_len, out_channels, kernel_size, kernel_gap, stride=1, pooling = False, residual = False, batch_norm = False, dropout= 0., edge_effect = 'maintain', activation_function = 'GELU'):
+        super(gap_conv, self).__init__()
+        # kernel_size defines the size of two kernels on each side of the gap
+        self.kernel_gap = kernel_gap
+        self.kernel_size = kernel_size
+        self.edge_effect = edge_effect # reduce, maintain, expand
+        
+        if batch_norm:
+            #batchnorm before giving input to 
+            self.batch_norm = nn.BarchNorm1d(in_channels)
+        
+        left_padding = [int(np.floor(kernel_size/2))-int(kernel_size%2==0), int(np.floor(kernel_size/2))]
+        right_padding = [int(np.floor(kernel_size/2)), int(np.floor(kernel_size/2))-int(kernel_size%2==0)]
+        padding = 2*int(np.floor(kernel_size/2))-int(kernel_size%2==0)
+        
+        # Use costum moduel because torch.nn.Conv1d cannot deal with different pooling sizes left and right of the sequence
+        self.leftcov = Padded_Conv1d(in_channels, out_channels, kernel_size, stride=stride, bias = True, padding = left_padding)
+        self.rightcov = Padded_Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, bias = True, padding = right_padding)
+        
+        self.out_len = int(np.floor((in_len + padding - kernel_size)/stride +1))
+        # max pooling before layers are flattened to reduce dimension of output given to fully connected layer
+        self.pooling = None
+        if pooling: # pooling max
+            # pooling_padding makes sure that some positions are not ignored in pooling, simlar to ceil_mode but with symmetric effect
+            pooling_padding = int(np.ceil((kernel_size - self.out_len%int(kernel_size/2))*int(self.out_len%int(kernel_size/2)>0)/2))
+            self.pooling = nn.MaxPool1d(kernel_size, stride = int(kernel_size/2), padding = pooling_padding)
+            # when dimensions are pooled, the kernel_size and kernel_gap is reduced by the pooling size
+            self.kernel_gap = int(self.kernel_gap/int(kernel_size/2))
+            self.kernel_size = int(self.kernel_size/int(kernel_size/2))
+            # pool with kernel_size but stride kernel_size/2
+            # gap becomes gap*2/kernelsize 
+            self.out_len = int((self.out_len+2*pooling_padding-kernel_size)/int(kernel_size/2))+1
+        
+        # residuals can be generated for the gapped conv operation
+        self.residual = None
+        if residual:
+            self.residual = OrderedDict()
+            if in_channels != out_channels:
+                self.residual['ResConv'] = nn.Conv1d(in_channels, out_channels, kernel_size = 1, bias = False)
+            if not pooling:
+                self.residual['AvgPool'] = nn.Identity()
+            else:
+                self.residual['AvgPool'] = nn.AvgPool1d(kernel_size, stride = int(kernel_size/2), padding = int(np.floor(kernel_size/2)), count_include_pad=False)
+            self.residual = nn.Sequential(self.residual)
+            #add residual to every to every gapped kernel 
+        
+        if self.edge_effect == 'reduce':
+            self.out_len = self.out_len - self.kernel_gap - self.kernel_size
+        elif self.edge_effect == 'expand':
+            self.out_len = self.out_len + self.kernel_gap + self.kernel_size
+        
+        self.dropout = None
+        if dropout > 0:
+            self.dropout = nn.Dropout(dropout)
+            
+        self.act_func = func_dict[activation_function]
+        self.kernelgap_size = self.kernel_size + self.kernel_gap
+        
+    def forward(self, x):
+        """
+        Forward propagation of a batch.
+        """
+        outleft = self.leftcov(x)
+        outright = self.rightcov(x)
+        if self.pooling is not None:
+            outleft = self.pooling(outleft)
+            outright = self.pooling(outright)
+        if self.edge_effect == 'expand':
+            out = F.pad(outleft, (self.kernelgap_size,0)) + F.pad(outright, (0, self.kernelgap_size))
+        elif self.edge_effect == 'reduce':
+            out = outleft[:,:,:-self.kernel_gap-self.kernel_size] + outright[:,:,self.kernelgap_size:]
+        else:
+            out = F.pad(outleft, (int(self.kernelgap_size/2),0))[:,:,:-int(self.kernelgap_size/2)] + F.pad(outright, (0,int(self.kernelgap_size/2)))[:,:,int(self.kernelgap_size/2):]
+            
+        out = self.act_func(out)
+        if self.residual is not None:
+            res = self.residual(x)
+            if self.pooling is not None:
+                res = self.pooling(res)
+            if self.edge_effect == 'expand':
+                # instead of using this, we can just pad them on different sides
+                res = F.pad(res, (self.kernelgap_size, 0)) + F.pad(res, (0, self.kernelgap_size))
+            elif self.edge_effect == 'reduce':
+                res = res[:,:,:-self.kernel_gap-self.kernel_size] + res[:,:,self.kernelgap_size:]
+            else:
+                res = F.pad(res, (int(self.kernelgap_size/2),0))[:,:,:-int(self.kernelgap_size/2)] + F.pad(res, (0,int(self.kernelgap_size/2)))[:,:,int(self.kernelgap_size/2):]
+            out = out + res
+        
+        return out
+
+# parallel module execute a list of modules with the same input and concatenate their output after flattening the last dimensions
+class parallel_module(nn.Module):
+    def __init__(self, modellist, flatten = True):
+        super(parallel_module, self).__init__()
+        self.modellist = nn.ModuleList(modellist)
+        self.flatten = flatten
+        if not self.flatten:
+            outlens = len(np.unique([m.out_len for m in self.modellist])) == 1
+            if not outlens:
+                raise Warning("Module outputs cannot be concatenated along dim = -1")
+        
+    def forward(self, x):
+        out = []
+        for m in self.modellist:
+            outadd = m(x)
+            if self.flatten:
+                out.append(torch.flatten(m(x), start_dim = 1, end_dim = -1))
+            else:
+                out.append(m(x))
+        out = torch.cat(out, dim = 1)
+        return out
+
+
+
+class final_convolution(nn.Module):
+    def __init__(self, indim, out_classes, l_kernels, cut_sites = None, strides = 1, bias = True, batch_norm = False, padding = 'same', predict_from_dist = True):
+        super(final_convolution, self).__init__()
+        
+        self.batch_norm = batch_norm
+        self.cut_sites = cut_sites
+        if self.cut_sites is None:
+            self.cut_sites = [0,0]
+        elif isinstance(self.cut_sites,int):
+            self.cut_sites = [cut_sites, cut_sites]
+        else:
+            self.cut_sites = cut_sites
+        if batch_norm:
+            self.Bnorm = self.nn.BatchNorm1d(currdim)
+
+        self.predict_from_dist = predict_from_dist
+        if self.predict_from_dist:
+            self.cpred = nn.Linear(indim, out_classes)
+            self.spred = nn.Softmax(dim = -1)
+        
+        self.padding = padding 
+        if isinstance(self.padding, int):
+            self.padding = [padding, padding]
+        if self.padding == 'same':
+            self.padding = [int(np.floor(l_kernels/2))-int(l_kernels%2==0), int(np.floor(l_kernels/2))]
+        
+        self.fconvlayer = nn.Conv1d(indim, out_classes, kernel_size = l_kernels, bias = bias, stride = strides)
+    
+    def forward(self, x):
+        if self.predict_from_dist:
+            mx = x.mean(dim = -1)
+            mcounts = self.cpred(mx)
+        if self.batch_norm:
+            x = self.Bnorm(x)
+        if self.padding is not None:
+            x = F.pad(x, self.padding, mode = 'constant', value = 0)
+        x = self.fconvlayer(x)
+        x = x[..., self.cut_sites[0]:x.size(dim=-1)-self.cut_sites[1]]
+        if self.predict_from_dist:
+            x = self.spred(x)
+            x = x * mcounts.unsqueeze(-1)
+        return x
+
+
+# Interaction module creates non-linear interactions between all features by multiplying them with each other and then multiplies a weight matrix to them
+class interaction_module(nn.Module):
+    def __init__(self, indim, outdim):
+        super(interaction_module, self).__init__()
+        self.outdim = outdim # if outdim is 1 then use softmax output
+        # else use RelU
+        self.indim = indim
+        self.lineara = nn.Linear(indim, outdim, bias = False)
+        self.linearb = nn.Linear((indim*(indim-1))/2, outdim, bias = False)
+        self.classes = classes
+    def forward(self, barray):
+        insquare = torch.bmm(torch.unsqueeze(barray,-1), torch.unsqueeze(barray,-2))
+        loc = torch.triu_indices(self.indim, self.indim, 1)
+        insquare = insquare[:, loc[0], loc[1]]
+        # could also concatenate and then use linear, then bias would be possible but all parameters would get same regularization treatment
+        outflat = self.lineara(barray)
+        outsquare = self.linearb(insquare.flatten(-2,-1)) # flatten
+        out = outflat + outsquare
+        return out
+
+# Options:
+# maxpooling
+# mean_pooling
+# conv_pooling
+# Conv pooling with softmax over positions can get you attention pooling 
+
+# Custom pooling layer that can max and mean pool 
+class pooling_layer(nn.Module):
+    def __init__(self, max_pooling, mean_pooling = False, conv_pooling = False, pooling_size = None, stride = None, padding = 0):
+        super(pooling_layer, self).__init__()
+        self.mean_pooling = mean_pooling
+        self.max_pooling = max_pooling
+        self.conv_pooling = conv_pooling
+
+        if stride is None:
+            stride = pooling_size
+        
+        if mean_pooling and max_pooling:
+            self.poola = nn.AvgPool1d(pooling_size, stride=stride, padding = padding, count_include_pad = False)
+            self.poolb = nn.MaxPool1d(pooling_size, stride=stride, padding = padding )
+            
+        elif max_pooling and not mean_pooling:
+            self.pool = nn.MaxPool1d(pooling_size, stride=stride, padding = padding)
+        
+        elif mean_pooling and not max_pooling:
+            self.pool = nn.AvgPool1d(pooling_size, stride=stride, padding = padding, count_include_pad = False)
+
+        elif conv_pooling:
+            self.pool = nn.Conv1d(insize, insize, kernel_size = pooling_size, stride = stride, bias = False, padding = padding)
+        
+    def forward(self, barray):
+        if self.mean_pooling and self.max_pooling:
+            return torch.cat((self.poola(barray), self.poolb(barray)), dim = -2)
+        else:
+            return self.pool(barray)
+
+# Custom class that performs convolutions within the pooling size, then pools it to avoid a large intermediate matrix. 
+class pooled_conv():
+    def __init__(self):
+        return NotImplementedError
+
+
+
+
+
+
+
+
+
+
 # if attention should not spread along the entire sequence, use mask to set entries beyond a certain distance to zero
-class receptive_matmul(nn.Module):
+# Better would be if we could prevent computing the entries that are set to zero with the mask
+class receptive_attention(nn.Module):
     def __init__(self, l_seq, receptive, multi_head = True):
         super(receptive_attention, self).__init__()
         self.l_seq = l_seq
-        self.mask = torch.ones(l_seq, l_seq)
-        self.mask = torch.tril(torch.triu(self.mask,-receptive),receptive)
+        # mask is one within the receptive field
+        mask = torch.ones(l_seq, l_seq)
+        # and zero otherwise
+        mask = torch.tril(torch.triu(mask,-receptive),receptive)
+        # mask needs one more dimension if we have multiple heads
+        # need to register the mask to sent it to the correct device with the model
         if multi_head:
-            self.mask = self.mask.view(1,1,l_seq,l_seq,1)
+            # dimensions are batch, n_heads, l_seq X l_seq, and 1 for the dimension of the embedding
+            self.register_buffer('mask', mask.view(1,1,l_seq,l_seq,1))
         else:
-            self.mask = self.mask.view(1,l_seq,l_seq,1)
+            self.register_buffer('mask', mask.view(1,l_seq,l_seq,1))
         self.multi_head = multi_head
+    
     def forward(self, queries, keys):
+        # perform multiplication of keys and queries with diagonal elements outside the receptive field being set to zero
+        # to do that, we create a l_seq X l_seq mat of the keys and queries by introducing a new dimension and expanding it by l_seq
+        # then we set off diagonals to zero
+        # hopefully this reduces time since off-diagonal elements don't need to be matrix multiplied
+        # however, the extension of the dimension may result in high memory usage and maybe slow it down actually 
         if self.multi_head:
-            atmat = torch.sum(queries.unsqueeze(-2).expand(queries.size(dim = 0), queries.size(dim = 1), self.l_seq, self.l_seq, -1)* self.mask* keys.unsqueeze(0).expand(keys.size(dim = 0), keys.size(dim = 1),self.l_seq, self.l_seq, -1), -1)
+            # instead of matmul, we just sum over the embedding dimension
+            atmat = torch.sum(queries.unsqueeze(-2).expand(queries.size(dim = 0), queries.size(dim = 1), self.l_seq, self.l_seq, -1)* self.mask* keys.unsqueeze(-3).expand(keys.size(dim = 0), keys.size(dim = 1),self.l_seq, self.l_seq, -1), -1)
         else:
-            atmat = torch.sum(queries.unsqueeze(-2).expand(queries.size(dim = 0), self.l_seq, self.l_seq, -1)* self.mask* keys.unsqueeze(0).expand(keys.size(dim = 0), self.l_seq, self.l_seq, -1), -1)
+            atmat = torch.sum(queries.unsqueeze(-2).expand(queries.size(dim = 0), self.l_seq, self.l_seq, -1)* self.mask* keys.unsqueeze(-3).expand(keys.size(dim = 0), self.l_seq, self.l_seq, -1), -1)
         return atmat
         
 # Include Feed forward with RELUs and residual around them
 # Include batchnorm after residuals
+# Look at faster implementation of attention
 class MyAttention_layer(nn.Module):
-    def __init__(self, indim, dim_embedding, n_heads, dim_values = None, dropout = 0., bias = False, residual = False, sum_out = False, positional_embedding = True, posdim = None, batchnorm = False, layernorm = True, Linear_layer = True, Activation = 'GELU', receptive_field = None):
+    def __init__(self, indim, dim_embedding, n_heads, dim_values = None, in_len = None, dropout = 0., bias = False, residual = True, sum_out = False, positional_embedding = True, posdim = None, batchnorm = False, layernorm = True, Linear_layer = True, Activation = 'GELU', receptive_field = None):
         super(MyAttention_layer, self).__init__()
         
-        
+        # keys and queries have naturaly a dimesion dim_embedding
+        # while the values can have another dimension that is independent of the two embeddings
         if dim_values is None:
             self.dim_values = dim_embedding
         else:
             self.dim_values = dim_values
         
+        # The dimension of the positional embedding 
         if posdim is None:
             posdim = indim
         self.posdim = posdim
-        self.n_heads = n_heads
-        self.dim_embedding = dim_embedding
-        self.sum_out = sum_out
-        self.residual = residual
-        self.positional_embedding = positional_embedding
-        self.pos_queries = None
-        self.receptive_field = receptive_field
-        self.receptive_matmul = None
+        self.n_heads = n_heads # number of attention heads that are processed in parallel
+        self.dim_embedding = dim_embedding # dimension of the the embedding keys and queries
+        self.sum_out = sum_out # if True sums over the outputs representations from all heads instead of concatenating them
+        self.residual = residual # if True residual will be added to output of attention layer
+        self.positional_embedding = positional_embedding # if True then a positional embedding will be added to the input before the key and query embedding
+        if in_len is not None:
+            self.register_buffer('pos_queries', self.init_pos_embedding(self.posdim,in_len))
+        else:   
+            self.register_buffer('pos_queries', None) # pos_queries are the positional embedding that will be added
+        
+        self.receptive_field = receptive_field # if given, attention matrix will only be computed between positions that are within the receptive field distance ATTENTION: may not work yet.
+        if in_len is not None and self.receptive_field is not None:
+            self.receptive_matmul = receptive_attention(in_len, self.receptive_field)
+        else:
+            self.receptive_matmul = None # this is the receptive matmul function. However, we cannot inialize it here because we do not require the input len to be given. So it is initialized in the forward loop. ATTENTION: This procedure may cause problems when we change the device of the model later. 
         
         # Generate embedding for each head
+        # if multiple heads are used, the embedding for each head is generated together. 
         dim_embedding = self.n_heads * dim_embedding
         dim_values = self.n_heads *self.dim_values
         
+        # if positional embedding is used, the embedding convolution input needs to be extended by the dimension of the positional embedding
         if self.positional_embedding:
-            self.embedd_queries = nn.Conv1d(indim+posdim, dim_embedding, 1, bias = False)
-            self.embedd_keys = nn.Conv1d(indim+posdim, dim_embedding, 1, bias = False)
+            self.embed_queries = nn.Conv1d(indim+posdim, dim_embedding, 1, bias = False)
+            self.embed_keys = nn.Conv1d(indim+posdim, dim_embedding, 1, bias = False)
+            self.embed_values = nn.Conv1d(indim+posdim, dim_values, 1, bias = False)
         else:    
-            self.embedd_queries = nn.Conv1d(indim, dim_embedding, 1, bias = False)
-            self.embedd_keys = nn.Conv1d(indim, dim_embedding, 1, bias = False)
+            self.embed_queries = nn.Conv1d(indim, dim_embedding, 1, bias = False)
+            self.embed_keys = nn.Conv1d(indim, dim_embedding, 1, bias = False)
+            self.embed_values = nn.Conv1d(indim, dim_values, 1, bias = False)
         
-        self.embedd_values = nn.Conv1d(indim, dim_values, 1, bias = False)
-        
-        
+        # combine layer is the linear layer that is used after concatenation of the heads in multi-head attention, here the output dimension is reduced to dim_values from n_heads*dim_values
         if self.sum_out:
             self.combine_layer = nn.Conv1d(self.dim_values, self.dim_values, 1, bias = False)
         else:
             self.combine_layer = nn.Conv1d(self.dim_values*self.n_heads, self.dim_values, 1, bias = False)
         
-        
+        # if residuals should be added then the input is directly added if the indim is equal to the output dimension, otherwise a convlution of width 1 is used to adjust dimensions
         if self.residual:
             if self.dim_values == indim:
                 self.reslayer = nn.Identity()
             else:
                 self.reslayer = nn.Conv1d(indim, self.dim_values, 1, bias = False)
-        
+        # dropout can be included at two different positions, before linear tranformations
         self.dropout = dropout
         if dropout > 0:
             self.dropout_layer = nn.Dropout(dropout)
         
+        # batch norm is performed to the input
         self.batchnorm = batchnorm
         if self.batchnorm:
             self.bnorm = nn.BatchNorm1d(indim)
         
+        # layernorm is performed each time after residual was added
         self.layernorm = layernorm
         if self.layernorm:
             self.layer_norm = nn.LayerNorm(self.dim_values)
         
+        # Fully connected feed forward network, see 3.3 in paper: Liner_layer applies two linear convolutions but expands the dimension by a factor 4 in the middle. 
         self.Linear_layer = Linear_layer
         if self.Linear_layer:
-            self.feedforward = nn.Sequential(nn.Conv1d(self.dim_values, self.dim_values*3, 1, bias = False), func_dict[Activation], nn.Conv1d(self.dim_values*3, self.dim_values, 1, bias = False))
+            self.feedforward = nn.Sequential(nn.Conv1d(self.dim_values, self.dim_values*4, 1, bias = False), func_dict[Activation], nn.Conv1d(self.dim_values*4, self.dim_values, 1, bias = False))
             if self.layernorm:
                 self.feedforward_layer_norm = nn.LayerNorm(self.dim_values)
             
-        
-    def pos_embedding_function(self, dim, length):
+    
+    # this function initializes the positional embedding that is constant and will not be updated
+    def init_pos_embedding(self, dim, length):
+        # number of dimensions represented by sines
         dsin = int(dim/2)
+        # nubmer of dimensions represented by cosines
         dcos = dim - dsin
-        wavelengths = (length/2)**((torch.arange(dsin)+10)/dsin).unsqueeze(-1)
+        # each dimension has a different wavelength with which the sine and cosine oszilate
+        # from (length/2)**10/dsin to (length/2)**(10+dsin)/dsin
+        # the orignal in the paper is 10000**2i/dsin, but this might be inadequate for the length of the sequences that we're using since this results in very long wavelengths and very little change
+        sinwavelengths = (length/2)**((torch.arange(dsin)+10)/dsin).unsqueeze(-1)
+        coswavelengths = (length/2)**((torch.arange(dcos)+10)/dcos).unsqueeze(-1)
+        # for each position, there will be a different combination of sine and cosine values
         xpos = torch.arange(length).unsqueeze(0)
-        sines = torch.sin(2*np.pi*xpos/wavelengths)
-        cosines = torch.cos(2*np.pi*xpos/wavelengths)
+        sines = torch.sin(2*np.pi*xpos/sinwavelengths)
+        cosines = torch.cos(2*np.pi*xpos/coswavelengths)
         posrep = torch.cat([sines,cosines], dim = 0)
+        # posrep dimension: (dim, length)
         return posrep
         
     def forward(self,x):
+        
         if self.batchnorm:
             x = self.bnorm(x)
+        
+        if self.residual:
+            residual = self.reslayer(x)
+        
         if self.positional_embedding:
+            # if positional embedding dont exist yet, they are initialized in the first forward loop since we don't have the length of the sequence in the first place. 
             if self.pos_queries is None:
-                self.pos_queries = self.pos_embedding_function(self.posdim, x.size(dim = -1))
-                if self.embedd_queries.weight.is_cuda:
-                    devicetobe = self.embedd_queries.weight.get_device()
+                self.pos_queries = self.init_pos_embedding(self.posdim, x.size(dim = -1))
+                if self.embed_queries.weight.is_cuda:
+                    devicetobe = self.embed_queries.weight.get_device()
                     self.pos_queries = self.pos_queries.to('cuda:'+str(devicetobe))
             bsize = x.size(dim = 0)
-            qpred = self.embedd_queries(torch.cat((x, self.pos_queries.expand(bsize,-1,-1)),dim = 1))
-            kpred = self.embedd_keys(torch.cat((x, self.pos_queries.expand(bsize,-1,-1)),dim = 1))
-        else:
-            qpred = self.embedd_queries(x)
-            kpred = self.embedd_keys(x)
-        vpred = self.embedd_values(x)
+            # concatenate a dimensional embedding with every x to give to query and key
+            x = torch.cat((x, self.pos_queries.unsqueeze(0).expand(bsize,-1,-1)),dim = 1)
+        
+        # embed x into keys queries and values
+        qpred = self.embed_queries(x)
+        kpred = self.embed_keys(x)
+        vpred = self.embed_values(x)
         
         # split into n_heads
         qpred = qpred.view(qpred.size(dim = 0), self.n_heads, -1, qpred.size(dim = -1))
@@ -971,16 +1050,20 @@ class MyAttention_layer(nn.Module):
         vpred = vpred.view(vpred.size(dim = 0), self.n_heads, -1, vpred.size(dim = -1))
         # compute attention matrix
         
-        qpred = qpred.transpose(-1,-2)
-        if receptive_field is not None:
-            # Only has none-zero elements within receptive field but needs for loop unfortunately
+        
+        if self.receptive_field is not None:
+            # Only has none-zero elements within receptive field but may need too much memory 
+            # the dimensions of the inputs may not be correct, need to be debugged.
             if self.receptive_matmul is None:
-                self.receptive_matmul = receptive_matmul(qpred.size(-1), self.receptive_field)
-                devicetobe = self.qpred.get_device()
-                self.receptive_matmul.to('cuda:'+str(devicetobe))
+                self.receptive_matmul = receptive_attention(qpred.size(-1), self.receptive_field)
+                if self.receptive_matmul.mask.is_cuda:
+                    devicetobe = self.qpred.get_device()
+                    self.receptive_matmul.to('cuda:'+str(devicetobe))
             attmatix = self.receptive_matmul(qpred, kpred)
         else:
+            qpred = qpred.transpose(-1,-2)
             attmatrix = torch.matmul(qpred, kpred)
+        # scale attention matrix
         attmatrix /= np.sqrt(self.dim_embedding)
         # compute softmax
         soft = nn.Softmax(dim = -1)
@@ -988,24 +1071,29 @@ class MyAttention_layer(nn.Module):
         # compute mixture of values from attention
         attmatrix = torch.matmul(attmatrix, vpred.transpose(-1,2)).transpose(-2,-1)
         
+        # sum over all heads
         if self.sum_out:
             pred = torch.sum(attmatrix, dim = 1)
         else:
             pred = torch.flatten(attmatrix, start_dim = 1, end_dim = 2)
         
+        # apply dropout before linear layer
         if self.dropout >0:
             pred = self.dropout_layer(pred)
         
-        
+        # apply linear layer that combines all heads to dim_values
         pred = self.combine_layer(pred)
         
+        # add residual
         if self.residual:
-            pred = pred + self.reslayer(x)
+            pred = pred + residual 
         
+        # perform layer norm
         if self.layernorm:
             pred = self.layer_norm(pred.transpose(-1,-2))
             pred = pred.transpose(-2,-1)
         
+        # apply fully connected layer
         if self.Linear_layer:
             if self.residual:
                 res = pred
@@ -1070,6 +1158,7 @@ loss_dict = {'MSE':nn.MSELoss(reduction = 'none'),
              'Correlationmse': correlation_mse(reduction = 'none'),
              'MSECorrelation': correlation_mse(reduction = 'none', dimcorr = 0),
              'Correlationboth': correlation_both(reduction = 'none'),
+             'JSD': JSD(reduction = 'none', include_mse = False),
              'JensenShannon': JSD(reduction = 'none', mean_size = 25),
              'JensenShannonCount': JSD(reduction = 'none', mean_size = None),
              'DLogMSE': LogMSELoss(reduction = 'none', log_prediction = True),

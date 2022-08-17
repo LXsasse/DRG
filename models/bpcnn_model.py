@@ -161,13 +161,15 @@ class bpcnn(nn.Module):
         # reduce the dimensions of the output of the convolutional layer before giving it to the transformer layer
         self.embedding_convs = embedding_convs
         
-        self.n_transformer = n_transformer
-        self.n_attention = n_attention
-        self.n_distattention = n_distattention # intializes the distance_attention with n heads
-        self.dim_distattention = dim_distattention # multiplicative value by which dimension will be increased in embedding
+        self.n_transformer = n_transformer # N_transformer defines how many TransformerEncoderLayer from torch will be used in TransformerEncoder (torch based module)
+        self.n_attention = n_attention # this will set the number of custom attention/transformer layers that are modelled after the original
+        self.n_distattention = n_distattention # defines the number of heads
+        self.dim_distattention = dim_distattention # multiplicative value by which the input dimension will be increased/decreased in the key and query embedding
+        ## make son that it can also be the dimension itself and not a multiplicative factor
         self.dim_embattention = dim_embattention # dimension of values
-        self.sum_attention = sum_attention # if inputs are duplicated n_heads times then they will summed afterwards
-        self.maxpool_attention = maxpool_attention # generate maxpool layer after attention layer to reduce length of input
+        self.sum_attention = sum_attention # if inputs are duplicated n_heads times then they will summed afterwards across all heads, more important if torch transformer is used because it increases the dimension by the multitude of the number of heads
+        self.maxpool_attention = maxpool_attention # generate maxpool layer after custom attention layer to reduce length of input, use int as input for maxpool length
+            # to do: include a mean_pooling option here
         
         self.transformer_convolutions = transformer_convolutions # Number of additional convolutions afer transformer layer
         self.trpooling_residual = trpooling_residual # Number of layers that are scipped by residual layer
@@ -371,7 +373,7 @@ class bpcnn(nn.Module):
 
             distattention = OrderedDict()
             for na in range(self.n_attention):
-                distattention['Mheadattention'+str(na)] = MyAttention_layer(currdim, int(self.dim_distattention *currdim), self.n_distattention, dim_values = self.dim_embattention, dropout = dropout, bias = False, residual = True, sum_out = self.sum_attention, combine_out = True, batchnorm = self.batch_norm)
+                distattention['Mheadattention'+str(na)] = MyAttention_layer(currdim, int(self.dim_distattention *currdim), self.n_distattention, dim_values = self.dim_embattention, in_len= currlen, dropout = dropout, bias = False, residual = True, sum_out = self.sum_attention, batchnorm = self.batch_norm)
                 if self.dim_embattention is None:
                     currdim = int(self.dim_distattention *currdim)
                 else:
@@ -420,6 +422,7 @@ class bpcnn(nn.Module):
             self.gapped_convolutions = parallel_module(modellist, flatten = False)
         
         if self.verbose:
+            print(currdim, currlen)
             print('outclasses', n_classes, l_out)
         
         if l_out > currlen:
@@ -627,7 +630,7 @@ if __name__ == '__main__':
     
     elif '--norm1outputbins' in sys.argv:
         print('ATTENTION: output has been normalized along bins')
-        outname += '-n2outc'
+        outname += '-n1outb'
         outnorm =np.sum(Y, axis = 2)[...,None]
         Y = Y/outnorm
     
