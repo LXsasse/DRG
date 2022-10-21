@@ -37,7 +37,8 @@ func_dict = {'ReLU': nn.ReLU(),
              'Tanh': nn.Tanh(),
              'Id0': nn.Identity(),
              'Softmax' : nn.Softmax(),
-             'EXP' : EXPmax(),
+             'EXPmax' : EXPmax(crop_max = 128),
+             'EXP': EXPmax(crop_max = 2**32),
              'SQUARED': POWmax(exponent = 2),
              'THIRD': POWmax(exponent = 3)}
 
@@ -61,13 +62,10 @@ class correlation_loss(nn.Module):
         self.eps = eps
         
     def forward(self, outy, tary):
-        if self.dim == 0 :
-            outy = outy - torch.mean(outy, dim = self.dim)[None, :]
-            tary = tary - torch.mean(tary, dim = self.dim)[None, :]
-        else:
-            outy = outy - torch.mean(outy, dim = self.dim)[:, None]
-            tary = tary - torch.mean(tary, dim = self.dim)[:,None]
-        out = 1. - torch.sum(outy*tary, dim = self.dim)/(self.eps+torch.sqrt(torch.sum(outy**2, dim = self.dim) * torch.sum(tary**2, dim = self.dim)))
+        outy = outy - torch.mean(outy, dim = self.dim).unsqueeze(self.dim)
+        tary = tary - torch.mean(tary, dim = self.dim).unsqueeze(self.dim)
+            
+        out = 1. - (torch.sum(outy*tary, dim = self.dim)+self.eps)/(self.eps+torch.sqrt(torch.sum(outy**2, dim = self.dim) * torch.sum(tary**2, dim = self.dim)))
         if self.reduction != 'none':
             if self.reduction == 'mean':
                 out = torch.mean(out)
@@ -117,6 +115,8 @@ class cosine_loss(nn.Module):
         self.dim = dim
         self.reduction = reduction
     def forward(self, outy, tary):
+        
+        # Does not work if one variance of one is zero, sets all the parameters to nan after backpropagation then
         out = 1. - torch.sum(outy*tary, dim = self.dim)/torch.sqrt(torch.sum(outy**2, dim = self.dim) * torch.sum(tary**2, dim = self.dim))
         if self.reduction != 'none':
             if self.reduction == 'mean':
@@ -175,18 +175,20 @@ class JSD(nn.Module):
                 self.l_out = int(np.ceil(p.size(dim = -1)/self.mean_size))
             pn = self.meanpool(p).repeat(1,1,self.mean_size)
             qn = self.meanpool(q).repeat(1,1,self.mean_size)
-            
-        p = p-torch.min(p,dim =-1)[0].unsqueeze(dim=-1)
-        q = q-torch.min(q,dim =-1)[0].unsqueeze(dim=-1)
+        
+        # ONLY USE JSD if values are GREATER than ZERO. Make sure by using RELU, Sigmoid, or Softmax function
+        #p = p-torch.min(p,dim =-1)[0].unsqueeze(dim=-1)
+        #q = q-torch.min(q,dim =-1)[0].unsqueeze(dim=-1)
+        p, q = p + self.eps, q + self.eps
         if self.norm_last:
             normp, normq = p.sum(dim = -1)[...,None], q.sum(dim = -1)[...,None]
-            normp[normp == 0] = 1.
-            normq[normq == 0] = 1.
+            #normp[normp == 0] = 1.
+            #normq[normq == 0] = 1.
             p = p/normp
             q = q/normq
-        m = (0.5 * (p + q) + self.eps).log()
-        p = (p+self.eps).log()
-        q = (q+self.eps).log()
+        m = (0.5 * (p + q)).log()
+        p = p.log()
+        q = q.log()
         kl = 0.5 * (self.kl(m, p) + self.kl(m, q)) 
         if self.sum_axis is not None:
             klsize = kl.size()
@@ -287,8 +289,47 @@ class LogCountDistLoss(nn.Module):
             q = q.mean(dim = -1).unsqueeze(-1).expand(psize)
         return self.mse(p,q) + self.ratio * self.mse(pn,qn)
 
+# dictionary with loss functions
+basic_loss_dict = {'MSE':nn.MSELoss(reduction = 'none'), 
+             'L1Loss':nn.L1Loss(reduction = 'none'),
+             'CrossEntropy': nn.CrossEntropyLoss(reduction = 'none'),
+             'BCELoss': nn.BCELoss(reduction = 'none'),
+             'BCEMSE': BCEMSE(reduction = 'none'),
+             'KL': nn.KLDivLoss(reduction = 'none'),
+             'PoissonNNL':nn.PoissonNLLLoss(reduction = 'none'),
+             'GNLL': nn.GaussianNLLLoss(reduction = 'none'),
+             'NLL': nn.NLLLoss(reduction = 'none'),
+             'Cosinedata': cosine_loss(dim = 1, reduction = 'none'),
+             'Cosineclass': cosine_loss(dim = 0, reduction = 'none'),
+             'Cosineboth': cosine_both(reduction = 'none'),
+             'Correlationdata': correlation_loss(dim = -1, reduction = 'none'),
+             'Correlationclass': correlation_loss(dim = 0, reduction = 'none'),
+             'Correlationmse': correlation_mse(reduction = 'none', dimcorr = -1),
+             'MSECorrelation': correlation_mse(reduction = 'none', dimcorr = 0),
+             'Correlationboth': correlation_both(reduction = 'none')}
+
+class ContrastiveLoss(nn.Module):
+    def __init__(self, mainloss = 'MSE', contrastive_loss = 'MSE', contrastive_metric = 'Dif'):
+        super(ContrastiveLoss, self).__init__()
+        self.main = basic_loss_dict[mainloss]
+        self.cont = basic_loss_dict[contrastive_loss]
+        self.contrastive_metric = contrastive_metric
+    def forward(self, p,q):
+        l = self.main(p,q)
+        # loss across all differences between tracks from multi-task learning
+        if self.contrastive_metric == 'Dif':
+            pdif, qdif = p.unsqueeze(-2) - p.unsqueeze(-1), q.unsqueeze(-2) - q.unsqueeze(-1)
+        elif self.contrastive_metric == 'Frac' or self.contrastive_metric == 'Logfrac':
+            # need to subtract minimum first
+            pqmin = min(torch.min(p), torch.min(q))
+            pdif, qdif = p-pqmin, q-pqmin
+            pdif, qdif = pdif + 0.1, qdif + 0.1
+            pdif, qdif = pdif.unsqueeze(-2) / pdif.unsqueeze(-1), qdif.unsqueeze(-2) / qdif.unsqueeze(-1)
+            if self.contrastive_metric == 'Logfrac':
+                pdif, qdif = torch.log(pdif + 1.), torch.log(qdif + 1.)
         
-    
+        lc = self.cont(pdif, qdif).mean(-1)
+        return l + lc
     
 # try an error that measures the error of counts and the error of probabilities within one sequence    
 
@@ -308,6 +349,49 @@ class Complex(nn.Module):
         pred2 = pred2 * self.variables
         pred = torch.sum(torch.cat([pred.unsqueeze(-1), pred2], dim =-1), dim = -1)
         return pred
+
+
+
+class simple_multi_output(nn.Module):
+    def __init__(self, out_relation = 'DIFFERENCE', pre_function = None, log = None, logoffset = None, offset = 1e-12):
+        super(simple_multi_output, self).__init__()
+        if logoffset is None and log is not None:
+            self.logoffset = log
+            self.log = log
+        else:
+            self.logoffset = logoffset
+            self.log = log
+        if self.log is not None:
+            self.log = torch.log(torch.tensor(log))
+        self.out_relation = out_relation # difference, expdifference, FRACTION, LOGXPLUSFRACTION, LOGXPLUSDIFFERENCE
+        self.pre_function = pre_function
+        if self.pre_function is not None:
+            self.pre_function = func_dict[pre_function]
+        self.offset = offset
+        if 'EXPDIFFERENCE' in self.out_relation.upper():
+            self.exp = EXPmax(crop_max = 2048)
+
+
+    def forward(self, x):
+        xa, xb = x[0], x[1]
+        if self.pre_function is not None:
+            xa, xb = self.pre_function(xa), self.pre_function(xb)
+        
+        if 'DIFFERENCE' == self.out_relation.upper():
+            x = xb - xa
+        elif 'DIFFERENCE' in self.out_relation.upper():
+            x = xa - xb
+        elif 'FRACTION' in self.out_relation.upper():
+            x = (xa+self.offset)/(xb+self.offset)
+        
+        if 'EXPDIFFERENCE' in self.out_relation.upper():
+            x = self.exp(-x)
+        
+        if 'LOGXPLUS' in self.out_relation.upper():
+            x = torch.log(self.logoffset + x)
+            if self.log is not None:
+                x = x/self.log
+        return x
 
 
 # Creates several layers for each class seperately:
@@ -462,6 +546,7 @@ class Padded_AvgPool1d(nn.Module):
         self.register_buffer('norm',None)
     def forward(self, x):
         xs = x.size()
+        #print(xs)
         if self.norm is None:
             #print(self.norm, dict(self.named_buffers()))
             self.norm = torch.ones(xs[1:]).unsqueeze(0).unsqueeze(0)
@@ -480,8 +565,9 @@ class Padded_AvgPool1d(nn.Module):
             #print('fnormsize', self.norm.size(), self.norm[0,0,0])
         if self.gopad:
             x = F.pad(x, self.padding)
-        x = F.conv2d(x.unsqueeze(1), self.weight, stride = self.stride, dilation = self.dilation)
-        #print(self.weight, self.norm)
+        #print(x.size())
+        x = F.conv2d(x.unsqueeze(1), self.weight, stride = (1,self.stride), dilation = self.dilation)
+        #print(x.size(), self.norm.size())
         x = x/self.norm
         x = x.squeeze(1)
         #print('fxsize', x.size())
@@ -493,6 +579,7 @@ class Residual_convolution(nn.Module):
     def __init__(self, resdim, currdim, pool_lengths):
         super(Residual_convolution, self).__init__()
         rconv = OrderedDict()
+        # if empty list is given as pool_lengths and resdim == currdim then no module is initiated and self.compute_residual is set to False, which then returns the input itself
         self.compute_residual = False
         if resdim != currdim:
             rconv['conv'] = nn.Conv1d(resdim, currdim, kernel_size = 1, bias = False, stride = 1)
@@ -524,7 +611,7 @@ class Residual_convolution(nn.Module):
         return x
 
 class Padded_Conv1d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=None, dilation=1, bias=True, padding_mode='zeros', value = None):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=None, dilation=1, bias=True, padding_mode='zeros', value = None, reverse_complement = False):
         super(Padded_Conv1d, self).__init__()
         self.in_channels = in_channels, 
         self.out_channels = out_channels
@@ -541,22 +628,99 @@ class Padded_Conv1d(nn.Module):
             self.padding_mode = 'constant'
             self.value = 0
         self.conv1d = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=0, dilation=dilation, bias=bias)
+        self.reverse_complement = reverse_complement
+        
+    def forward(self, x):
+        if self.padding is not None:
+            x = F.pad(x, self.padding, mode = self.padding_mode, value = self.value)
+        if self.reverse_complement:
+            xr = torch.flip(self.conv1d(torch.flip(x, dims = [-2,-1])), dims = [-2])
+            xf = self.conv1d(x)
+            x = torch.amax(torch.cat([xf.unsqueeze(0), xr.unsqueeze(0)], dim = 0), dim = 0)
+        else:
+            x = self.conv1d(x)
+        return x
+ 
+# Reverse complement convolution that uses both + and minus strand and combines them with maxpooling
+class RC_Conv1d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, stride_rows = None, padding=None, dilation=1, bias=True, padding_mode='zeros', value = None, reverse_complement = True):
+        ###Uses 2D convolution for 8 row representation of on reverse complement
+        super(RC_Conv1d, self).__init__()
+        self.in_channels = in_channels 
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride 
+        if stride_rows is None:
+            self.stride_rows = in_channels
+        else:
+            self.stride_rows = stride_rows
+       
+        self.reverse_complement = reverse_complement
+        self.padding = padding 
+        if isinstance(self.padding, int):
+            self.padding = [padding, padding]
+        self.dilation = dilation
+        if bias:
+            self.bias = Parameter(torch.empty(out_channels))
+        else:
+            self.bias = None
+            
+        self.padding_mode = padding_mode
+        self.value = value
+        if padding_mode == 'zeros':
+            self.padding_mode = 'constant'
+            self.value = 0
+        # use functional conv2d to perform dilation in only one direction
+        self.weight = Parameter(torch.empty(out_channels, in_channels, kernel_size))
+        self.init_parameters()
+        
+    def init_parameters(self) -> None:
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+        bound = 1. / math.sqrt(fan_in) if fan_in > 0 else 0
+        nn.init.uniform_(self.bias, -bound, bound)
     
     def forward(self, x):
         if self.padding is not None:
             x = F.pad(x, self.padding, mode = self.padding_mode, value = self.value)
-        x = self.conv1d(x)
+        # reverse complement row is read in the opposite direction by the tf, therefore, we would need to reverse the weights of the kernels in the last dimension and then read it from left to right.
+        # Instead we can flip the direction of the input and the flip the output back so that the positions are properly aligned again.
+        if self.reverse_complement:
+            x = torch.cat([x, torch.flip(x,dims = 1)])
+            xf = F.conv2d(x[:,:int(x.size(dim =1)/2)].unsqueeze(1), self.weight.unsqueeze(1), bias = self.bias, stride = (self.stride_rows, self.stride), dilation = (1, self.dilation))
+            xb = torch.flip(F.conv2d(torch.flip(x[:,-int(x.size(dim =1)/2):].unsqueeze(1), dims = [-1]), self.weight.unsqueeze(1), bias = self.bias, stride = (self.stride_rows, self.stride), dilation = (1, self.dilation)) , dims = [-1])
+            x = torch.cat([xf, xb], dim = 2)
+            x = torch.amax(x,dim = 2)
+        else:   
+            x = F.conv2d(x.unsqueeze(1), self.weight.unsqueeze(1), bias = self.bias, stride = (self.stride_rows, self.stride), dilation = (1, self.dilation))
+            x = torch.flatten(x,start_dim = 1, end_dim = 2)
         return x
-        
-
+ 
+ 
+# Tower of residual dilated convolution blocks
 class Res_Conv1d(nn.Module):
     def __init__(self, indim, inlen, n_kernels, l_kernels, n_layers, kernel_increase = 1., max_pooling = 0, mean_pooling=0, residual_after = 1, residual_same_len = False, activation_function = 'GELU', strides = 1, dilations = 1, bias = True, dropout = 0., batch_norm = False, act_func_before = True, residual_entire = False):
+        '''
+        indim: number of channels of input at axis 1
+        inlen: len of sequence of input at axis 2
+        n_kernels: number of kernels that should be used in every layer
+        l_kernels: length of kernels that should be used in every layer
+        kernel_increase: multiplier that increases the number of kernels
+        max_pooling: if > 0 then maxpooling with stride and size
+        mean_pooling: if > 0 then meanpooling with stride and size
+        residual_after: after how many conv layers a residual should be added
+        residual_same_len: If True, even if the convolutional layer does not change the dimension of the output to the input, a mean pooling will be performed that meanpools in the size and stride as the convolutional layer
+        '''
         super(Res_Conv1d, self).__init__()
         self.residual_after = residual_after
         self.convlayers = nn.ModuleDict()
         self.kernel_function = func_dict[activation_function]
         self.residual_entire = residual_entire
         
+        kernel_increase = np.ones(n_layers)*kernel_increase
+        if n_kernels != indim:
+            kernel_increase[0] = n_kernels/indim
+            
         if isinstance(l_kernels, list) or isinstance(l_kernels, np.ndarray):
             l_kernels = np.array(l_kernels)
         else:
@@ -573,39 +737,49 @@ class Res_Conv1d(nn.Module):
             dilations = np.ones(n_layers, dtype = int)*dilations
         
         currdim, currlen = np.copy(indim), np.copy(inlen)
-        if residual_after > 0:
-            resdim = np.copy(currdim)
-            reslen = np.copy(currlen)
-            
+        resdim = np.copy(currdim)
+        reslen = np.copy(currlen)
         reswindows = []
+        
         if residual_entire:
             resentire = []
             resedim = np.copy(currdim)
             
         for n in range(n_layers):
-            
+            # early stopping criteria if one chose too many layers and the sequence got shorter than the kernel length
             if currlen < l_kernels[n]:
                 break
-            
+            # batch norm before providing the sequence to the convolution
             if batch_norm:
                 self.convlayers['Bnorm'+str(n)] = self.nn.BatchNorm1d(currdim)
+            # decide if activation function should be applied before or after convolutional layer
             if act_func_before:
                 self.convlayers['Conv_func'+str(n)] = self.kernel_function
             
+            # (non-symmetric) padding to have same padding left and right of sequence and get same sequence length
             convpad = [int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))-int((dilations[n]*(l_kernels[n]-1)+1)%2==0), int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))]
-            self.convlayers['Conv'+str(n)] = Padded_Conv1d(currdim, int(currdim*kernel_increase), kernel_size = l_kernels[n], bias = bias, stride = strides[n], dilation = dilations[n], padding = convpad)
+            # padded convolutional layer
+            self.convlayers['Conv'+str(n)] = Padded_Conv1d(currdim, int(currdim*kernel_increase[n]), kernel_size = l_kernels[n], bias = bias, stride = strides[n], dilation = dilations[n], padding = convpad)
+            # see above
             if not act_func_before:
                 self.convlayers['Conv_func'+str(n)] = self.kernel_function
-            reswindows.append([l_kernels[n], strides[n], 'Mean', convpad, dilations[n]])
-            if residual_entire:
-                resentire.append(reswindows[-1])
-            currdim = int(currdim*kernel_increase)
+            # compute the new dimension and length of after the convolution
+            currdim = int(currdim*kernel_increase[n])
             currlen = int(np.floor((currlen +convpad[0]+convpad[1]- dilations[n]*(l_kernels[n]-1)-1)/strides[n]+1))
+            # if the reslen is different from the currlen, due to strides > 1, then perform mean pooling to adujust residual
+            if residual_same_len or reslen != currlen:
+                reswindows.append([l_kernels[n], strides[n], 'Mean', convpad, dilations[n]])
+            # if a residual from before conv block should be added to output after the last convolution, from start to end basically then collect all dimensionality changes.
+            if residual_entire and (residual_same_len or reslen != currlen):
+                resentire.append(reswindows[-1])
             
-            if (residual_after > 0 and (n+1)%residual_after == 0) and (residual_same_len or reslen != currlen):
+            
+            if (residual_after > 0 and (n+1)%residual_after == 0):
+                print('Residuals introduced', reswindows, resdim, currdim)
                 self.convlayers['ResiduallayerConv'+str(n)] = Residual_convolution(resdim, currdim, reswindows)
                 reswindows = []
                 resdim = np.copy(currdim)
+                reslen = np.copy(currlen)
                 
             if dropout > 0.:
                 self.convlayers['Dropout_Convs'+str(n)] = nn.Dropout(p=dropout)
@@ -615,18 +789,23 @@ class Res_Conv1d(nn.Module):
                     break
                 maxpad = int(np.ceil((max(max_pooling, mean_pooling) - currlen%max(max_pooling, mean_pooling))/2))*int(currlen%max(max_pooling, mean_pooling)>0)
                 self.convlayers['Poolingconvs'+str(n)] = pooling_layer(max_pooling > 0, mean_pooling > 0, pooling_size = max(max_pooling, mean_pooling), stride=max(max_pooling, mean_pooling), padding = maxpad)
-                if max_pooling > 0:
-                    reswindows.append([max(max_pooling, mean_pooling),max(max_pooling, mean_pooling),'Max', maxpad, 1])
-                else:
-                    reswindows.append([max(max_pooling, mean_pooling),max(max_pooling, mean_pooling),'Mean',maxpad,1])
-                if residual_entire:
-                    resentire.append(reswindows[-1])
+                
                 currdim = (int(max_pooling > 0) + int(mean_pooling>0)) * currdim
                 currlen = int(np.ceil(currlen/max(max_pooling, mean_pooling)))
                 
+                if residual_after > 0:
+                    if max_pooling > 0:
+                        reswindows.append([max(max_pooling, mean_pooling),max(max_pooling, mean_pooling),'Max', maxpad, 1])
+                    else:
+                        reswindows.append([max(max_pooling, mean_pooling),max(max_pooling, mean_pooling),'Mean',maxpad,1])
+                reslen = currlen
+                if residual_entire:
+                    resentire.append(reswindows[-1])
+                
+                
                 
         if residual_entire:
-            self.residual_entire = Residual_convolution(resedim,currdim, resentire)
+            self.residual_entire = Residual_convolution(resedim, currdim, resentire)
         else:
             self.residual_entire = None
         self.currdim, self.currlen = currdim, currlen
@@ -679,16 +858,22 @@ class gap_conv(nn.Module):
         self.out_len = int(np.floor((in_len + padding - kernel_size)/stride +1))
         # max pooling before layers are flattened to reduce dimension of output given to fully connected layer
         self.pooling = None
+        if pooling == True:
+            poolstride = int(kernel_size/2)
+        elif pooling > 1:
+            poolstride = pooling
+            pooling = True
+        
         if pooling: # pooling max
             # pooling_padding makes sure that some positions are not ignored in pooling, simlar to ceil_mode but with symmetric effect
             pooling_padding = int(np.ceil((kernel_size - self.out_len%int(kernel_size/2))*int(self.out_len%int(kernel_size/2)>0)/2))
-            self.pooling = nn.MaxPool1d(kernel_size, stride = int(kernel_size/2), padding = pooling_padding)
+            self.pooling = nn.MaxPool1d(kernel_size, stride = poolstride, padding = pooling_padding)
             # when dimensions are pooled, the kernel_size and kernel_gap is reduced by the pooling size
-            self.kernel_gap = int(self.kernel_gap/int(kernel_size/2))
-            self.kernel_size = int(self.kernel_size/int(kernel_size/2))
+            self.kernel_gap = int(self.kernel_gap/poolstride)
+            self.kernel_size = int(self.kernel_size/poolstride)
             # pool with kernel_size but stride kernel_size/2
             # gap becomes gap*2/kernelsize 
-            self.out_len = int((self.out_len+2*pooling_padding-kernel_size)/int(kernel_size/2))+1
+            self.out_len = int((self.out_len+2*pooling_padding-kernel_size)/poolstride)+1
         
         # residuals can be generated for the gapped conv operation
         self.residual = None
@@ -699,7 +884,7 @@ class gap_conv(nn.Module):
             if not pooling:
                 self.residual['AvgPool'] = nn.Identity()
             else:
-                self.residual['AvgPool'] = nn.AvgPool1d(kernel_size, stride = int(kernel_size/2), padding = int(np.floor(kernel_size/2)), count_include_pad=False)
+                self.residual['AvgPool'] = nn.AvgPool1d(kernel_size, stride = poolstride, padding = pooling_padding, count_include_pad=False)
             self.residual = nn.Sequential(self.residual)
             #add residual to every to every gapped kernel 
         
@@ -734,8 +919,8 @@ class gap_conv(nn.Module):
         out = self.act_func(out)
         if self.residual is not None:
             res = self.residual(x)
-            if self.pooling is not None:
-                res = self.pooling(res)
+            #if self.pooling is not None:
+                #res = self.pooling(res)
             if self.edge_effect == 'expand':
                 # instead of using this, we can just pad them on different sides
                 res = F.pad(res, (self.kernelgap_size, 0)) + F.pad(res, (0, self.kernelgap_size))
@@ -772,7 +957,7 @@ class parallel_module(nn.Module):
 
 
 class final_convolution(nn.Module):
-    def __init__(self, indim, out_classes, l_kernels, cut_sites = None, strides = 1, bias = True, batch_norm = False, padding = 'same', predict_from_dist = True):
+    def __init__(self, indim, out_classes, l_kernels, cut_sites = None, strides = 1, bias = True, n_convolutions = 1, in_len = None, batch_norm = False, padding = 'same', predict_from_dist = False):
         super(final_convolution, self).__init__()
         
         self.batch_norm = batch_norm
@@ -785,6 +970,13 @@ class final_convolution(nn.Module):
             self.cut_sites = cut_sites
         if batch_norm:
             self.Bnorm = self.nn.BatchNorm1d(currdim)
+
+        self.n_convolutions = n_convolutions
+        if n_convolutions > 1:
+            if in_len is None:
+                in_len = 10000 # dummy parameter that is not needed here because we're not max pooling
+            dilations = (2**np.arange(n_convolutions -1)).astype(int)
+            self.dilconvs = Res_Conv1d(indim, in_len, indim, l_kernels, n_convolutions-1, kernel_increase = 1., max_pooling = 0, mean_pooling=0, residual_after = 1, residual_same_len = False, activation_function = 'GELU', strides = 1, dilations = dilations, bias = True, dropout = 0., batch_norm = False, act_func_before = True, residual_entire = False)
 
         self.predict_from_dist = predict_from_dist
         if self.predict_from_dist:
@@ -800,6 +992,9 @@ class final_convolution(nn.Module):
         self.fconvlayer = nn.Conv1d(indim, out_classes, kernel_size = l_kernels, bias = bias, stride = strides)
     
     def forward(self, x):
+        if self.n_convolutions > 1:
+            x = self.dilconvs(x)
+        
         if self.predict_from_dist:
             mx = x.mean(dim = -1)
             mcounts = self.cpred(mx)
@@ -910,11 +1105,12 @@ class receptive_attention(nn.Module):
         # then we set off diagonals to zero
         # hopefully this reduces time since off-diagonal elements don't need to be matrix multiplied
         # however, the extension of the dimension may result in high memory usage and maybe slow it down actually 
-        if self.multi_head:
-            # instead of matmul, we just sum over the embedding dimension
-            atmat = torch.sum(queries.unsqueeze(-2).expand(queries.size(dim = 0), queries.size(dim = 1), self.l_seq, self.l_seq, -1)* self.mask* keys.unsqueeze(-3).expand(keys.size(dim = 0), keys.size(dim = 1),self.l_seq, self.l_seq, -1), -1)
-        else:
-            atmat = torch.sum(queries.unsqueeze(-2).expand(queries.size(dim = 0), self.l_seq, self.l_seq, -1)* self.mask* keys.unsqueeze(-3).expand(keys.size(dim = 0), self.l_seq, self.l_seq, -1), -1)
+        # instead of matmul, we just sum over the embedding dimension
+            #atmat = torch.sum(queries.unsqueeze(-2).expand(queries.size(dim = 0), queries.size(dim = 1), self.l_seq, self.l_seq, -1)* self.mask* keys.unsqueeze(-3).expand(keys.size(dim = 0), keys.size(dim = 1),self.l_seq, self.l_seq, -1), -1)
+            # this might work better than expanding first
+        atmat = torch.sum(queries.unsqueeze(-2)* self.mask* keys.unsqueeze(-3), -1)
+        #else:
+            #atmat = torch.sum(queries.unsqueeze(-2).expand(queries.size(dim = 0), self.l_seq, self.l_seq, -1)* self.mask* keys.unsqueeze(-3).expand(keys.size(dim = 0), self.l_seq, self.l_seq, -1), -1)
         return atmat
         
 # Include Feed forward with RELUs and residual around them
@@ -1141,31 +1337,20 @@ class MyDataParallel(nn.DataParallel):
         return getattr(self.module, name)
 
 # dictionary with loss functions
-loss_dict = {'MSE':nn.MSELoss(reduction = 'none'), 
-             'L1Loss':nn.L1Loss(reduction = 'none'),
-             'CrossEntropy': nn.CrossEntropyLoss(reduction = 'none'),
-             'BCELoss': nn.BCELoss(reduction = 'none'),
-             'BCEMSE': BCEMSE(reduction = 'none'),
-             'KL': nn.KLDivLoss(reduction = 'none'),
-             'PoissonNNL':nn.PoissonNLLLoss(reduction = 'none'),
-             'GNLL': nn.GaussianNLLLoss(reduction = 'none'),
-             'NLL': nn.NLLLoss(reduction = 'none'),
-             'Cosinedata': cosine_loss(dim = 1, reduction = 'none'),
-             'Cosineclass': cosine_loss(dim = 0, reduction = 'none'),
-             'Cosineboth': cosine_both(reduction = 'none'),
-             'Correlationdata': correlation_loss(dim = 1, reduction = 'none'),
-             'Correlationclass': correlation_loss(dim = 0, reduction = 'none'),
-             'Correlationmse': correlation_mse(reduction = 'none'),
-             'MSECorrelation': correlation_mse(reduction = 'none', dimcorr = 0),
-             'Correlationboth': correlation_both(reduction = 'none'),
-             'JSD': JSD(reduction = 'none', include_mse = False),
+loss_dict = basic_loss_dict | {'JSD': JSD(reduction = 'none', include_mse = False),
              'JensenShannon': JSD(reduction = 'none', mean_size = 25),
              'JensenShannonCount': JSD(reduction = 'none', mean_size = None),
              'DLogMSE': LogMSELoss(reduction = 'none', log_prediction = True),
              'LogMSE': LogMSELoss(reduction = 'none', log_prediction = False),
              'LogL1Loss': LogL1Loss(reduction = 'none'),
              'LogCountDistLoss': LogCountDistLoss(reduction = 'none', log_counts = True),
-             'CountDistLoss': LogCountDistLoss(reduction = 'none')}
+             'CountDistLoss': LogCountDistLoss(reduction = 'none'),
+             'MSEcontrastMSED':ContrastiveLoss(mainloss = 'MSE', contrastive_loss = 'MSE', contrastive_metric = 'Dif'),
+             'MSEcontrastMSEF':ContrastiveLoss(mainloss = 'MSE', contrastive_loss = 'MSE', contrastive_metric = 'Frac'),
+             'L1contrastL1D':ContrastiveLoss(mainloss = 'L1Loss', contrastive_loss = 'L1Loss', contrastive_metric = 'Dif'),
+             'L1contrastMSED':ContrastiveLoss(mainloss = 'L1Loss', contrastive_loss = 'MSE', contrastive_metric = 'Dif'),
+             'MSEcontrastCORD':ContrastiveLoss(mainloss = 'MSE', contrastive_loss = 'Correlationdata', contrastive_metric = 'Dif'),
+             'L1contrastCORD':ContrastiveLoss(mainloss = 'L1Loss', contrastive_loss = 'Correlationdata', contrastive_metric = 'Dif')}
 
 
 

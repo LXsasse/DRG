@@ -142,30 +142,30 @@ def save_performance(Y_pred, Ytest, testclasses, experiments, names, outname, sy
             np.savetxt(outname+'_exper_corrbottop_tcl'+tclass+'.txt', np.concatenate([experiments[consider].reshape(-1,1), correlationstop.reshape(-1,1),correlationsbot.reshape(-1,1)],axis = 1), fmt = '%s')
     
     
-    if '--save_correlation_pergene' in sysargv:
+    if '--save_correlation_pergene' in sysargv or '--save_correlationmean_pergene' in sysargv:
         Ytes = np.copy(Ytest)
         Y_pre = np.copy(Y_pred)
         for tclass in np.unique(testclasses):
-            if len(np.shape(Ytes))>2:
+            if '--save_correlationmean_pergene' in sysargv:
                 Ytes = np.sum(Ytes, axis = -1)
                 Y_pre = np.sum(Y_pre, axis = -1)
             consider = np.where(testclasses == tclass)[0]
-            correlations = correlation(Ytes[:,consider], Y_pre[:,consider], axis = 1)
+            correlations = correlation(Ytes[:,consider], Y_pre[:,consider], axis = -1)
             pvalue = 1.
             if compare_random:
-                randomcorrelations = correlation(Ytes[np.random.permutation(len(Ytes))][:,consider], Y_pre[:,consider], axis = 1)
+                randomcorrelations = correlation(Ytes[np.random.permutation(len(Ytes))][:,consider], Y_pre[:,consider], axis = -1)
                 pvalue = stats.ttest_ind(correlations, randomcorrelations)[1]/2.
             np.savetxt(outname+'_gene_corr_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), correlations.reshape(-1,1),axis = 1), fmt = '%s', header ='P-value: '+str(pvalue))
     if '--save_mse_pergene' in sysargv:
         for tclass in np.unique(testclasses):
             consider = np.where(testclasses == tclass)[0]
-            axis = 1
+            axis = -1
             if len(np.shape(Ytest))>2:
                 axis = (1,-1)
             mses = mse(Ytest[:,consider], Y_pred[:,consider], axis = axis)
             pvalue = 1.
             if compare_random:
-                randommses = mse(Ytest[np.random.permutation(len(Ytest))][:,consider], Y_pred[:,consider], axis = 1)
+                randommses = mse(Ytest[np.random.permutation(len(Ytest))][:,consider], Y_pred[:,consider], axis = -1)
                 pvalue = stats.ttest_ind(mses, randommses)[1]/2.
             np.savetxt(outname+'_gene_mse_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), mses.reshape(-1,1),axis = 1), fmt = '%s', header = 'P-value: '+str(pvalue))
     if '--save_auroc_pergene' in sysargv:
@@ -267,14 +267,38 @@ def plot_scatter(Ytest, Ypred, titles = None, xlabel = None, ylabel = None, outn
         
 def add_params_to_outname(outname, ndict):
     
-    outname += '_lf'+ndict['loss_function'][:3]+ndict['loss_function'][max(3,len(ndict['loss_function'])-3):]+'_nk'+str(ndict['num_kernels'])+'-'+str(ndict['l_kernels'])+str(ndict['kernel_bias'])[0]+'_max'+str(ndict['max_pooling'])[0]+'_mean'+str(ndict['mean_pooling'])[0]+str(ndict['pooling_size'])[:3]+'-'+str(ndict['pooling_steps'])[:3]+'-kf'+ndict['kernel_function']+str(ndict['kernel_thresholding'])
+    outname += '_lf'+ndict['loss_function'][:3]+ndict['loss_function'][max(3,len(ndict['loss_function'])-3):]+'nk'+str(ndict['num_kernels'])+'l'+str(ndict['l_kernels'])+str(ndict['kernel_bias'])[0]+'kf'+ndict['kernel_function']
+    
+    if ndict['max_pooling'] and ndict['mean_pooling']:
+        outname +='mmpol'+str(ndict['pooling_size'])[:3]
+        if ndict['pooling_steps'] != ndict['pooling_size']:
+            outname += 'st'+str(ndict['pooling_steps'])[:3]
+        if ndict['kernel_thresholding'] != 0:
+            outname += 'kt'+str(ndict['kernel_thresholding'])
+            
+    elif ndict['max_pooling']:
+        outname +='max'+str(ndict['pooling_size'])[:3]
+        if ndict['pooling_steps'] != ndict['pooling_size']:
+            outname += 'st'+str(ndict['pooling_steps'])[:3]
+        if ndict['kernel_thresholding'] != 0:
+            outname += 'kt'+str(ndict['kernel_thresholding'])
+    elif ndict['mean_pooling']:
+        outname +='mean'+str(ndict['pooling_size'])[:3]
+        if ndict['pooling_steps'] != ndict['pooling_size']:
+            outname += 'st'+str(ndict['pooling_steps'])[:3]
+        if ndict['kernel_thresholding'] != 0:
+            outname += 'kt'+str(ndict['kernel_thresholding'])
+       
+    if 'reverse_complement' in ndict:
+        if ndict['reverse_complement']:
+            outname += 'rcT'
     
     if 'l_out' in ndict:
         if ndict['l_out'] is None:
             outname += 'bp1'
         outname += 'bp'+str(int(ndict['l_seqs']/ndict['l_out']))
     
-    if ndict['validation_loss'] != ndict['loss_function']:
+    if ndict['validation_loss'] != ndict['loss_function'] and ndict['validation_loss'] is not None:
         outname +='vl'+str(ndict['validation_loss'])[:2]+str(ndict['validation_loss'])[max(2,len(str(ndict['validation_loss']))-2):]
     if ndict['hot_start']:
         outname += '-hot'
@@ -287,7 +311,7 @@ def add_params_to_outname(outname, ndict):
         else:
             outname += 'sft'+str(np.amax(ndict['shift_sequence']))
         if ndict['random_shift']:
-            outname+='T'
+            outname+=str(int(ndict['random_shift']))
     if ndict['reverse_sign']:
         outname += 'rs'
     if ndict['restart']:
@@ -295,15 +319,33 @@ def add_params_to_outname(outname, ndict):
    
     if ndict['gapped_convs'] is not None:
         if len(ndict['gapped_convs']) > 0:
+            outname + '_gapc'
             glist = ['k','g','n','s']
             for gl in range(len(ndict['gapped_convs'])):
                 for g in range(4):
-                    if gl == 0 or ndict['gapped_convs'][gl][g] != ndict['gapped_convs'][0][g]:
+                    if gl == 0 or ndict['gapped_convs'][gl][g] != ndict['gapped_convs'][max(0,gl-1)][g]:
                         outname += glist[g]+str(ndict['gapped_convs'][gl][g])
         if ndict['gapconv_residual']:
             outname += 'T'
         if ndict['gapconv_pooling']:
             outname += 'T'
+        if 'final_convolutions' in ndict:
+            if ndict['final_convolutions'] > 0:
+                outname += 'fcnv'+str(ndict['final_convolutions'])+'l'+str(ndict['l_finalkernels'])
+                if ndict['final_conv_dim'] is not None:
+                    outname += 'd'+str(ndict['final_conv_dim'])
+                if ndict['finalstrides'] != 1:
+                    outname += 's'+str(ndict['finalstrides'])
+                if ndict['finaldilations'] != 1:
+                    outname += 'i'+str(ndict['finaldilations'])
+                
+                
+        if 'finalmaxpooling_size' in ndict:
+            if ndict['finalmaxpooling_size'] > 0:
+                outname += 'fmap'+str(ndict['finalmaxpooling_size'])
+        if 'finalmeanpooling_size' in ndict:
+            if ndict['finalmeanpooling_size'] > 0:
+                outname += 'fmep'+str(ndict['finalmeanpooling_size'])
         
         
     if ndict['dilated_convolutions'] > 0:
@@ -361,20 +403,29 @@ def add_params_to_outname(outname, ndict):
     
     if 'outclass' in ndict:
         if ndict['outclass'] != 'Linear':
-            outname += ndict['outclass']
+            outname += ndict['outclass'][:4]+ndict['outclass'][-min(4,len(ndict['outclass'])-4):]
+        if ndict['outclass'] == 'LOGXPLUSFRACTION': 
+            outname += str(ndict['outlog']) + str(ndict['outlogoffset'])
+            
     
     if ndict['l1reg_last'] > 0:
-        outname += '_l1'+str(ndict['l1reg_last'])
+        outname += 'l1'+str(ndict['l1reg_last'])
     if ndict['l2reg_last'] > 0:
-        outname += '_l2'+str(ndict['l2reg_last'])
+        outname += 'l2'+str(ndict['l2reg_last'])
     if ndict['l1_kernel'] > 0:
-        outname += '_l1k'+str(ndict['l2reg_last'])
+        outname += 'l1k'+str(ndict['l2reg_last'])
     if ndict['dropout'] > 0.:
-        outname += '_do'+str(ndict['dropout'])
+        outname += 'do'+str(ndict['dropout'])
     if ndict['batch_norm']:
-        outname += '_bno'+str(ndict['batch_norm'])[0]
+        outname += 'bno'+str(ndict['batch_norm'])[0]
     
-    outname += '_tr'+str(ndict['lr'])+'-bs'+str(ndict['batchsize'])+ndict['optimizer']+str(ndict['optim_params']).replace('(', '-').replace(')', '').replace(',', '-').replace(' ', '')
+    outname += 'tr'+str(ndict['lr'])+ndict['optimizer']
+    
+    if ndict['optim_params'] is not None:
+        outname += str(ndict['optim_params']).replace('(', '-').replace(')', '').replace(',', '-').replace(' ', '')
+    if ndict['batchsize'] is not None:
+        outname += 'bs'+str(ndict['batchsize'])
+    
     
     if ndict['kernel_lr'] != ndict['lr'] and ndict['kernel_lr'] is not None:
         outname+='-ka'+str(ndict['kernel_lr'])

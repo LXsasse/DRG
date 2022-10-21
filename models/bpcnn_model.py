@@ -22,7 +22,7 @@ from output import print_averages, save_performance, plot_scatter
 from functions import dist_measures
 from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance 
 from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters
-from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, Padded_Conv1d, final_convolution
+from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, Padded_Conv1d, final_convolution, RC_Conv1d
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
@@ -34,13 +34,14 @@ from output import add_params_to_outname
 
 
 
-# highly flexible Convolutional neural network architecture
+# flexible Convolutional neural network architecture
 class bpcnn(nn.Module):
-    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, pooling_size = None, pooling_steps = None, dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = None, dilmean_pooling = None, dilpooling_size = None, dilpooling_steps = None, dilpooling_residual = 1, dilresidual_entire = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, maxpool_attention = 0, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = False, trmean_pooling = False, trpooling_size = None, trpooling_steps = None, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
+    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, reverse_complement = False, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = None, dilmean_pooling = None, dilpooling_size = None, dilpooling_steps = None, dilpooling_residual = 1, dilresidual_entire = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, maxpool_attention = 0, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = False, trmean_pooling = False, trpooling_size = None, trpooling_steps = None, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, **kwargs):
         super(bpcnn, self).__init__()
         
         # Set seed for all random processes in the model: parameter init and other dataloader
         torch.manual_seed(seed)
+        
         self.seed = seed
         self.verbose = verbose # if true prints out epochs and losses
         self.loss_function = loss_function # Either defined function or one None for 'mse'
@@ -52,6 +53,7 @@ class bpcnn(nn.Module):
         self.keepmodel = keepmodel # Determines if model parameters will be kept in pth file after training
         
         self.n_features = n_features # Number of features in one-hot coding
+        self.reverse_complement = reverse_complement # whether to use reverse complement in first CNN
         self.l_seqs = l_seqs # length of padded sequences
         self.l_out = l_out # number of output regions per sequence
         if self.l_out is None:
@@ -82,6 +84,7 @@ class bpcnn(nn.Module):
         self.l_kernels = l_kernels # length of learnable kernels
         self.kernel_bias = kernel_bias # Turn on/off bias of kernels
         self.kernel_function = kernel_function # Non-linear function applied to kernel outputs
+        self.net_function = net_function # Non-linear function applied to other layers
         self.kernel_thresholding = kernel_thresholding # Thresholding function a_i*k_i=bi for each kernel, important to use with pwms because they don't have any cutoffs
         self.fixed_kernels = fixed_kernels # set of fixed value kernels (pwms)
         self.motif_cutoff = motif_cutoff # when scanning with fixed kernels (pwms), all values below this cutoff are set to zero, creates sparser scanning matrix
@@ -102,8 +105,8 @@ class bpcnn(nn.Module):
             self.pooling_size = None
             self.pooling_steps = None
         elif self.pooling_size is None and self.pooling_steps is None:
-            self.pooling_size = int((self.l_seqs - (self.l_kernels -1))/1.)
-            self.pooling_steps = int((self.l_seqs - (self.l_kernels -1))/1.)
+            self.pooling_size = self.l_seqs + 2*paddy
+            self.pooling_steps = self.l_seqs +2*paddy
         elif self.pooling_steps is None:
             self.pooling_steps = self.pooling_size
         elif self.pooling_size is None:
@@ -234,9 +237,18 @@ class bpcnn(nn.Module):
         self.writeloss = writeloss # If true a file with the losses per epoch will be generated
         self.write_steps = write_steps # Number of steps before write out
         self.optimizer = optimizer # Choice of optimizer: Adam, SGD, Adagrad, see below for parameters
-        
         self.optim_params = optim_params # Parameters given to the optimizer, For each optimizer can mean something else, lookg at fit() to see what they define.
         
+        self.masks = masks # location (start and end) of masks sequences
+        self.nmasks = nmasks # number of masks that are randomly inserted in every training, val, and testing round per sequence
+        self.augment_representation = augment_representation # location of representation which will be prvided to final deconvolution for sequence learning task
+        self.aug_kernel_size = aug_kernel_size # kernel size for deconvolution of augmented sequence learning task
+        self.aug_conv_layers = aug_conv_layers # number of convolutions in the final layer, if larger than one will be dilated by 2**n
+        self.aug_loss_masked = aug_loss_masked # if True, the loss is only computed over the entries that were masked not if the other sequence elements were correctly reproduced. 
+        self.aug_loss = aug_loss # loss function for augmentation sequence learning
+        self.aug_loss_mix = aug_loss_mix # mixture value between main and augmenting task
+
+
         self.outclass = outclass # Class: sigmoid, Multi_class: Softmax, Complex: for non-linear scaling
 
         self.outname = outname
@@ -300,7 +312,7 @@ class bpcnn(nn.Module):
         # initialize convolutional layer and compute new feature dimension and length of sequence
         if self.num_kernels > 0:
             #self.convolutions = nn.Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = int(self.l_kernels/2))
-            self.convolutions = Padded_Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = [int(self.l_kernels/2)-int(self.l_kernels%2==0), int(self.l_kernels/2)])
+            self.convolutions = Padded_Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = [int(self.l_kernels/2)-int(self.l_kernels%2==0), int(self.l_kernels/2)], reverse_complement = reverse_complement)
             currdim = np.copy(self.num_kernels)
         
         if self.fixed_kernels is not None:
@@ -318,7 +330,6 @@ class bpcnn(nn.Module):
             modellist['Kernelthresh'] = Kernel_linear(currdim, self.kernel_thresholding)
         
         # Non-linear conversion of kernel output
-        #self.kernel_function = func_dict[kernel_function]
         modellist[kernel_function+'0'] = func_dict[kernel_function]
         
         # Max and mean pooling layers
@@ -345,7 +356,7 @@ class bpcnn(nn.Module):
                 dilmeanpooling_size = self.dilpooling_size
             else:
                 dilmeanpooling_size = 0
-            self.convolution_layers = Res_Conv1d(currdim, currlen, currdim, self.l_dilkernels, self.dilated_convolutions, kernel_increase = self.conv_increase, max_pooling = dilmaxpooling_size, mean_pooling=dilmeanpooling_size, residual_after = self.dilpooling_residual, activation_function = kernel_function, strides = strides, dilations = dilations, bias = True, dropout = dropout, residual_entire = self.dilresidual_entire)
+            self.convolution_layers = Res_Conv1d(currdim, currlen, currdim, self.l_dilkernels, self.dilated_convolutions, kernel_increase = self.conv_increase, max_pooling = dilmaxpooling_size, mean_pooling=dilmeanpooling_size, residual_after = self.dilpooling_residual, activation_function = net_function, strides = strides, dilations = dilations, bias = True, dropout = dropout, residual_entire = self.dilresidual_entire)
             currdim, currlen = self.convolution_layers.currdim, self.convolution_layers.currlen
             if self.verbose:
                 print('2nd convolutions', currdim, currlen)
@@ -400,7 +411,7 @@ class bpcnn(nn.Module):
                 trmeanpooling_size = self.trpooling_size
             else:
                 trmeanpooling_size = 0
-            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmaxpooling_size, mean_pooling=trmeanpooling_size, residual_after = self.trpooling_residual, activation_function = kernel_function, strides = trstrides, dilations = trdilations, bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
+            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmaxpooling_size, mean_pooling=trmeanpooling_size, residual_after = self.trpooling_residual, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
             currdim, currlen = self.trconvolution_layers.currdim, self.trconvolution_layers.currlen
             if self.verbose:
                 print('Convolution after attention', currdim, currlen)
@@ -415,7 +426,7 @@ class bpcnn(nn.Module):
             cdim = 0
             modellist = []
             for g, gap_c in enumerate(self.gapped_convs):
-                modellist.append(gap_conv(currdim, currlen, gap_c[2], gap_c[0], gap_c[1], stride=gap_c[3], batch_norm = self.batch_norm, dropout = self.dropout, residual = self.gapconv_residual, pooling= self.gapconv_pooling, edge_effect = True, activation_function = kernel_function))
+                modellist.append(gap_conv(currdim, currlen, gap_c[2], gap_c[0], gap_c[1], stride=gap_c[3], batch_norm = self.batch_norm, dropout = self.dropout, residual = self.gapconv_residual, pooling= self.gapconv_pooling, edge_effect = True, activation_function = net_function))
                 cdim += gap_c[2]
                 currlen = modellist[-1].out_len
             currdim = cdim
@@ -434,14 +445,16 @@ class bpcnn(nn.Module):
             print(currlen, 'larger than l_out\nMake sure the outputs are correctly aligned to the input regions if edges are cut', cutedges)
 
         classifier = OrderedDict()
-        classifier['Linear'] = final_convolution(currdim, n_classes, self.final_kernel, cut_sites = cutedges, strides = self.final_strides, batch_norm = self.batch_norm, predict_from_dist = self.predict_from_dist)
+        self.linear_classifier = final_convolution(currdim, n_classes, self.final_kernel, cut_sites = cutedges, strides = self.final_strides, batch_norm = self.batch_norm, predict_from_dist = self.predict_from_dist)
         
         if self.outclass == 'Class':
             classifier['Sigmoid'] = nn.Sigmoid()
-        elif self.outclass == 'Multi_class':
+        elif self.outclass == 'Softmax':
             classifier['Softmax'] = nn.Softmax(dim = -1)
+        elif self.outclass == 'Multi_class':
+            classifier['Mclass'] = nn.Softmax(dim = -2)
         elif self.outclass != 'Linear':
-            classifier['OUTFUNC'] = func_dict[self.outclass]
+            classifier[self.outclass] = func_dict[self.outclass]
         self.classifier = nn.Sequential(classifier)
         
    
@@ -454,7 +467,7 @@ class bpcnn(nn.Module):
                 pwm_out = pwm_scan(X, self.fixed_kernels, targetlen = self.l_kernels, motif_cutoff = self.motif_cutoff)
             pwm_out = torch.Tensor(pwm_out)
             
-        predout = batched_predict(self, X, pwm_out =pwm_out, mask = mask, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence)
+        predout = batched_predict(self, X, pwm_out =pwm_out, mask = mask, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence, random_shift = self.random_shift)
         return predout
     
     def forward(self, x, xadd = None, mask = None, mask_value = 0, location = 'None'):
@@ -470,19 +483,22 @@ class bpcnn(nn.Module):
         if mask is not None:
             if self.kernel_bias:
                 pred[:,mask,:] = mask_value
+        
         if location == '0':    
-            return torch.flatten(pred, start_dim = 1)
+            # Don't flatten representatino anymore. 
+            # User can define for themselves how to use the representation
+            return pred
         
         pred = self.modelstart(pred)
         
         if location == '1':
-            return torch.flatten(pred, start_dim = 1)
+            return pred
         
         if self.dilated_convolutions > 0:
             pred = self.convolution_layers(pred)
         
         if location == '2':
-            return torch.flatten(pred, start_dim = 1)
+            return pred
         
         if self.embedding_convs > 0:
             pred = self.embedding_convolutions(pred)
@@ -499,26 +515,33 @@ class bpcnn(nn.Module):
             pred = self.distattention(pred)
         
         if location == '3':
-            return torch.flatten(pred, start_dim = 1)
+            return pred
         
         if self.transformer_convolutions > 0 or self.trmax_pooling or self.trmean_pooling:
             pred = self.trconvolution_layers(pred)
         
         if location == '4':
-            return torch.flatten(pred, start_dim = 1)
+            return pred
         
         if self.gapped_convs is not None:
             pred = self.gapped_convolutions(pred)
         
-        if location == '-1' or location == '5':
-            return torch.flatten(pred, start_dim = 1)
-        pred = self.classifier(pred)
+        if location == '5':
+            return pred
+        
+        pred = self.linear_classifier(pred)
+        
+        if location == '-1' or location == '6':
+            return pred
+        
+        if self.outclass != "Linear":
+            pred = self.classifier(pred)
         
         return pred
     
     
     def fit(self, X, Y, XYval = None, sample_weights = None):
-        self.saveloss = fit_model(self, X, Y, XYval = XYval, sample_weights = sample_weights, loss_function = self.loss_function, validation_loss = self.validation_loss, batchsize = self.batchsize, device = self.device, optimizer = self.optimizer, optim_params = self.optim_params, verbose = self.verbose, lr = self.lr, kernel_lr = self.kernel_lr, hot_start = self.hot_start, warm_start = self.warm_start, outname = self.outname, adjust_lr = self.adjust_lr, patience = self.patience, init_adjust = self.init_adjust, keepmodel = self.keepmodel, load_previous = self.load_previous, write_steps = self.write_steps, checkval = self.checkval, writeloss = self.writeloss, init_epochs = self.init_epochs, epochs = self.epochs, l1reg_last = self.l1reg_last, l2_reg_last = self.l2reg_last, l1_kernel = self.l1_kernel, reverse_sign = self.reverse_sign, shift_back = self.shift_sequence, random_shift=self.random_shift, smooth_onehot = self.smooth_onehot, restart = self.restart, **self.kwargs)
+        self.saveloss = fit_model(self, X, Y, XYval = XYval, sample_weights = sample_weights, loss_function = self.loss_function, validation_loss = self.validation_loss, batchsize = self.batchsize, device = self.device, optimizer = self.optimizer, optim_params = self.optim_params, verbose = self.verbose, lr = self.lr, kernel_lr = self.kernel_lr, hot_start = self.hot_start, warm_start = self.warm_start, outname = self.outname, adjust_lr = self.adjust_lr, patience = self.patience, init_adjust = self.init_adjust, keepmodel = self.keepmodel, load_previous = self.load_previous, write_steps = self.write_steps, checkval = self.checkval, writeloss = self.writeloss, init_epochs = self.init_epochs, epochs = self.epochs, l1reg_last = self.l1reg_last, l2_reg_last = self.l2reg_last, l1_kernel = self.l1_kernel, reverse_sign = self.reverse_sign, shift_back = self.shift_sequence, random_shift=self.random_shift, smooth_onehot = self.smooth_onehot, restart = self.restart, masks = self.masks, nmasks = self.nmasks, augment_representation = self.augment_representation, aug_kernel_size = self.aug_kernel_size, aug_conv_layers = self.aug_conv_layers, aug_loss_masked = self.aug_loss_masked, aug_loss = self.aug_loss, aug_loss_mix = self.aug_loss_mix, **self.kwargs)
         
 
 
@@ -547,25 +570,63 @@ if __name__ == '__main__':
         
     X, Y, names, features, experiments = readin(inputfile, outputfile, return_header = True, assign_region = aregion, mirrorx = mirror)
 
+    reverse_complement = False
+    if '--reverse_complement' in sys.argv:
+        reverse_complement = False
+         
     # filter counts with 0 entries
-    ymask = np.sum(Y,axis = (1,2)) >0
-    X, Y, names = X[ymask], Y[ymask], names[ymask]
+    if Y is not None:
+        ymask = np.sum(Y,axis = (1,2)) >0
+        X, Y, names = X[ymask], Y[ymask], names[ymask]
 
     if '--testrandom' in sys.argv:
         trand = int(sys.argv[sys.argv.index('--testrandom')+1])
         mask = np.random.permutation(len(X))[:trand]
-        X, Y, names = X[mask], Y[mask], names[mask]
-        
+        X, names = X[mask], names[mask]
+        if Y is not None:
+            Y = Y[mask]
 
     outname = create_outname(inputfile, outputfile) 
+
+    
+    # Parameter dictionary for initializing the cnn
+    params = {}
+    
+    input_is_output = False
+    if '--maskinput' in sys.argv:
+        maxmask = int(sys.argv[sys.argv.index('--maskinput')+1])# max number of basepairs that are masked
+        minmask = int(sys.argv[sys.argv.index('--maskinput')+2])# min number of basepairs taht are masked
+        nmasks = int(sys.argv[sys.argv.index('--maskinput')+3])# average number of masked duplicates per seqeuence in training, validation and testing
+        outname += 'mask'+str(minmask)+'-'+str(maxmask)+'n'+str(nmasks)
+        allmaskloc = np.concatenate([np.array([np.arange(0,np.shape(X)[-1]-m+1),np.arange(m,np.shape(X)[-1]+1)]).T for m in range(minmask, maxmask+1)], axis = 0)
+        allmasks = torch.ones(([len(allmaskloc)] + list(np.shape(X)[1:])))
+        for l, loc in enumerate(allmaskloc):
+            allmasks[l][...,loc[0]:loc[1]] = 0
+        allmasks = allmasks == 0
+        print('INPUT sequences will be masked during training with', maxmask, minmask, nmasks)
+        params['masks'], params['nmasks'] = allmasks, nmasks
+        # input masks can be provided to train a sequence representation by predicting masked sequence values
+        # or do the same to augment training of another objective in parallel
+        if '--augment_training' in sys.argv:
+            augment_representation = sys.argv[sys.argv.index('--augment_training')+1] # position of embedding that will be given to the deconvolution layer for predicting masked sequences
+            aug_kernel_size = int(sys.argv[sys.argv.index('--augment_training')+2]) # size of the kernels in final convolutional layer for masked sequence predictions
+            aug_loss = sys.argv[sys.argv.index('--augment_training')+3] # Loss for sequence self learning
+            aug_loss_mix = float(sys.argv[sys.argv.index('--augment_training')+4]) # value between 0 and 1 that mixes the objective loss with the aug_loss_mix, or if larger than 1, aug_loss is simply multiplies by this value
+            params['augment_representation'], params['aug_kernel_size'], params['aug_loss'], params['aug_loss_mix'] = augment_representation, aug_kernel_size, aug_loss, aug_loss_mix
+        else:
+            print('INPUT == OUTPUT')
+            input_is_output = True
+            Y = np.copy(X)
+            outname = os.path.splitext(inputfile)[0] + '_self-trainmask'+str(minmask)+'-'+str(maxmask)+'n'+str(nmasks)
+        
+    
+    
     if '--regionless' in sys.argv:
         outname += '-rgls'
     if '--realign_input' in sys.argv:
         outname += 'mirx'
-    print(outname)
-    
-    # Parameter dictionary for initializing the cnn
-    params = {}
+    if '--reverse_complement' in sys.argv:
+        outname += 'rcomp'
     
     if '--outdir' in sys.argv:
         outname = sys.argv[sys.argv.index('--outdir')+1] + os.path.split(outname)[1]
@@ -602,7 +663,7 @@ if __name__ == '__main__':
             outname += '-cv'+str(int(cutoff))+'-'+str(fold)
         trainset, testset, valset = create_sets(len(X), folds, fold, Yclass = Yclass, genenames = names)
         print('Train', len(trainset))
-        print('Test', len(testset), testset)
+        print('Test', len(testset))
         print('Val', len(valset))
     
     
@@ -615,6 +676,10 @@ if __name__ == '__main__':
         outname +='_RNDM'
         permute = np.permute(len(X))
         Y = Y[permute]
+    
+    if '--logcounts' in sys.argv:
+        Y = np.log(1+Y)
+        outname += 'lg'
     
     if '--norm2output' in sys.argv:
         print ('ATTENTION: output has been normalized along data points')
@@ -682,6 +747,7 @@ if __name__ == '__main__':
             for l, line in enumerate(obj):
                 if line[0] != '_' and line[:7] != 'outname':
                     parameters.append(line.strip().replace(' ', ''))
+                    print(line.strip().replace(' ', ''))
                 if line[:7] == 'outname':
                     outname += 'from'+os.path.split(line.strip().split(' : ')[1])[1]
                     #outname += 'from'+os.path.split(parameterfile.replace('_parameter.pth', ''))[1]
@@ -691,6 +757,7 @@ if __name__ == '__main__':
             if ':' in sys.argv[sys.argv.index('--cnn')+2] or '=' in sys.argv[sys.argv.index('--cnn')+2]:
                 if '+' in sys.argv[sys.argv.index('--cnn')+2]:
                     for a in sys.argv[sys.argv.index('--cnn')+2].split('+'):
+                        print(a)
                         parameter.append(a)
                 else:
                     parameters.append(sys.argv[sys.argv.index('--cnn')+2])
@@ -709,7 +776,7 @@ if __name__ == '__main__':
             params[p[0]] = check(p[1])
         params['outname'] = outname
         print('Device', params['device'])
-        params['n_features'], params['l_seqs'] = np.shape(X)[-2], np.shape(X)[-1]
+        params['n_features'], params['l_seqs'], params['reverse_complement'] = np.shape(X)[-2], np.shape(X)[-1], reverse_complement
         model = bpcnn(**params)
        
     weights = None
@@ -782,7 +849,28 @@ if __name__ == '__main__':
     
     if train_model:
         model.fit(X[trainset], Y[trainset], XYval = [X[valset], Y[valset]], sample_weights = weights)
-    Y_pred = model.predict(X[testset])
+    
+    
+    if input_is_output and nmasks is not None:
+        ntsus = np.array(list('ACGT'))
+        countmat = np.zeros(np.shape(Y[testset]), dtype = np.int16)
+        Y_predmasked = np.zeros(np.shape(Y[testset]))
+        Y_predunmasked = np.zeros(np.shape(Y[testset]))
+        for nma in range(nmasks):
+            cmasks = allmasks[np.random.choice(len(allmasks), len(testset))]
+            Xmin = np.copy(X[testset])
+            Xmin[cmasks] = 0.25
+            countmat[cmasks] += 1
+            Yi_pred = model.predict(Xmin)
+            Y_predmasked[cmasks] += Yi_pred[cmasks]
+            Y_predunmasked[~cmasks] += Yi_pred[~cmasks]
+        Y_pred = Y_predmasked/countmat
+        Y_pred[countmat == 0] = Y_predunmasked[countmat == 0]/nmasks
+        Y_pred = np.nan_to_num(Y_pred)
+        #print(''.join(ntsus[np.argmax(Y_pred[0], axis = 0)]))
+        #print(''.join(ntsus[np.argmax(Y[testset][0], axis = 0)]))
+    else:
+        Y_pred = model.predict(X[testset])
     
     if '--norm2output' in sys.argv:
         Y *= outnorm
@@ -827,8 +915,18 @@ if __name__ == '__main__':
         save_performance(Y_pred, Y[testset], testclasses, experiments, names[testset], outname, sys.argv, compare_random = True)
         
     if '--save_predictions' in sys.argv:
-        print('SAVED', outname+'_pred.txt')
+        print('SAVED', outname+'_pred.npz')
         np.savez_compressed(outname+'_pred.npz', names = names[testset], counts = Y_pred)
+    
+    if '--save_embeddings' in sys.argv:
+        emb_loc = sys.argv[sys.argv.index('--save_embeddings')+1]
+        Y_emb = []
+        for b in range(max(1,int(len(testset)/model.batchsize))):
+            yemb = model.forward(torch.Tensor(X[testset[b*model.batchsize:(b+1)*model.batchsize]]).to(model.device), location = emb_loc)
+            Y_emb.append(yemb.detach().cpu().numpy())
+        Y_emb = np.concatenate(Y_emb, axis = 0)
+        np.savez_compressed(outname+'_embedding'+emb_loc+'.npz', names = names[testset], counts = Y_emb)
+        print('SAVED', outname+'_embedding'+emb_loc+'.npz', 'with shape', np.shape(Y_emb))
     
     if '--save_trainpredictions' in sys.argv:
         print('SAVED training', outname+'_trainpred.txt')

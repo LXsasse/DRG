@@ -21,14 +21,14 @@ def avgpool(x,window):
         xavg[..., i] = np.mean(x[..., i*window+xtend:(i+1)*window+xtend], axis = -1)
     return xavg
 
-def readbed(bedfile):
+def readbed(bedfile, offset = 0):
     bf = open(bedfile, 'r').readlines()
     bedfile = {'names':[], 'contigs':[], 'positions': []}
     for l, line in enumerate(bf):
         line = line.strip().split()
         bedfile['names'].append(line[0])
         bedfile['contigs'].append(line[1])
-        bedfile['positions'].append([int(line[2]),int(line[3])])
+        bedfile['positions'].append([int(line[2])-offset,int(line[3])-offset])
     bedfile['names'] = np.array(bedfile['names'])
     bedfile['contigs'] = np.array(bedfile['contigs'])
     bedfile['positions'] = np.array(bedfile['positions'])
@@ -37,6 +37,7 @@ def readbed(bedfile):
 def get_total_reads(bamfile):
     total = 0
     obj = pysam.idxstats(bamfile).split('\n')
+    print(obj)
     for l, line in enumerate(obj):
         line = line.split('\t')
         if line[0][:3] == 'chr': # and len(line[0]) <=5 :
@@ -55,7 +56,11 @@ def chromcoverage(bedfile):
 
 bamfile = pysam.AlignmentFile(sys.argv[1], 'rb')
 get_total_reads(sys.argv[1])
-bedfile = readbed(sys.argv[2])
+
+offset = 0
+if '--oneindex' in sys.argv:
+    offset = 1
+bedfile = readbed(sys.argv[2], offset = offset)
 
 outname = os.path.splitext(sys.argv[2])[0]+'_in_'+os.path.splitext(os.path.split(sys.argv[1])[1])[0]
 
@@ -123,6 +128,7 @@ if maxlen is None:
     offset = 1000 # offset is number of bp to look left and right of the region with fetch
 else:
     offset = maxlen + 1
+
 t0 = time.time()
 for c, chrom in enumerate(np.unique(bedfile['contigs'])):
     # Check if chromosome exists in bamfile and get length
@@ -167,7 +173,7 @@ for c, chrom in enumerate(np.unique(bedfile['contigs'])):
                             st, en = st + shift[0], en + shift[1]
                             
                         # check if the start and end of a fragement are in the bed area
-                        stin, enin = (st >= bst) & (st<ben), (en < ben)&(en>=bst)
+                        stin, enin = (st >= bst) & (st<ben), (en <= ben)&(en>=bst)
                         if stin or enin:
                             
                             # check if start or end fall into a blacklisted area

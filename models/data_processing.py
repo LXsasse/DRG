@@ -206,6 +206,11 @@ def quick_onehot(sequences, nucs = 'ACGT', wildcard = None, onehotregion = None,
         ohvec = np.append(ohvec, onehotregion, axis = -1)
     return ohvec, nucs
 
+
+def reverse_complement(X):
+    X = np.append(X,X[:,::-1], axis = 1)
+    return X
+
 def read_mutationfile(mutfile,X,Y,names,experiments):
     ## Read in the mutation file and use mean of expression from all sequences with same sequence instead of having multiple duplications loaded into memory. Use weighting instead
     ### Add sequences with mutations as additional examples to the 1-d X
@@ -292,7 +297,7 @@ def create_sets(n_samples, folds, fold, seed = 1010, Yclass = None, genenames = 
             if line[0] != '#':
                 line = line.strip().split()
                 sets.append(np.where(np.isin(genenames,line))[0])
-        testset = sets[fold+1]
+        testset = sets[(fold+1)%len(sets)]
         valset = sets[fold]
         trainset = np.delete(np.arange(len(genenames), dtype = int),np.append(testset,valset))
     return trainset, testset, valset

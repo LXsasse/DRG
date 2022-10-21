@@ -29,8 +29,8 @@ def read_in(files, reverse = False, replacenan = 1., allthesame = False, valcol=
     print('Intersect', len(allnames))
     if allthesame:
         for r, rname in enumerate(rnames):
-            if len(allnames) != len(rname):
-                mask = np.isin(rname, allnames)
+            if not np.array_equal(allnames,rname):
+                mask = np.argsort(rname)[np.isin(np.sort(rname), allnames)]
                 print(files[r], len(rname[~mask]), 'not in all sets', len(rname))
                 values[r] = values[r][mask]
         values = np.array(values)
@@ -43,6 +43,7 @@ def read_in(files, reverse = False, replacenan = 1., allthesame = False, valcol=
             values[i][np.isnan(values[i])] = replacenan
             if reverse:
                 values[i] = 1. - values[i]
+        allnames = rnames
     return allnames, values
     
 def sortafter(array, target):
@@ -61,16 +62,34 @@ if __name__ == '__main__':
         files = files.split(',')
 
     ats = True
-    if '--plot_heatmap' not in sys.argv:
+    if '--canbediffsets' in sys.argv and '--plot_heatmap' not in sys.argv:
         ats = False
+    
     valcol = -1
     if '--data_column' in sys.argv:
         valcol = int(sys.argv[sys.argv.index('--data_column')+1])
     
     reverse = False
+    ylabel = 'Distance'
     if '--similarity' in sys.argv:
         reverse = True
+        ylabel = 'Similarity'
+        
     classname, classvalue = read_in(files, reverse = reverse, allthesame = ats, valcol = valcol)
+    
+    if '--filter' in sys.argv:
+        datapoints = np.genfromtxt(sys.argv[sys.argv.index('--filter')+1], dtype = str)
+        if isinstance(classname, list):
+            for r, rname in enueerate(classname):
+                mask = np.isin(rname, datapoints)
+                classvalue[r] = classvalue[r][mask]
+        else:
+            mask = np.isin(classname, datapoints)
+            print('Filter', int(np.sum(mask)))
+            classvalue = classvalue[: , mask]
+        
+    #### need to fix classname usage below if --canbediffsets is chosen
+    
 
     modnames = sys.argv[2]
     if modnames == 'None':
@@ -83,7 +102,7 @@ if __name__ == '__main__':
 
     means = []
     for m, mn in enumerate(modnames):
-        means.append([mn,np.mean(classvalue[m]), np.std(classvalue[m])])
+        means.append([mn,round(np.mean(classvalue[m]),3), round(np.std(classvalue[m]),3), round(np.median(classvalue[m]),3)])
         
     means = np.array(means)
     sortmean = np.argsort(means[:,1].astype(float))
@@ -92,8 +111,8 @@ if __name__ == '__main__':
     modnames = np.array(modnames)[sortmean]
 
     if '--print_mean' in sys.argv:
-        for ms in means:
-            print(ms[0], ms[1], '+-', ms[2])
+        for m, ms in enumerate(means):
+            print(ms[0], ms[3], ms[1], '+-', ms[2])
             
     outname = None
     if '--savefig' in sys.argv:
@@ -143,7 +162,7 @@ if __name__ == '__main__':
             plotnames = 0
             if '--add_names' in sys.argv:
                 plotnames = int(sys.argv.index('--add_names')+1)
-        plot_distribution(classvalue, modnames, outname = outname, swarm = swarm, plotnames = plotnames, scatter_color = col_features, scatter_size = size_features)
+        plot_distribution(classvalue, modnames, outname = outname, swarm = swarm, plotnames = plotnames, scatter_color = col_features, scatter_size = size_features, ylabel = ylabel)
         
         
     elif '--plot_heatmap' in sys.argv:

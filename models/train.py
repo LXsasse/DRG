@@ -10,7 +10,7 @@ from torch import Tensor
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 from init import MyDataset, get_device
-from modules import loss_dict, func_dict
+from modules import loss_dict, func_dict, final_convolution
 from torch_regression import torch_Regression
 
 
@@ -103,7 +103,8 @@ class hook_grads():
             self.grads[name] = grad
         return hook
 
-def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', validation_loss = None, batchsize = None, device = 'cpu', optimizer = 'Adam', optim_params = None,  verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', patience = 25, init_adjust = True, keepmodel = False, load_previous = True, write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, restart = False, **kwargs):
+def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', validation_loss = None, batchsize = None, device = 'cpu', optimizer = 'Adam', optim_params = None,  verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', patience = 25, init_adjust = True, reduce_lr_after = 1, keepmodel = False, load_previous = True, write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss= None, aug_loss_mix = None, aug_lr = None, **kwargs):
+    
     
     # Default parameters for each optimizer
     if optim_params is None:
@@ -126,9 +127,11 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     if shift_back is not None:
         if isinstance(shift_back, int):
             if shift_back > 0:
-                shift_back = np.arange(1,shift_back+1)
+                shift_back = np.arange(0,shift_back+1, dtype = int)
             else:
                 shift_back = None
+        else:
+            shift_back = np.unique(np.append([0],shift_back))
     
     # Assignment of loss function
     if loss_function is None:
@@ -146,6 +149,30 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
         val_loss = loss_dict[validation_loss]
     elif type(validation_loss) == nn.Module:
         val_loss = validation_loss
+    
+    aug_convolution = aug_kernel_size
+    seqmaskcut = None
+    if augment_representation is not None:
+        # find out size of output at "augment_representation" to determine padding for final_convolution()
+        testrep = model.forward(torch.Tensor(X[:1]), location = augment_representation)
+        rep_size = testrep.size(dim = -1)
+        rep_dim = testrep.size(dim = -2)
+        seq_size = np.shape(X)[-1]
+        aug_convolution = nn.Sequential(final_convolution(rep_dim, 4, aug_kernel_size, strides = 1, n_convolutions = aug_conv_layers), nn.Softmax(dim = -2))
+        aug_convolution.to(device)
+        max_windowsize = min(rep_size, seq_size) # For some representation one may not be able to reconstruct masked windows along the entire sequence
+        seqmaskcut = int(np.ceil((seq_size - max_windowsize)/2))
+        # sequences values will only be masked within these values
+        seqmaskcut = [seqmaskcut, seqmaskcut + max_windowsize]
+        # remove masks that mask values outside the window that can be covered
+        maskcover = np.where(masks[:,0])
+        # find masks that have values outside seqmaskcut
+        delmask = np.unique(maskcover[0][(maskcover[1]<seqmaskcut[0]) * (maskcover[1]>=seqmaskcut[1])])
+        masks = masks[~np.isin(np.arange(len(masks)),delmask)]
+        aug_loss = loss_dict[aug_loss]
+        if aug_lr is None:
+            aug_lr = lr
+        
     
     # if the model uses fixed pwms that are concatenated with the input before pooled
     fixed_kernels = None
@@ -309,6 +336,13 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
         if verbose:
             print(param_tensor, a_lrs[layernames.index(layname)])
         a_dict.append({'params':tensor, 'lr':a_lrs[layernames.index(layname)]})
+   
+    # initialize learning rate for aug_convolution
+    if augment_representation is not None:
+        for param_tensor, tensor in aug_convolution.named_parameters():
+            if verbose:
+                print(param_tensor, aug_lr)
+            a_dict.append({'params':tensor, 'lr':aug_lr})
     
     # Give this dictionary to the optimizer
     if optimizer == 'SGD':
@@ -330,19 +364,22 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     else:
         print(optimizer, 'not allowed')
     
-    # Compute losses at the beginning with randomly initialized model
-    lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = shift_back, smooth_onehot = 0,multiple_input = multiple_input)
     
-    beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, smooth_onehot = smooth_onehot, multiple_input = multiple_input)
+    # Compute losses at the beginning with randomly initialized model
+    lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = shift_back, random_shift = random_shift,smooth_onehot = 0,multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
+    
+    beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back,random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
     
     saveloss = [lossval, loss2, lossorigval, beginning_loss, 0]
     save_model(model, outname+'_params0.pth')
     save_model(model, outname+'_parameter.pth')   
     
+    roundto = 6
+    
     if verbose:
         print('Train_loss(val), Val_loss(val), Train_loss(train), Val_loss(train)')
     if writeloss:
-        writebeginning = str(round(lossorigval,4))+'\t'+str(round(lossval,4))+'\t'+str(round(beginning_loss,4))+'\t'+str(round(loss2,4))
+        writebeginning = str(round(lossorigval,roundto))+'\t'+str(round(lossval,roundto))+'\t'+str(round(beginning_loss,roundto))+'\t'+str(round(loss2,roundto))
         save_losses(outname+'_loss.txt', 0, writebeginning)
     if verbose:
         print(0, writebeginning)
@@ -355,20 +392,20 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     been_larger = 1
     
     while True:
-        trainloss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, True, device, val_loss = val_loss, optimizer = optimizer, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input)
+        trainloss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, True, device, val_loss = val_loss, optimizer = optimizer, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, augment_representation = augment_representation, aug_layer = aug_convolution, aug_loss_masked = aug_loss_masked, aug_loss = aug_loss, aug_loss_mix = aug_loss_mix, seqmaskcut = seqmaskcut)
         
         model.eval() # Sets model to evaluation mode which is important for batch normalization over all training mean and for dropout to be zero
         e += 1
         
-        lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = shift_back, smooth_onehot = 0, multiple_input = multiple_input)
+        lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = shift_back, random_shift = random_shift, smooth_onehot = 0, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
         
         
         
         if e%write_steps == 0 or e < init_epochs:
             if writeloss:
-                save_losses(outname+'_loss.txt', e, str(round(lossorigval,4))+'\t'+str(round(lossval,4))+'\t'+str(round(trainloss,4))+'\t'+str(round(loss2,4)))
+                save_losses(outname+'_loss.txt', e, str(round(lossorigval,roundto))+'\t'+str(round(lossval,roundto))+'\t'+str(round(trainloss,roundto))+'\t'+str(round(loss2,roundto)))
             if verbose:
-                print(e, str(round(lossorigval,4))+'\t'+str(round(lossval,4))+'\t'+str(round(trainloss,4))+'\t'+str(round(loss2,4)))
+                print(e, str(round(lossorigval,roundto))+'\t'+str(round(lossval,roundto))+'\t'+str(round(trainloss,roundto))+'\t'+str(round(loss2,roundto)))
             
         model.train() # Set model modules back to training mode
         
@@ -376,7 +413,7 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
         
         #print(trainloss, beginning_loss, e, init_epochs, init_adjust)
         if init_adjust and e > init_epochs:
-            if (np.isnan(lossval) or np.isnan(loss2) or np.isnan(lossorigval) or np.isnan(trainloss)) or ((been_larger >= 2) and (trainloss > beginning_loss)):
+            if (np.isnan(lossval) or np.isnan(loss2) or np.isnan(lossorigval) or np.isnan(trainloss)) or ((been_larger >= reduce_lr_after) and (trainloss > beginning_loss)):
                 # reduces learning rate if training loss goes up actually
                 # need something learnable for each layer during training
                 restarted += 1
@@ -385,12 +422,14 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
                 save_losses(outname+'_loss.txt', 0, writebeginning)
                 load_model(model, outname+'_params0.pth',device)
                 e = 0
-                lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, smooth_onehot = 0, shift_back = shift_back, multiple_input = multiple_input)
+                lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, smooth_onehot = 0, shift_back = shift_back, random_shift = random_shift, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
                 early_stop, stopexp = stopcriterion(0, lossval)
-                print('Learning rate reduced', restarted,  lossorigval, lossval, lr * 0.25**restarted)
+                
                 for a, adict in enumerate(a_dict):
                     a_dict[a]['lr'] = adict['lr'] *0.25
+                print('Learning rate reduced', restarted,  lossorigval, lossval, a_dict[-1]['lr'])
                 been_larger = 1
+        
             elif trainloss > beginning_loss:
                 been_larger += 1
             else:
@@ -409,17 +448,19 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
                         if verbose:
                             print('Reseted', mname)
                 save_model(model, outname+'_params0.pth')
-                beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, smooth_onehot = smooth_onehot, multiple_input = multiple_input)
-                lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, smooth_onehot = 0, shift_back = shift_back, multiple_input = multiple_input)
+                beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
+                lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, val_loss = val_loss, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, smooth_onehot = 0, shift_back = shift_back, random_shift = random_shift, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
                 early_stop, stopexp = stopcriterion(0, lossval)
                 restart = False
-                
+                epochs = epochs + e
                 if verbose:
-                    print('New start', str(round(lossorigval,4))+'\t'+str(round(lossval,4))+'\t'+str(round(trainloss,4))+'\t'+str(round(loss2,4)))
+                    print('New start', str(round(lossorigval,roundto))+'\t'+str(round(lossval,roundto))+'\t'+str(round(trainloss,roundto))+'\t'+str(round(loss2,roundto)))
+                
             else:
                 if early_stop and verbose:
                     # Early stopping if validation loss is not improved for patience epochs
-                    print(e, lossval, stopexp)
+                    if verbose:
+                        print(e, lossval, stopexp)
                 
                 if lossval > saveloss[0] and load_previous:
                     # Load better model if it was created in an earlier epoch
@@ -488,18 +529,21 @@ def reverse_inoutsign(x):
 
 
 # make version so that nothing gets lost and so that array with shifts can be given    
-def shift_sequences(sample_x, shift_back, maxshift = None, mode = 'constant', value = 0, random_shift = False): # 'constant', 'reflect', 'replicate' or 'circular'
+def shift_sequences(sample_x, shift_back, maxshift = None, just_pad = False, mode = 'constant', value = 0.25, random_shift = False): # 'constant', 'reflect', 'replicate' or 'circular'
     if maxshift is None:
         maxshift = np.amax(shift_back)
-    sample_xs = [nn.functional.pad(sample_x, (maxshift, maxshift), mode = mode, value = value)]
-    if random_shift:
-        sb = np.random.choice(shift_back)
-        sample_xs.append(nn.functional.pad(sample_x, (maxshift-sb, maxshift+sb), mode = mode, value = value))
-        sample_xs.append(nn.functional.pad(sample_x, (maxshift+sb, maxshift-sb), mode = mode, value = value))
-    else:
+    sample_xs = [] #nn.functional.pad(sample_x, (maxshift, maxshift), mode = mode, value = value)]
+    if random_shift and not just_pad:
+        sbs = np.random.choice(shift_back, int(random_shift))
+        for sb in sbs:
+            sample_xs.append(nn.functional.pad(sample_x, (maxshift-sb, maxshift+sb), mode = mode, value = value))
+            sample_xs.append(nn.functional.pad(sample_x, (maxshift+sb, maxshift-sb), mode = mode, value = value))
+    elif not just_pad:
         for sb in shift_back:
             sample_xs.append(nn.functional.pad(sample_x, (maxshift-sb, maxshift+sb), mode = mode, value = value))
             sample_xs.append(nn.functional.pad(sample_x, (maxshift+sb, maxshift-sb), mode = mode, value = value))
+    else:
+        sample_xs = [nn.functional.pad(sample_x, (maxshift, maxshift), mode = mode, value = value)]
     sample_x = torch.cat(sample_xs, dim = 0)
     return sample_x
 
@@ -507,9 +551,17 @@ def smooth_onehotfunc(sample_x, ns = 2):
     sample_x = torch.cat([sample_x, torch.sign(torch.sum(sample_x, dim =1).repeat((ns,1))).unsqueeze(1)*(sample_x.absolute().repeat((ns,1,1)) - torch.rand(ns*sample_x.size(dim=0),ns*sample_x.size(dim=1),ns*sample_x.size(dim=2))*0.5).absolute()], dim = 0)
     return sample_x
 
+def mask_sequence(sample_x, masks, nmasks, mask_val = 0.25):
+    nsamp = sample_x.size(dim=0)
+    cmasks = masks[np.random.choice(len(masks), nmasks * nsamp)]
+    sample_x = sample_x.repeat(nmasks, 1, 1)
+    sample_x[cmasks] = mask_val
+    return sample_x, cmasks
+
 
 # execute one epoch with training or validation set. Training set takes gradient but validation set computes loss without gradient
-def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, device, val_loss = None, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = None, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False):
+def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, device, val_loss = None, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = None, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, masks = None, nmasks = None, augment_representation = None, aug_layer = None, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, seqmaskcut = None):
+    
     if val_loss is None:
         val_loss = loss_func
     
@@ -525,18 +577,39 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
             yclasses *= model.l_out
     
     tsize = 1
+    augsize = None
+    if nmasks is not None and augment_representation is not None:
+        augsize = tsize * nmasks
+    elif nmasks is not None and seqmaskcut is None:
+        tsize = tsize * nmasks
+    
     if shift_back is not None:
         if random_shift:
-            tsize = tsize + tsize*2
+            tsize = tsize*int(random_shift)*2
         else:
-            tsize = tsize + tsize*2*len(shift_back)
+            tsize = tsize*2*len(shift_back)
     if reverse_sign:
+    # all operations are also performed in the negative space, i.e. 1 => -1 in one hot encoding and y = 4 => y = -4
+    # shoud only be used if no relu is used after first convolution, otherwise it's confusing why this should help. Idea is basically to learn a symmetric function.
         tsize = tsize*2
     if smooth_onehot > 0:
         tsize = tsize *(smooth_onehot +1)
     
     
     for sample_x, sample_y, index in dataloader:
+        if nmasks is not None:
+            if augment_representation is not None and take_grad:
+                sample_xaug, sample_mask = mask_sequence(sample_x,masks, nmasks)
+                sample_xaug = sample_xaug[:,:,seqmaskcut[0]:seqmaskcut[1]]
+                sample_mask = sample_mask[:,:,seqmaskcut[0]:seqmaskcut[1]]
+                sample_yaug = torch.cat(nmasks*[sample_x[:,:,seqmaskcut[0]:seqmaskcut[1]]])
+                sample_xaug = sample_xaug.to(device)
+                sample_yaug = sample_yaug.to(device)
+                sample_mask = sample_mask.to(device)
+            elif seqmaskcut is None: 
+                sample_x, sample_mask = mask_sequence(sample_x,masks, nmasks)
+                sample_y = torch.cat(nmasks*[sample_y])
+        
         if pwm_out is None:
             saddx = None
         else:
@@ -548,14 +621,14 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
             else:
                 sample_x = shift_sequences(sample_x, shift_back, random_shift = random_shift)
             if random_shift:
-                sample_y = torch.cat(3*[sample_y])
+                sample_y = torch.cat((2*int(random_shift))*[sample_y])
             else:
-                sample_y = torch.cat(((len(shift_back)+1)*2-1)*[sample_y])
+                sample_y = torch.cat((len(shift_back)*2)*[sample_y])
             if saddx is not None:
                 if random_shift:
                     saddx = saddx.repeat(3, 1, 1)
                 else:
-                    saddx = saddx.repeat((len(shift_back)+1)*2-1, 1, 1)
+                    saddx = saddx.repeat(len(shift_back)*2, 1, 1)
         
         # Add samples with reverse sign in X and Y
         if reverse_sign:
@@ -593,10 +666,12 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
             loss = loss_func(Ypred, sample_y)
             if sample_weights is not None:
                 loss = loss*sample_weights[index][:,None]
-            # FIX for Correlationclass and Correlationdata
+            
             loss = torch.sum(loss)
             trainloss += float(loss.item())
+            
             if l1reg_last > 0 and last_layertensor is not None:
+                # NEED to use named_parameters instead of model.state_dict because state_dict does not come with gradient
                 for param_name, tensor in model.named_parameters():
                     if param_name in last_layertensor:
                         loss += l1reg_last * l1_loss(tensor)
@@ -610,8 +685,17 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
                 for param_name, tensor in model.named_parameters():
                     if param_name in kernel_layertensor:
                         loss += l1_kernel * l1_loss(tensor)
+            if augment_representation is not None:
+                aug_rep = model.forward(sample_xaug, location = augment_representation)
+                aug_rep = aug_layer(aug_rep)
+                if aug_loss_masked:
+                    aug_rep = aug_rep[sample_mask].reshape(1,4,-1)
+                    sample_yaug = sample_yaug[sample_mask].reshape(1,4,-1)
+                loss += aug_loss_mix * torch.sum(aug_loss(aug_rep, sample_yaug))
+            
             loss.backward()
             optimizer.step()
+            
         else:
             with torch.no_grad():
                 Ypred = model.forward(sample_x, xadd = saddx)
@@ -637,11 +721,12 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
 
 
 # The prediction after training are performed on the cpu
-def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, device = 'cpu', batchsize = None, shift_sequence = None):
+def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, device = 'cpu', batchsize = None, shift_sequence = None, random_shift = True):
     if shift_sequence is not None:
         if isinstance(shift_sequence, int):
             if shift_sequence > 0:
-                shift_sequence = np.arange(1,shift_sequence+1)
+                if not random_shift:
+                    shift_sequence = np.arange(1,shift_sequence+1, dtype = int)
             else:
                 shift_sequence = None
     model.eval()
@@ -664,23 +749,26 @@ def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, devic
                 if pwm_out is not None:
                     pwm_outin = pwm_out[i*batchsize:(i+1)*batchsize]
                     if shift_sequence is not None:
-                        pwm_outin = shift_sequences(pwm_outin, shift_sequence)
+                        pwm_outin = shift_sequences(pwm_outin, shift_sequence, just_pad = random_shift)
                     pwm_outin = pwm_outin.to(device)
                 else:
                     pwm_outin = None
                 if islist:
                     xin = [x[i*batchsize:(i+1)*batchsize] for x in X]
+                    xsize = xin[0].size(dim = 0)
                     if shift_sequence is not None:
-                        xin = [shift_sequences(x, shift_sequence) for x in X]
+                        xin = [shift_sequences(x, shift_sequence, just_pad = random_shift) for x in xin]
                     xin = [x.to(device) for x in xin]
+                
                 else:
                     xin = X[i*batchsize:(i+1)*batchsize]
+                    xsize = xin.size(dim = 0)
                     if shift_sequence is not None:
-                        xin = shift_sequences(xin, shift_sequence)
+                        xin = shift_sequences(xin, shift_sequence, just_pad = random_shift)
                     xin = xin.to(device)
                 fpred = model.forward(xin, xadd = pwm_outin, mask = mask,mask_value = mask_value).detach().cpu().numpy()
                 if shift_sequence is not None:
-                    fpred = fpred.reshape(len(shift_sequence),-1,fpred.size(dim=-1)).mean(dim =0)
+                    fpred = fpred.reshape(-1,xsize,np.shape(fpred)[-1]).mean(axis =0)
                 predout.append(fpred)
             predout = np.concatenate(predout, axis = 0)
         else:
@@ -692,6 +780,6 @@ def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, devic
             predout = predout.detach().cpu().numpy()
             if shift_sequence is not None:
                 # combine predictions for each gene across different shifts
-                predout = predout.reshape(len(shift_sequence),-1,fpred.size(dim=-1)).mean(dim =0)
+                predout = predout.reshape(-1,dsize,fpred.size(dim=-1)).mean(dim =0)
     return predout
 

@@ -18,15 +18,15 @@ from functools import reduce
 from torch_regression import torch_Regression
 from data_processing import readin, read_mutationfile, create_sets, create_outname, rescale_pwm, read_pwm, check, numbertype, isfloat, manipulate_input
 from functions import mse, correlation, dist_measures
-from output import print_averages, save_performance, plot_scatter
+from output import print_averages, save_performance, plot_scatter, add_params_to_outname
 from functions import dist_measures
 from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance 
 from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters
-from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict
+from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, simple_multi_output
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
-from output import cnn, add_params_to_outname
+from cnn_model import cnn
 
 def separate_sys(sysin, delimiter = ',', delimiter_1 = None):
     if delimiter in sysin:
@@ -51,7 +51,7 @@ def genseq(lseq, nseq):
     return seqs
 
 class combined_network(nn.Module):
-    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, n_classes = 1, l_seqs = None, cnn_embedding = 516, n_combine_layers = 3, combine_function = 'GELU', combine_widening = 1.1, combine_residual = 0, shift_sequence = None, random_shift = False, smooth_onehot = 0, reverse_sign = False, dropout = 0, batch_norm = False, epochs = 1000, lr = 1e-2, kernel_lr = None, cnn_lr = None, batchsize = None, patience = 50, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 1, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
+    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, n_classes = 1, l_seqs = None, reverse_complement = None, cnn_embedding = 516, n_combine_layers = 3, combine_function = 'GELU', combine_widening = 1.1, combine_residual = 0, shift_sequence = None, random_shift = False, smooth_onehot = 0, reverse_sign = False, dropout = 0, batch_norm = False, epochs = 1000, lr = 1e-2, kernel_lr = None, cnn_lr = None, batchsize = None, patience = 50, outclass = 'Linear', outlog = 2, outlogoffset = 2, outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 1, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
         super(combined_network, self).__init__()
         
         torch.manual_seed(seed)
@@ -64,7 +64,7 @@ class combined_network(nn.Module):
         self.n_inputs = len(l_seqs)
         self.cnn_embedding = cnn_embedding
         self.n_combine_layers = n_combine_layers
-        self. combine_function = combine_function
+        self.combine_function = combine_function
         self.combine_widening = combine_widening
         self.combine_residual = combine_residual
         self.shift_sequence = shift_sequence
@@ -79,6 +79,8 @@ class combined_network(nn.Module):
         self.batchsize = batchsize 
         self.patience = patience
         self.outclass = outclass
+        self.outlog = outlog
+        self.outlogoffset = outlogoffset
         self.outname = outname
         self.optimizer = optimizer
         self.optim_params = optim_params
@@ -95,6 +97,11 @@ class combined_network(nn.Module):
         self.generate_paramfile = generate_paramfile
         self.add_outname = add_outname
         self.restart = restart
+        self.random_shift = random_shift
+        
+        if reverse_complement is None:
+            reverse_complement = [False for l in range(len(l_seqs))]
+        self.__dict__['reverse_complement'] = any(reverse_complement)
         
         for kw in kwargs:
             self.__dict__[str(kw)] = kwargs[kw]
@@ -102,6 +109,13 @@ class combined_network(nn.Module):
         for rw in refresh_dict:
             if rw not in self.__dict__.keys():
                 self.__dict__[str(rw)] = refresh_dict[rw]
+        
+        self.use_nnout = True
+        if (('FRACTION' in outclass.upper()) or ('DIFFERENCE' in outclass.upper())) and len(l_seqs) == 2:
+            self.cnn_embedding = cnn_embedding = n_classes
+            self.n_combine_layers = 0
+            self.use_nnout = False
+            
         
         if add_outname:
             ### Generate file name from all settings
@@ -124,34 +138,44 @@ class combined_network(nn.Module):
             obj.close()
         self.generate_paramfile = generate_paramfile
         
+        
         self.cnns = nn.ModuleDict()
         currdim = 0
         for l, lseq in enumerate(l_seqs):
-            self.cnns['CNN'+str(l)] = cnn(n_features = n_features, n_classes = cnn_embedding, l_seqs = lseq, seed = self.seed +l, dropout = dropout, batch_norm = batch_norm, add_outname = False, generate_paramfile = False, keepmodel = False, verbose = verbose, **kwargs)
+            self.cnns['CNN'+str(l)] = cnn(n_features = n_features, n_classes = cnn_embedding, l_seqs = lseq, seed = self.seed +l, dropout = dropout, batch_norm = batch_norm, add_outname = False, generate_paramfile = False, keepmodel = False, verbose = verbose, outclass = combine_function, reverse_complement = reverse_complement[l], shift_sequence = shift_sequence, **kwargs)
             currdim += cnn_embedding
+        
+        # difference can be used to fit log(expression) = log(kt/kd) = log(kt) - log(kd) or expression = kt/kd 
+        # However, DO NOT use difference if values are log(a+expression) since they cannot be represented as difference
+        if self.use_nnout == False:
+            print('MAKE SURE that processing of the log is identical to what is known about the data.\nCurrently:',outclass, outlogoffset, outlog)
+            prefunc = None
+            if 'FRACTION' in outclass.upper():
+                prefunc = 'ReLU'
+            self.classifier = simple_multi_output(out_relation = outclass, pre_function = 'ReLU', log = outlog, logoffset = outlogoffset)
+        
+        else:
+            if self.n_combine_layers > 0:
+                self.nclayers = Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.n_combine_layers, layer_widening = combine_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = combine_function, residual_after = combine_residual, bias = True)
             
+            classifier = OrderedDict()
+            classifier['Linear'] = nn.Linear(currdim, n_classes)
+            
+            if self.outclass == 'Class':
+                classifier['Sigmoid'] = nn.Sigmoid()
+            elif self.outclass == 'Multi_class':
+                classifier['Softmax'] = nn.Softmax()
+            elif self.outclass == 'Complex':
+                classifier['Complex'] = Complex(n_classes)
+            
+            self.classifier = nn.Sequential(classifier)
         
-        if self.n_combine_layers > 0:
-            self.nclayers = Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.n_combine_layers, layer_widening = combine_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = combine_function, residual_after = combine_residual, bias = True)
+            
+            self.kwargs = kwargs
+            # set learning_rate reduce or increase learning rate for kernels by hand
+            if self.kernel_lr is None:
+                self.kernel_lr = lr
         
-        classifier = OrderedDict()
-        classifier['Linear'] = nn.Linear(currdim, n_classes)
-        
-        if self.outclass == 'Class':
-            classifier['Sigmoid'] = nn.Sigmoid()
-        elif self.outclass == 'Multi_class':
-            classifier['Softmax'] = nn.Softmax()
-        elif self.outclass == 'Complex':
-            classifier['Complex'] = Complex(n_classes)
-        
-        self.classifier = nn.Sequential(classifier)
-    
-        
-        self.kwargs = kwargs
-        # set learning_rate reduce or increase learning rate for kernels by hand
-        if self.kernel_lr is None:
-            self.kernel_lr = lr
-    
     def forward(self, x, mask = None, mask_value = 0, location = 'None', **kwargs):
         # Forward pass through all the initialized layers
         pred = []
@@ -165,17 +189,23 @@ class combined_network(nn.Module):
                     pred.append(cn(x[c], mask = mask[1], mask_value = mask_value))
                 else:
                     pred.append(cn(x[c]))
-             
+        
+        # return representation of single CNNx
         if location == '0':
             return pred[kwargs['cnn']]
+
+        # return concatenated representations from all CNNs
+        if location == '1' or (self.n_combine_layers == 0 and location == '-1'):
+            return torch.cat(pred, dim = -1)
         
-        pred = torch.cat(pred, dim = -1)
-        
-        if location == '-1' or location == '1':
-            return pred
+        if self.use_nnout:
+            pred = torch.cat(pred, dim = -1)
         
         if self.n_combine_layers > 0:
             pred = self.nclayers(pred)
+            if location == '-1' or location == '2':
+                return pred
+        
         pred = self.classifier(pred)
         
         return pred
@@ -183,7 +213,7 @@ class combined_network(nn.Module):
     def predict(self, X, mask = None, mask_value = 0, device = None):
         if device is None:
             device = self.device
-        predout = batched_predict(self, X, mask = mask, mask_value = mask_value, device = device, batchsize = self.batchsize)
+        predout = batched_predict(self, X, mask = mask, mask_value = mask_value, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence, random_shift = self.random_shift)
         return predout
 
     def fit(self, X, Y, XYval = None, sample_weights = None):
@@ -220,6 +250,38 @@ if __name__ == '__main__':
         
     X, Y, names, features, experiments = readin(inputfile, outputfile, delimiter = delimiter,return_header = True, assign_region = False, mirrorx = mirror, combinex = combinput)
     
+    if '--testrandom' in sys.argv:
+        trand = int(sys.argv[sys.argv.index('--testrandom')+1])
+        mask = np.random.permutation(len(Y))[:trand]
+        X, names = [x[mask] for x in X], names[mask]
+        if Y is not None:
+            Y = Y[mask]
+    
+    
+    if '--remove_allzero' in sys.argv and Y is not None:
+        mask = np.sum(Y, axis = 1) != 0
+        Y = Y[mask]
+        X, names = [x[mask] for x in X], names[mask]
+    
+    if '--remove_allzerovar' in sys.argv and Y is not None:
+        mask = np.std(Y, axis = 1) != 0
+        Y = Y[mask]
+        X, names = [x[mask] for x in X], names[mask]
+    
+
+    if '--adjust_allzerovar' in sys.argv and Y is not None:
+        mask = np.std(Y, axis = 1) == 0
+        rand = np.random.normal(loc = 0, scale = 1e-4, size = np.shape(Y[mask]))
+        Y[mask] += rand
+        
+    # make X with 8 rows for ACGTACGT to capture the reverse complement\
+    # Replace with Convolutional module that generates reverse complement during operation
+    reverse_complement = [False for i in range(len(X))]
+    if '--reverse_complement' in sys.argv:
+        reverse_complement = np.array(sys.argv[sys.argv.index('--reverse_complement')+1].split(',')) == 'True'
+        if 'True' not in sys.argv[sys.argv.index('--reverse_complement')+1]:
+            print('Define which cnn uses the reverse complement with True,False,...')
+            sys.exit()
     
     if ',' in inputfile:
         inputfiles = inputfile.split(',')
@@ -232,8 +294,8 @@ if __name__ == '__main__':
         outname += '-rgls'
     if '--realign_input' in sys.argv:
         outname += 'mirx'
-    print(outname)
-    
+    if '--reverse_complement' in sys.argv:
+        outname += 'rcomp'
     # Parameter dictionary for initializing the cnn
     params = {}
     
@@ -312,7 +374,7 @@ if __name__ == '__main__':
             pwmnameset = create_outname(inp, pwmnameset, lword = 'and')
             
         
-        outname += '_pwms'+pwmnameset+ 'ps'+str(psam)[0]+'ic'+str(infcont)[0]
+        outname += pwmnameset+ 'ps'+str(psam)[0]+'ic'+str(infcont)[0]
         
         pwms, rbpnames = [], []
         
@@ -365,7 +427,7 @@ if __name__ == '__main__':
             params[p[0]] = check(p[1])
         
         print('Device', params['device'])
-        params['n_features'], params['l_seqs'] = np.shape(X[0])[-2], [np.shape(x)[-1] for x in X]
+        params['n_features'], params['l_seqs'], params['reverse_complement'] = np.shape(X[0])[-2], [np.shape(x)[-1] for x in X], reverse_complement
         model = combined_network(**params)
     
     translate_dict = None

@@ -316,7 +316,7 @@ class sk_regression():
                 updownmask = updown != 0
                 
                 if self.verbose:
-                    print(alpha, int(np.sum(updown==0)), int(np.sum(updown==currstage)), np.mean(perform))
+                    print(alpha, int(np.sum(updown==0)), int(np.sum(updown==currstage)), round(np.mean(perform),3))
                     #print(hasincreased, hasnotimproved)
                 if method == 'independent':
                     nupdown = int(np.sum(updownmask))
@@ -372,7 +372,7 @@ class sk_regression():
                             hasnotimproved[nf] +=1
                         elif nperf > perform[nf] and js[nf] >= 1 and updown[nf] == currstage:
                             hasincreased[nf] +=1
-                        if hasnotimproved[nf] == 10 or hasincreased == 3:
+                        if hasnotimproved[nf] == 10 or hasincreased[nf] == 3:
                             updown[nf] = 0
                             #print( nf, alpha, perform[nf])
                         
@@ -645,8 +645,8 @@ if __name__ == '__main__':
     X, features = manipulate_input(X, features, sys.argv)
     
     # use a random number of samples from the entire data set to test model
-    if '--sub_sample' in sys.argv:
-        subsamp = float(sys.argv[sys.argv.index('--sub_sample')+1])
+    if '--testrandom' in sys.argv:
+        subsamp = float(sys.argv[sys.argv.index('--testrandom')+1])
         if subsamp < 1:
             subsamp = int(len(X)*subsamp)
         subsamp = int(subsamp)
@@ -676,6 +676,11 @@ if __name__ == '__main__':
     else:
         outname += '-cv'+str(int(cutoff))+'-'+str(fold)
     trainset, testset, valset = create_sets(len(X), folds, fold, Yclass = Yclass, genenames = names)
+    
+    print('Train', len(trainset))
+    print('Test', len(testset), testset)
+    print('Val', len(valset))
+    
     
     if '--norm2output' in sys.argv:
         print ('ATTENTION: output has been normalized along data points')

@@ -1,6 +1,6 @@
 # one hot encoder takes a txt file of sequences converts them into one-hot encoding, and saves it as npz file
 # can also generate k-mer profile instead
-# offers option to use numpy sparse matrices to deal with more gene sequences
+# offers option to use numpy sparse matrices to deal with more sequences
 # also allows to annotate parts of the sequence with additional information such as genetic region (5', 3', exon, intron)
     # gentic regions are provided as Gene_name, region_name, location, total_length_of_gene
 
@@ -35,7 +35,7 @@ def readinfasta(fatafile, minlen = 10):
 #     Gene_name, region_name, location, total_length_of_gene
 # adds zeros to end of encoding for shorter sequences
 def readinlocation(regfile):
-    obj = np.genfromtxt(regfile, dtype = str, delimiter = '\t')
+    obj = np.genfromtxt(regfile, dtype = str)
     possible_regions = list(np.unique(obj[:,1]))
     genenames = obj[:,0]
     gsort = np.argsort(genenames)
@@ -425,7 +425,12 @@ if __name__ == '__main__':
     outname = os.path.splitext(fastafile)[0]
 
     selen = seqlen(sequences)
-    print('Max sequence length', np.amax(selen))
+    print('Max sequence length', genenames[np.argmax(selen)], np.amax(selen))
+    #import matplotlib.pyplot as plt 
+    #plt.hist(selen, bins = 100)
+    #plt.show()
+    #sys.exit()
+    
     if '--filter_genelength' in sys.argv:
         maxsize = int(sys.argv[sys.argv.index('--filter_genelength')+1])
         filt = np.array(selen) <= maxsize

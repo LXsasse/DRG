@@ -21,10 +21,9 @@ def correlation(y1, y2, axis = 1, ctype = 'pearson', distance = True):
         y1, y2 = np.argsort(np.argsort(y1)), np.argsort(np.argsort(y2))
     if ctype != 'cosine':
         mean1, mean2 = np.mean(y1, axis = axis), np.mean(y2, axis = axis)
-        if axis ==1:
-            y1mean, y2mean = y1-mean1[:,None], y2-mean2[:,None]
-        else:
-            y1mean, y2mean = y1-mean1, y2-mean2
+        y1mean, y2mean = y1-np.expand_dims(mean1,axis = axis), y2-np.expand_dims(mean2,axis = axis)
+    else:
+        y1mean, y2mean = y1, y2
     n1, n2 = np.sqrt(np.sum(y1mean**2, axis = axis)), np.sqrt(np.sum(y2mean**2, axis = axis))
     n12 = n1*n2
     y12 = np.sum(y1mean*y2mean, axis = axis)

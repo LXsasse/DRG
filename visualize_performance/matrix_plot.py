@@ -235,12 +235,14 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
     return sortx, sorty
 
 
-def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = True, grid = True, swarm = True, plotnames = 0, datanames = None, scatter_color = None, scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, sort = 'top', sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size'):
+def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = True, grid = True, swarm = True, plotnames = 0, datanames = None, scatter_color = None, scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, sort = 'top', sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size', ylabel = None):
     fig = plt.figure(figsize = (len(modnames)*xwidth, height), dpi = dpi)
     ax = fig.add_subplot(111)
     ax.set_position([0.1,0.1,0.8,0.8])
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
         
     matrix = list(matrix)
     if swarm:
