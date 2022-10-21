@@ -36,32 +36,7 @@ from output import add_params_to_outname
 
 # flexible Convolutional neural network architecture
 class bpcnn(nn.Module):
-<<<<<<< HEAD
     def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, reverse_complement = False, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = None, dilmean_pooling = None, dilpooling_size = None, dilpooling_steps = None, dilpooling_residual = 1, dilresidual_entire = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, maxpool_attention = 0, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = False, trmean_pooling = False, trpooling_size = None, trpooling_steps = None, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, **kwargs):
-=======
-    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, 
-                n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, 
-                fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', 
-                warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, 
-                max_pooling = False, mean_pooling = False, pooling_size = None, pooling_steps = None, 
-                dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, 
-                l_dilkernels = None, dilmax_pooling = None, dilmean_pooling = None, 
-                dilpooling_size = None, dilpooling_steps = None, dilpooling_residual = 1, 
-                dilresidual_entire = False, gapped_convs = None, gapconv_residual = True, 
-                gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, 
-                n_distattention = 0, dim_distattention=2.5, dim_embattention = None, maxpool_attention = 0, 
-                sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1,
-                l_trkernels = None, trconv_dim = None, trmax_pooling = False, trmean_pooling = False, 
-                trpooling_size = None, trpooling_steps = None, trpooling_residual = 1, 
-                trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, 
-                dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., 
-                shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, 
-                epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, 
-                outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, 
-                checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', 
-                load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, 
-                generate_paramfile = True, add_outname = True, restart = False, **kwargs):
->>>>>>> 4dddc394a2ab4b0fef3d1b766220c1a1a5e4cbb7
         super(bpcnn, self).__init__()
         
         # Set seed for all random processes in the model: parameter init and other dataloader
@@ -438,15 +413,7 @@ class bpcnn(nn.Module):
                 trmeanpooling_size = self.trpooling_size
             else:
                 trmeanpooling_size = 0
-<<<<<<< HEAD
             self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmaxpooling_size, mean_pooling=trmeanpooling_size, residual_after = self.trpooling_residual, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
-=======
-            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, 
-                        self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmaxpooling_size, 
-                        mean_pooling=trmeanpooling_size, residual_after = self.trpooling_residual, 
-                        activation_function = kernel_function, strides = trstrides, dilations = trdilations, 
-                        bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
->>>>>>> 4dddc394a2ab4b0fef3d1b766220c1a1a5e4cbb7
             currdim, currlen = self.trconvolution_layers.currdim, self.trconvolution_layers.currlen
             if self.verbose:
                 print('Convolution after attention', currdim, currlen)
@@ -483,13 +450,8 @@ class bpcnn(nn.Module):
 
         # classifier contains the sequential list of layers
         classifier = OrderedDict()
-<<<<<<< HEAD
         self.linear_classifier = final_convolution(currdim, n_classes, self.final_kernel, cut_sites = cutedges, strides = self.final_strides, batch_norm = self.batch_norm, predict_from_dist = self.predict_from_dist)
         
-=======
-        classifier['Linear'] = final_convolution(currdim, n_classes, self.final_kernel, cut_sites = cutedges, 
-                strides = self.final_strides, batch_norm = self.batch_norm, predict_from_dist = self.predict_from_dist) 
->>>>>>> 4dddc394a2ab4b0fef3d1b766220c1a1a5e4cbb7
         if self.outclass == 'Class':
             classifier['Sigmoid'] = nn.Sigmoid()
         elif self.outclass == 'Softmax':

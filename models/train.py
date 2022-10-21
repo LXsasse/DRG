@@ -108,21 +108,7 @@ class hook_grads():
             self.grads[name] = grad
         return hook
 
-<<<<<<< HEAD
 def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', validation_loss = None, batchsize = None, device = 'cpu', optimizer = 'Adam', optim_params = None,  verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', patience = 25, init_adjust = True, reduce_lr_after = 1, keepmodel = False, load_previous = True, write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss= None, aug_loss_mix = None, aug_lr = None, **kwargs):
-    
-=======
-# This appears to be where actually training happens
-def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', 
-            validation_loss = None, batchsize = None, device = 'cpu', optimizer = 'Adam', 
-            optim_params = None,  verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, 
-            hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', 
-            patience = 25, init_adjust = True, keepmodel = False, load_previous = True, 
-            write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, 
-            epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, 
-            shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, 
-            restart = False, **kwargs):
->>>>>>> 4dddc394a2ab4b0fef3d1b766220c1a1a5e4cbb7
     
     # Default parameters for each optimizer
     if optim_params is None:
