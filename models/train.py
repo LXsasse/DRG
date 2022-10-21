@@ -14,8 +14,11 @@ from modules import loss_dict, func_dict, final_convolution
 from torch_regression import torch_Regression
 
 
-#### Wondering if there is something similar to the alpha fold techniques that we can do for this here: They use predicted information in a latter layer and pass it to an earlier layer 3 times. I sounds like a new type of recurrent block, a specialized recurrent block. Maybe there is something that we can do simiarly here.
-# Generally, the issue is that we cannot align sequences because genes have different lengths and enhancers are placed in different locations. However, relaitve distances may play a role. 
+# Wondering if there is something similar to the alpha fold techniques that we can do for this here: 
+# They use predicted information in a latter layer and pass it to an earlier layer 3 times. 
+# I sounds like a new type of recurrent block, a specialized recurrent block. Maybe there is something that we can do simiarly here.
+# Generally, the issue is that we cannot align sequences because genes have different lengths and enhancers 
+# are placed in different locations. However, relaitve distances may play a role. 
 # to capture these relative distances between motifs we need long-range equidistant modules
 # We basically need an aligmnment that focuses on aligning regulatory sequences properly to each other
 
@@ -56,7 +59,9 @@ def pwmset(pwm, targetlen, shift_long = True):
         
 # Scans onehot encoded numpy array for pwms
 def pwm_scan(sequences, pwms, targetlen = None, activation = 'max', motif_cutoff = None, set_to = 0., verbose = False):
-    # if pwms are longer than the targeted kernel size then its unclear if we should the convolution with the right side of the pwm or the left side. Each would create  a different positional pattern. Therefore we take the mean over both options all options of pwms with the target length.
+    # if pwms are longer than the targeted kernel size then its unclear if we should the convolution with the right side 
+    # of the pwm or the left side. Each would create  a different positional pattern. 
+    # Therefore we take the mean over both options all options of pwms with the target length.
     # If Pwms are smaller than the target len we use all the options of padded pwms to create scanning pattern
     if targetlen is None:
         targetlen = np.amax([len(pqm.T) for pqm in pwms])
@@ -103,8 +108,21 @@ class hook_grads():
             self.grads[name] = grad
         return hook
 
+<<<<<<< HEAD
 def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', validation_loss = None, batchsize = None, device = 'cpu', optimizer = 'Adam', optim_params = None,  verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', patience = 25, init_adjust = True, reduce_lr_after = 1, keepmodel = False, load_previous = True, write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss= None, aug_loss_mix = None, aug_lr = None, **kwargs):
     
+=======
+# This appears to be where actually training happens
+def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', 
+            validation_loss = None, batchsize = None, device = 'cpu', optimizer = 'Adam', 
+            optim_params = None,  verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, 
+            hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', 
+            patience = 25, init_adjust = True, keepmodel = False, load_previous = True, 
+            write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, 
+            epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, 
+            shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, 
+            restart = False, **kwargs):
+>>>>>>> 4dddc394a2ab4b0fef3d1b766220c1a1a5e4cbb7
     
     # Default parameters for each optimizer
     if optim_params is None:
