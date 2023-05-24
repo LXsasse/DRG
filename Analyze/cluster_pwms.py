@@ -7,21 +7,29 @@ from sklearn.cluster import AgglomerativeClustering
 def compare_ppms(ppms, ppms_ref, find_bestmatch = True, fill_logp_self = 0, one_half = True, min_sim = 5, padding = 0.25, infocont = False, bk_freq = 0.25, non_zero_elements = False):
     # measure lengths of motifs
     motif_len, motif_len_ref = [np.shape(ppm)[0] for ppm in ppms], [np.shape(ppm)[0] for ppm in ppms_ref]
+    # alignment offsets that will be saved
     offsets = np.zeros((len(ppms), len(ppms_ref)), dtype = int)
+    # log_pvalues of correlation that will be saved
     log_pvalues = np.zeros((len(ppms), len(ppms_ref)), dtype = float)
+    # correlation matrix itself
     correlation = np.zeros((len(ppms), len(ppms_ref)), dtype = float)
+    # whether to measure correlation of frequencies (pfms) of information content (pwms)
     if infocont:
-        padding = max(0,np.log2(padding/bk_freq))
+        padding = max(0,np.log2(padding/bk_freq)) # padding needs to be adjusted if information content is chosen
     for p, ppm in enumerate(ppms):
+        # just to check the speed of the algorithm
         if p% 25 == 0:
             print(p)
-        if one_half: 
+        
+        if one_half: # if one_half then ppms and ppms_ref have to be identical 
             p_start = p+1
         else:
             p_start = 0
+        # normalize pfm to pwm
         if infocont:
             ppm = np.log2(ppm/bk_freq)
             ppm[ppm<0] = 0
+            
         for q in range(p_start, len(ppms_ref)):
             qpm = ppms_ref[q]
             if infocont:
@@ -31,8 +39,6 @@ def compare_ppms(ppms, ppms_ref, find_bestmatch = True, fill_logp_self = 0, one_
             pearcors = []
             offs = []
             
-            #vectors = []
-            #shorts = []
             for i in range(min(0,-motif_len[p]+min_sim), motif_len_ref[q]-min(motif_len[p],min_sim) + 1):
                 if padding is not None:
                     refppm, testppm = np.ones((motif_len_ref[q]-min(motif_len[p],min_sim) + motif_len[p]-min(0,-motif_len[p]+min_sim),4))*padding, np.ones((motif_len_ref[q]-min(motif_len[p],min_sim) + motif_len[p]-min(0,-motif_len[p]+min_sim),4))*padding

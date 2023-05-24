@@ -498,10 +498,11 @@ if __name__ == '__main__':
         #seqfeatures = onehot(sequences, nucleotides, wildcard = wildcard_element, onehotregion = genreghot)
         #t2 = time.time()
         seqfeatures = quick_onehot(sequences, nucleotides, wildcard = wildcard_element, onehotregion = genreghot, region_names = gregions, align = alignto)
-        
+    
+    seqfeatures, featurenames = seqfeatures
     # save as npz file containing features and gene names
     print('Saved as \n'+outname+'.npz')
-    np.savez_compressed(outname+'.npz', seqfeatures = seqfeatures, genenames = genenames)
+    np.savez_compressed(outname+'.npz', seqfeatures = seqfeatures, genenames = genenames, featurenames = featurenames)
 
 
 

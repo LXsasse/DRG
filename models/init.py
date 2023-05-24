@@ -38,21 +38,32 @@ def load_parameters(model, PATH, translate_dict = None, allow_reduction = False,
 
 # For custom data sets that that also return the indices for the batch
 class MyDataset(Dataset):
-    def __init__(self, data, targets, axis = 0):
+    def __init__(self, data, targets, axis = 0, yaxis = 0):
         self.data = data
         self.targets = targets
         self.axis = axis
+        self.yaxis = yaxis
+        if yaxis == 1:
+            self.ndatapoints = len(targets[0])
+        else:
+            self.ndatapoints = len(targets)
         
     def __getitem__(self, index):
-        y = self.targets[index]
+        
+        if self.yaxis == 0:
+            y = self.targets[index]
+        elif self.yaxis == 1:
+            y = [dy[index] for dy in self.targets]
+        
         if self.axis == 0:
             x = self.data[index]
         elif self.axis == 1:
             x = [dx[index] for dx in self.data]
+        
         return x, y, index
         
     def __len__(self):
-        return len(self.targets)
+        return self.ndatapoints
         
 # Either use cpu or use gpu with largest free memory
 def get_device():

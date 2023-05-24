@@ -3,8 +3,20 @@ import sys, os
 import matplotlib.pyplot as plt
 from matplotlib import cm
 
-valfiles=sys.argv[1].split(',')
-modnames=sys.argv[2].split(',')
+valfiles=sys.argv[1]
+if ',' in valfiles:
+    valfiles=sys.argv[1].split(',')
+else:
+    valfiles = [valfiles]
+
+
+modnames=sys.argv[2]
+if ',' in modnames:
+    modnames = modnames.split(',')
+else:
+    modnames = [modnames]
+
+
 
 
 losses = []
@@ -23,7 +35,7 @@ if '--combine_sets' in sys.argv:
     width = 0.4
 else:
     width = 0.8
-ax0.set_position([0.1, 0.81, width, 0.14])
+ax0.set_position([0.1, 0.78, width, min(1,(len(modnames)/5))*0.17])
 ax0.tick_params(left = False, labelleft = False, labelbottom = False, bottom = False)
 rows = min(len(modnames),4)
 columns = int(len(modnames)/rows)+int(len(modnames)%rows>0)

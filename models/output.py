@@ -29,6 +29,7 @@ def print_averages(Y_pred, Ytest, testclasses, sysargv):
     if '--auprcaverage' in sysargv:
         for tclass in np.unique(testclasses):
             consider = np.where(testclasses == tclass)[0]
+            print("Expected", np.mean(Ytest[:,consider], axis = 0))
             print(tclass, 'AUPRC', metrics.average_precision_score(Ytest[:,consider], Y_pred[:,consider]))
     if '--mseaverage' in sysargv:
         for tclass in np.unique(testclasses):
@@ -74,8 +75,8 @@ def save_performance(Y_pred, Ytest, testclasses, experiments, names, outname, sy
         for tclass in np.unique(testclasses):
             consider = np.where(testclasses == tclass)[0]
             Y_predc = np.copy(Y_pred)
-            Y_predc[Y_predc < 0] = 0
-            JShannon = np.mean(np.transpose(jensenshannon(np.transpose(Ytest[:,consider]), np.transpose(Y_predc[:,consider]))), axis = 0)
+            Y_predc[Y_predc < 0] = 1e-8
+            JShannon = np.mean(np.transpose(jensenshannon(np.transpose(Ytest[:,consider]+1e-8), np.transpose(Y_predc[:,consider]))), axis = 0)
             np.savetxt(outname+'_exper_js_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), JShannon.reshape(-1,1),axis = 1), fmt = '%s')
     if '--save_wilcoxon_perclass' in sysargv:
         for tclass in np.unique(testclasses):
@@ -207,8 +208,8 @@ def save_performance(Y_pred, Ytest, testclasses, experiments, names, outname, sy
         for tclass in np.unique(testclasses):
             consider = np.where(testclasses == tclass)[0]
             Y_predc = np.copy(Y_pred)
-            Y_predc[Y_predc < 0] = 0
-            JShannon = np.mean(np.transpose(jensenshannon(np.transpose(Ytest[:,consider]), np.transpose(Y_predc[:,consider]))), axis = 1)
+            Y_predc[Y_predc < 1e-8] = 1e-8
+            JShannon = np.mean(np.transpose(jensenshannon(np.transpose(Ytest[:,consider]+1e-8), np.transpose(Y_predc[:,consider]))), axis = 1)
             np.savetxt(outname+'_gene_js_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), JShannon.reshape(-1,1),axis = 1), fmt = '%s')
     if '--save_wilcoxon_pergene' in sysargv:
         for tclass in np.unique(testclasses):
@@ -263,11 +264,25 @@ def plot_scatter(Ytest, Ypred, titles = None, xlabel = None, ylabel = None, outn
         fig.tight_layout()
         plt.show()
        
-
+def unique_ordered(alist):
+    a = []
+    for l in alist:
+        if l not in a:
+            a.append(l)
+    return a
         
 def add_params_to_outname(outname, ndict):
     
-    outname += '_lf'+ndict['loss_function'][:3]+ndict['loss_function'][max(3,len(ndict['loss_function'])-3):]+'nk'+str(ndict['num_kernels'])+'l'+str(ndict['l_kernels'])+str(ndict['kernel_bias'])[0]+'kf'+ndict['kernel_function']
+    if isinstance(ndict['loss_function'], list):
+        lssf = ''
+        for lsf in unique_ordered(ndict['loss_function']):
+            lssf += lsf[:2]+lsf[max(2,len(lsf)-2):]
+    else:
+        lssf = ndict['loss_function'][:3]+ndict['loss_function'][max(3,len(ndict['loss_function'])-3):]
+    
+    outname += '_'+lssf+'k'+str(ndict['num_kernels'])+'l'+str(ndict['l_kernels'])+str(ndict['kernel_bias'])[0]+'f'+ndict['kernel_function']
+    if ndict['net_function'] != ndict['kernel_function']:
+        outname += ndict['net_function']
     
     if ndict['max_pooling'] and ndict['mean_pooling']:
         outname +='mmpol'+str(ndict['pooling_size'])[:3]
@@ -288,6 +303,12 @@ def add_params_to_outname(outname, ndict):
             outname += 'st'+str(ndict['pooling_steps'])[:3]
         if ndict['kernel_thresholding'] != 0:
             outname += 'kt'+str(ndict['kernel_thresholding'])
+    elif ndict['weighted_pooling']:
+        outname +='wei'+str(ndict['pooling_size'])[:3]
+        if ndict['pooling_steps'] != ndict['pooling_size']:
+            outname += 'st'+str(ndict['pooling_steps'])[:3]
+        if ndict['kernel_thresholding'] != 0:
+            outname += 'kt'+str(ndict['kernel_thresholding'])
        
     if 'reverse_complement' in ndict:
         if ndict['reverse_complement']:
@@ -299,7 +320,13 @@ def add_params_to_outname(outname, ndict):
         outname += 'bp'+str(int(ndict['l_seqs']/ndict['l_out']))
     
     if ndict['validation_loss'] != ndict['loss_function'] and ndict['validation_loss'] is not None:
-        outname +='vl'+str(ndict['validation_loss'])[:2]+str(ndict['validation_loss'])[max(2,len(str(ndict['validation_loss']))-2):]
+        if isinstance(ndict['validation_loss'], list):
+            lssf = ''
+            for lsf in unique_ordered(ndict['validation_loss']):
+                lssf += lsf[:2]+lsf[max(2,len(lsf)-2):]
+        else:
+            lssf = str(ndict['validation_loss'])[:2]+str(ndict['validation_loss'])[max(2,len(str(ndict['validation_loss']))-2):]
+        outname +='vl'+lssf
     if ndict['hot_start']:
         outname += '-hot'
     if ndict['warm_start']:
@@ -329,6 +356,7 @@ def add_params_to_outname(outname, ndict):
             outname += 'T'
         if ndict['gapconv_pooling']:
             outname += 'T'
+        
         if 'final_convolutions' in ndict:
             if ndict['final_convolutions'] > 0:
                 outname += 'fcnv'+str(ndict['final_convolutions'])+'l'+str(ndict['l_finalkernels'])
@@ -340,26 +368,30 @@ def add_params_to_outname(outname, ndict):
                     outname += 'i'+str(ndict['finaldilations'])
                 
                 
-        if 'finalmaxpooling_size' in ndict:
-            if ndict['finalmaxpooling_size'] > 0:
-                outname += 'fmap'+str(ndict['finalmaxpooling_size'])
-        if 'finalmeanpooling_size' in ndict:
-            if ndict['finalmeanpooling_size'] > 0:
-                outname += 'fmep'+str(ndict['finalmeanpooling_size'])
-        
+        if 'finalmax_pooling' in ndict:
+            if ndict['finalmax_pooling'] > 0:
+                outname += 'fmap'+str(ndict['finalmax_pooling'])
+        if 'finalmeanpooling' in ndict:
+            if ndict['finalmean_pooling'] > 0:
+                outname += 'fmep'+str(ndict['finalmean_pooling'])
+        if 'finalweighted_pooling' in ndict:
+            if ndict['finalweighted_pooling'] > 0:
+                outname += 'fwei'+str(ndict['finalweighted_pooling'])
         
     if ndict['dilated_convolutions'] > 0:
         outname += '_dc'+str(ndict['dilated_convolutions'])+'i'+str(ndict['conv_increase']).strip('0').strip('.')+'d'+str(ndict['dilations']).replace(' ', '').replace(',', '-').replace('[','').replace(']','').replace('(','').replace(')','')+'s'+str(ndict['strides']).replace(' ', '').replace(',', '-').replace('[','').replace(']','').replace('(','').replace(')','') +'l'+str(ndict['l_dilkernels'])
-        if ndict['dilmax_pooling']:
-            outname += 'p'+str(ndict['dilmax_pooling'])[0]+str(ndict['dilmean_pooling'])[0]
-        if ndict['dilpooling_size'] != ndict['pooling_size'] and ndict['dilpooling_size'] is not None:
-            outname += str(ndict['dilpooling_size'])
-        if ndict['dilpooling_steps'] != ndict['pooling_steps'] and ndict['dilpooling_steps'] is not None:
-            outname += str(ndict['dilpooling_steps'])
+        if ndict['dilmax_pooling'] > 0:
+            outname += 'da'+str(ndict['dilmax_pooling'])
+        if ndict['dilmean_pooling'] > 0:
+            outname += 'de'+str(ndict['dilmean_pooling'])
+        if ndict['dilweighted_pooling'] > 0:
+            outname += 'dw'+str(ndict['dilweighted_pooling'])
         if ndict['dilpooling_residual'] > 0:
             outname += 'r'+str(ndict['dilpooling_residual'])
         if ndict['dilresidual_entire'] > 0:
             outname += 're'
+        if ndict['dilresidual_concat']:
+            outname += 'ccT'
     
     if ndict['embedding_convs'] > 0:
         outname += 'ec'+str(ndict['embedding_convs'])
@@ -367,10 +399,28 @@ def add_params_to_outname(outname, ndict):
     if ndict['n_transformer'] >0:
         outname += 'trf'+str(ndict['sum_attention'])[0]+str(ndict['n_transformer'])+'h'+str(ndict['n_distattention'])+'-'+str(ndict['dim_distattention'])
     
+    elif ndict['n_interpolated_conv'] > 0:
+        outname += 'iplcv'+str(ndict['n_interpolated_conv'])+'-'+str(ndict['dim_embattention'])+'-'+str(ndict['dim_distattention'])+'-'+str(ndict['attention_multiplier'])
+        if ndict['n_distattention'] is not None:
+            outname+='-'+str(ndict['n_distattention'])
+        if ndict['sum_attention']:
+            outname += 'sa'
+        if ndict['attentionconv_pooling'] > 1:
+            outname += 'mc'+str(ndict['attentionconv_pooling'])
+        if ndict['attentionmax_pooling'] > 0:
+            outname += 'ma'+str(ndict['attentionmax_pooling'])
+        if ndict['attentionweighted_pooling'] > 0:
+            outname += 'ma'+str(ndict['attentionweighted_pooling']) 
+    
     elif ndict['n_attention'] > 0:
-        outname += 'at'+str(ndict['n_attention'])+'h'+str(ndict['n_distattention'])+'-'+str(ndict['dim_distattention'])+'m'+str(ndict['maxpool_attention'])
+        outname += 'at'+str(ndict['n_attention'])+'h'+str(ndict['n_distattention'])+'-'+str(ndict['dim_distattention'])
+        
         if ndict['dim_embattention'] is not None:
             outname += 'v'+str(ndict['dim_embattention'])
+        if ndict['attentionmax_pooling'] > 0:
+            outname += 'ma'+str(ndict['attentionmax_pooling'])
+        if ndict['attentionweighted_pooling'] > 0:
+            outname += 'ma'+str(ndict['attentionweighted_pooling'])            
     
     if ndict['transformer_convolutions'] > 0:
         outname += '_tc'+str(ndict['transformer_convolutions'])+'d'+str(ndict['trconv_dim'])+'d'+str(ndict['trdilations']).replace(' ', '').replace(',', '-').replace('[','').replace(']','').replace('(','').replace(')','')+'s'+str(ndict['trstrides']).replace(' ', '').replace(',', '-').replace('[','').replace(']','').replace('(','').replace(')','')
@@ -381,16 +431,31 @@ def add_params_to_outname(outname, ndict):
             outname += 're'
       
         outname+='l'+str(ndict['l_trkernels'])
-        if ndict['trmax_pooling']:
-            outname += 'p'+str(ndict['trmax_pooling'])[0]+str(ndict['trmean_pooling'])[0]
-        if ndict['trpooling_size'] != ndict['pooling_size'] and ndict['trpooling_size'] is not None:
-            outname += str(ndict['dilpooling_size'])
-        if ndict['trpooling_steps'] != ndict['pooling_steps'] and ndict['trpooling_steps'] is not None:
-            outname += str(ndict['trpooling_steps'])
-    
+        if ndict['trmax_pooling']>0:
+            outname += 'ma'+str(ndict['trmax_pooling'])
+        if ndict['trmean_pooling']>0:
+            outname += 'me'+str(ndict['trmean_pooling'])
+        if ndict['trweighted_pooling']>0:
+            outname += 'mw'+str(ndict['trweighted_pooling'])
+        
+    nfcgiven = False
     if 'nfc_layers' in ndict:
-        if ndict['nfc_layers'] > 0:
-            outname +='_nfc'+str(ndict['nfc_layers'])+ndict['fc_function']+'r'+str(ndict['nfc_residuals'])
+        if isinstance(ndict['nfc_layers'], list):
+            if len(np.unique(ndict['nfc_layers'])) == 1:
+                nfc = str(ndict['nfc_layers'][0])
+            else:
+                nfc = ''.join(np.array(ndict['nfc_layers']).astype(str))
+            outname +='nfc'+nfc 
+            nfcgiven = True
+        elif ndict['nfc_layers'] > 0:
+            outname +='nfc'+str(ndict['nfc_layers'])
+            nfcgiven = True
+    if ndict['fc_function'] != ndict['net_function'] and nfcgiven:
+        outname += ndict['fc_function']
+    if nfcgiven and ndict['nfc_residuals'] > 0:
+        outname += 'r'+str(ndict['nfc_residuals'])
+        
+        
     if 'interaction_layer' in ndict:
         if ndict['interaction_layer']:
             outname += '_intl'+str(ndict['interaction_layer'])[0]
@@ -402,8 +467,14 @@ def add_params_to_outname(outname, ndict):
     
     
     if 'outclass' in ndict:
-        if ndict['outclass'] != 'Linear':
-            outname += ndict['outclass'][:4]+ndict['outclass'][-min(4,len(ndict['outclass'])-4):]
+        if isinstance(ndict['outclass'], list):
+            if len(np.unique(ndict['outclass'])) == 1:
+                outname += ndict['outclass'][0][:2]+ndict['outclass'][0][max(2,len(ndict['outclass'][0])-2):]
+            else:
+                for otcl in ndict['outclass']:
+                    outname += otcl[:2]+otcl[max(2,len(otcl)-2):]
+        elif ndict['outclass'] != 'Linear':
+            outname += ndict['outclass'][:2]+ndict['outclass'][-max(2,len(ndict['outclass'])-2):]
         if ndict['outclass'] == 'LOGXPLUSFRACTION': 
             outname += str(ndict['outlog']) + str(ndict['outlogoffset'])
             
@@ -435,7 +506,23 @@ def add_params_to_outname(outname, ndict):
 
     
     if 'cnn_embedding' in ndict:
-        outname += '_comb'+str(ndict['cnn_embedding'])+'nl'+str(ndict['n_combine_layers'])+ndict['combine_function']+str(ndict['combine_widening'])+'r'+str(ndict['combine_residual'])
+        if isinstance(ndict['cnn_embedding'], list):
+            if len(np.unique(ndict['cnn_embedding']))>1:
+                cnnemb = '-'.join(np.array(unique_ordered(ndict['cnn_embedding'])).astype(str))
+            else:
+                cnnemb = ndict['cnn_embedding'][0]
+        else:
+            cnnemb = ndict['cnn_embedding']
+            
+        if isinstance(ndict['n_combine_layers'], list):
+            if len(np.unique(ndict['n_combine_layers']))>1:
+                nclay = ''.join(np.array(ndict['n_combine_layers']).astype(str))
+            else:
+                nclay = ndict['n_combine_layers'][0]
+        else:
+            nclay = ndict['n_combine_layers']
+            
+        outname += '_comb'+str(cnnemb)+'nl'+str(nclay)+ndict['combine_function']+str(ndict['combine_widening'])+'r'+str(ndict['combine_residual'])
     
     
     

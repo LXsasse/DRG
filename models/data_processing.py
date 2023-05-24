@@ -25,12 +25,20 @@ def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_
                 inpnames = Xin['genenames'].astype(str)
                 sortn = np.argsort(inpnames)
                 inputnames.append(inpnames[sortn])
-                Xi = Xin['seqfeatures'][0][sortn]
-                if len(np.shape(Xi)) > 2:
-                    arekmers = False
-                    inputfeatures.append([x+'_'+str(i) for x in Xin['seqfeatures'][1]])
+                Xi = Xin['seqfeatures']
+                if len(Xi) == 2:
+                    Xi, inputfeats = Xi
                 else:
-                    inputfeatures.append(Xin['seqfeatures'][1])
+                    if 'featurenames' in Xin.files:
+                        inputfeats = Xin['featurenames']
+                    else:
+                        inputfeats = np.arange(np.shape(X)[-1], dtype = int).astype(str)
+                Xi = Xi[sortn]
+                if len(np.shape(Xi))>2:
+                    arekmers = False
+                    inputfeatures.append([x+'_'+str(i) for x in inputfeats])
+                else:
+                    inputfeatures.append(inputfeats)
                 
                 
                 if mirrorx and not arekmers:
@@ -65,7 +73,15 @@ def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_
         combinex = True
         if os.path.splitext(inputfile)[1] == '.npz':
             Xin = np.load(inputfile, allow_pickle = True)
-            X, inputfeatures = Xin['seqfeatures']
+            X = Xin['seqfeatures']
+            if len(X) == 2:
+                X, inputfeatures = X
+            else:
+                if 'featurenames' in Xin.files:
+                    inputfeatures = Xin['featurenames']
+                else:
+                    inputfeatures = np.arange(np.shape(X)[-1])
+                
             arekmers = len(np.shape(X)) <= 2
             inputnames = Xin['genenames']
             if assign_region == False and not arekmers:
@@ -88,9 +104,31 @@ def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_
             Y, outputnames = Yin[:, 1:].astype(float), Yin[:,0]
         hasoutput = True
     else:
-        print(outputfile, 'not a file')
-        hasoutput = False
-        Y, outputnames = None, None
+        if ',' in outputfile:
+            Y, outputnames = [], []
+            for putfile in outputfile.split(','):
+                if os.path.splitext(putfile)[1] == '.npz':
+                    Yin = np.load(putfile, allow_pickle = True)
+                    onames = Yin['names']
+                    sort = np.argsort(onames)
+                    Y.append(Yin['counts'][sort])
+                    outputnames.append(onames[sort])
+                else:
+                    Yin = np.genfromtxt(putfile, dtype = str, delimiter = delimiter)
+                    onames = Yin[:,0]
+                    sort = np.argsort(onames)
+                    Y.append(Yin[:, 1:].astype(float)[sort]) 
+                    outputnames.append(onames[sort])
+                
+            comnames = reduce(np.intersect1d, outputnames)
+            for i, yi in enumerate(Y):
+                Y[i] = yi[np.isin(outputnames[i], comnames)]
+            outputnames = comnames
+            hasoutput = True
+        else:
+            print(outputfile, 'not a file')
+            hasoutput = False
+            Y, outputnames = None, None
     #eliminate data points with no features
     if arekmers and combinex:
         Xmask = np.sum(X*X, axis = 1) > 0
@@ -107,21 +145,43 @@ def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_
     else:
         X, inputnames = [x[sortx] for x in X], inputnames[sortx]
     if hasoutput:
-        Y, outputnames = Y[sorty], outputnames[sorty]
+        outputnames = outputnames[sorty]
+        if isinstance(Y, list):
+            Y = [y[sorty] for y in Y]
+        else:
+            Y = Y[sorty]
     
     if return_header and hasoutput:
-        if os.path.splitext(outputfile)[1] == '.npz':
-            if 'celltypes' in Yin.files:
-                header = Yin['celltypes']
-            else:
-                header = ['C'+str(i) for i in range(np.shape(Y)[1])]
+        if isinstance(Y, list):
+            header = []
+            for putfile in outputfile.split(','):
+                if os.path.splitext(putfile)[1] == '.npz':
+                    Yin = np.load(putfile, allow_pickle = True)
+                    if 'celltypes' in Yin.files:
+                        head = Yin['celltypes']
+                    else:
+                        head = ['C'+str(i) for i in range(np.shape(Y)[1])]
+                else:
+                    head = open(putfile, 'r').readline()
+                    if '#' in head:
+                        head = head.strip('#').strip().split(delimiter)
+                    else:
+                        head = ['C'+str(i) for i in range(np.shape(Y)[1])]
+                header.append(np.array(head))
+                    
         else:
-            header = open(outputfile, 'r').readline()
-            if '#' in header:
-                header = header.strip('#').strip().split(delimiter)
+            if os.path.splitext(outputfile)[1] == '.npz':
+                if 'celltypes' in Yin.files:
+                    header = Yin['celltypes']
+                else:
+                    header = ['C'+str(i) for i in range(np.shape(Y)[1])]
             else:
-                header = ['C'+str(i) for i in range(np.shape(Y)[1])]
-        header = np.array(header)
+                header = open(outputfile, 'r').readline()
+                if '#' in header:
+                    header = header.strip('#').strip().split(delimiter)
+                else:
+                    header = ['C'+str(i) for i in range(np.shape(Y)[1])]
+            header = np.array(header)
     else:
         header  = None
     
@@ -131,12 +191,19 @@ def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_
         else:
             X = [np.transpose(x, axes = [0,2,1]) for x in X]
     if combinex:
-        print('Input shapes', np.shape(X), np.shape(Y))
+        print('Input shapes X', np.shape(X))
     else:
-        print('Input shapes', [np.shape(x) for x in X], np.shape(Y))
+        print('Input shapes X', [np.shape(x) for x in X])
+            
+    if isinstance(Y, list):
+        print('Output shapes Y', [np.shape(y) for y in Y])
+    else:
+        print('Output shapes Y', np.shape(Y))
     
-    
+        
     return X, Y, inputnames, inputfeatures, header
+
+
 
 def realign(X):
     end_of_seq = np.sum(X,axis = (1,2)).astype(int)
@@ -306,8 +373,8 @@ def create_sets(n_samples, folds, fold, seed = 1010, Yclass = None, genenames = 
 
 # Combine filenames to a new output file name, removing text that is redundant in both filenames    
 def create_outname(name1, name2, lword = 'on'):
-    name1s = os.path.split(name1)[1].replace('.dat','').replace('.hmot','').replace('.txt','').replace('.npz','').replace('.list','').replace('.csv','').replace('.tsv','').replace('.tab','').replace('-', "_").replace('.fasta','').replace('.fa','').split('_')
-    name2s = name2.replace('-', "_").split('_')
+    name1s = os.path.split(name1)[1].replace('.dat','').replace('.hmot','').replace('.txt','').replace('.npz','').replace('.list','').replace('.csv','').replace('.tsv','').replace('.tab','').replace('-', "_").replace('.fasta','').replace('.fa','').replace('.','_').split('_')
+    name2s = name2.replace('-', "_").replace('.','_').split('_')
     diffmask = np.ones(len(name1s)) == 1
     for n, na1 in enumerate(name1s):
         for m, na2 in enumerate(name2s):

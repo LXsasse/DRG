@@ -165,6 +165,13 @@ class sk_regression():
                         self.tol = 0.0001
                     self.logit = linear_model.Lasso(alpha=self.alpha, fit_intercept=self.fit_intercept, max_iter=self.max_iter, tol=self.tol, positive=self.positive, random_state=self.random_state, warm_start = self.warm_start)
                 
+                elif penalty == 'elastic':
+                    if max_iter is None:
+                        self.max_iter = 1000
+                    if tol is None:
+                        self.tol = 0.0001
+                    self.logit = linear_model.ElasticNet(alpha=alpha, fit_intercept=self.fit_intercept, max_iter=self.max_iter, tol=self.tol, positive=self.positive, random_state = self.random_state, selection = 'random')
+                
                 else:
                     self.penalty = 'none'
                     self.logit = linear_model.LinearRegression(fit_intercept=self.fit_intercept, n_jobs = self.n_jobs, positive = self.positive)
@@ -234,7 +241,7 @@ class sk_regression():
             
             self.coef_ = self.logit.coef_.T
             if self.fit_intercept:
-                self.coef_ = np.append(self.coef_, [self.logit.intercept_], axis = 1)
+                self.coef_ = np.append(self.coef_, [self.logit.intercept_], axis = 0)
             
             if self.logistic:
                 pred = self.logit.predict_proba(Xval)

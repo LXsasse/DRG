@@ -36,14 +36,13 @@ from output import add_params_to_outname
 
 # flexible Convolutional neural network architecture
 class bpcnn(nn.Module):
-    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, reverse_complement = False, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = None, dilmean_pooling = None, dilpooling_size = None, dilpooling_steps = None, dilpooling_residual = 1, dilresidual_entire = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, maxpool_attention = 0, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = False, trmean_pooling = False, trpooling_size = None, trpooling_steps = None, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, **kwargs):
+    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, reverse_complement = False, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, weighted_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = 0, dilmean_pooling = 0, dilweighted_pooling= 0, dilpooling_residual = 1, dilresidual_entire = False, dilresidual_concat = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_interpolated_conv = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, attentionmax_pooling = 0, attentionweighted_pooling = 0, attentionconv_pooling = 1, attention_multiplier = 0.5, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = 0, trmean_pooling = 0, trweighted_pooling = 0, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, **kwargs):
         super(bpcnn, self).__init__()
         
         # Set seed for all random processes in the model: parameter init and other dataloader
         torch.manual_seed(seed)
         
         self.seed = seed
-
         self.verbose = verbose # if true prints out epochs and losses
         self.loss_function = loss_function # Either defined function or one None for 'mse'
         self.validation_loss = validation_loss
@@ -100,9 +99,10 @@ class bpcnn(nn.Module):
         
         self.max_pooling = max_pooling # If max pooling should be used
         self.mean_pooling = mean_pooling # If mean pooling should be used, if both False entire set is given to next layer
+        self.weighted_pooling = weighted_pooling
         self.pooling_size = pooling_size    # The size of the pooling window, Can span the entire sequence
         self.pooling_steps = pooling_steps # The step size of the pooling window, stepsizes smaller than the pooling window size create overlapping regions
-        if self.max_pooling == False and self.mean_pooling == False:
+        if self.max_pooling == False and self.mean_pooling == False and self.weighted_pooling == False:
             self.pooling_size = None
             self.pooling_steps = None
         elif self.pooling_size is None and self.pooling_steps is None:
@@ -119,6 +119,7 @@ class bpcnn(nn.Module):
         self.conv_increase = conv_increase # Factor by which number of additional convolutions increases in each layer
         self.dilpooling_residual = dilpooling_residual # Number of convolutions before residual is added
         self.dilresidual_entire = dilresidual_entire # if residual should be forwarded from beginning to end of dilated block
+        self.dilresidual_concat = dilresidual_concat # if True the residual will be concatenated with the predictions instead of summed. 
         
         # Length of additional convolutional kernels
         if l_dilkernels is None:
@@ -127,34 +128,17 @@ class bpcnn(nn.Module):
             self.l_dilkernels = l_dilkernels
         
         # Max pooling for additional convolutional layers
-        if dilmax_pooling is None:
-            self.dilmax_pooling = max_pooling
-        else:
-            self.dilmax_pooling = dilmax_pooling
-        
+        self.dilmax_pooling = dilmax_pooling
         # Mean pooling for additional convolutional layers
-        if dilmean_pooling is None:
-            self.dilmean_pooling = mean_pooling
-        else:
-            self.dilmean_pooling = dilmean_pooling
-        # Pooling sizes and step size for additional max pooling layers
-        self.dilpooling_size = dilpooling_size
-        self.dilpooling_steps = dilpooling_steps
-        
-        if self.dilmean_pooling == False and self.dilmax_pooling == False:
-            self.dilpooling_size = None
-            self.dilpooling_steps = None
-        elif self.dilpooling_steps is None and self.dilpooling_size is None:
-            self.dilpooling_steps = self.dilpooling_size = self.pooling_steps
-        elif self.dilpooling_steps is None:
-            self.dilpooling_steps = self.dilpooling_size
-        elif self.dilpooling_size is None:
-            self.dilpooling_size = self.dilpooling_steps
+        self.dilmean_pooling = dilmean_pooling
+        if dilmean_pooling >0 or dilmax_pooling > 0:
+            dilweighted_pooling = 0
+        self.dilweighted_pooling = dilweighted_pooling
         
         # all to default if
         if self.dilated_convolutions == 0:
             self.strides, self.dilations = 1,1
-            self.l_dilkernels, self.dilmax_pooling, self.dilmean_pooling,self.dilpooling_size, self.dilpooling_steps = None, None, None, None, None
+            self.l_dilkernels, self.dilmax_pooling, self.dilmean_pooling, self.dilweighted_pooling = None, 0,0,0
         
         # If lists given, parallel gapped convolutions are initiated
         self.gapped_convs = gapped_convs # list of quadruples, first the size of the kernel left and right, second the gap, third the number of kernals, fourth the stride stride. Will generate several when parallel layers with different gapsizes if list is given.
@@ -167,13 +151,19 @@ class bpcnn(nn.Module):
         
         self.n_transformer = n_transformer # N_transformer defines how many TransformerEncoderLayer from torch will be used in TransformerEncoder (torch based module)
         self.n_attention = n_attention # this will set the number of custom attention/transformer layers that are modelled after the original
+        self.n_interpolated_conv = n_interpolated_conv # uses
+        
         self.n_distattention = n_distattention # defines the number of heads
         self.dim_distattention = dim_distattention # multiplicative value by which the input dimension will be increased/decreased in the key and query embedding
         ## make son that it can also be the dimension itself and not a multiplicative factor
         self.dim_embattention = dim_embattention # dimension of values
         self.sum_attention = sum_attention # if inputs are duplicated n_heads times then they will summed afterwards across all heads, more important if torch transformer is used because it increases the dimension by the multitude of the number of heads
-        self.maxpool_attention = maxpool_attention # generate maxpool layer after custom attention layer to reduce length of input, use int as input for maxpool length
-            # to do: include a mean_pooling option here
+        self.attentionmax_pooling = attentionmax_pooling # generate maxpool layer after attention layer to reduce length of input
+        self.attentionweighted_pooling = attentionweighted_pooling # generate maxpool layer after attention layer to reduce length of input
+        
+        self.attentionconv_pooling = attentionconv_pooling # this is the stride if interpolated_conv
+        self.attention_multiplier = attention_multiplier # this is the multiplier ins interpolated_conv
+        
         
         self.transformer_convolutions = transformer_convolutions # Number of additional convolutions afer transformer layer
         self.trpooling_residual = trpooling_residual # Number of layers that are scipped by residual layer
@@ -189,26 +179,14 @@ class bpcnn(nn.Module):
             self.l_trkernels = l_trkernels
         
         # Pooling sizes and step size for additional max pooling layers
-        self.trpooling_size = trpooling_size
-        self.trpooling_steps = trpooling_steps
-        
         self.trmean_pooling = trmean_pooling
         self.trmax_pooling = trmax_pooling
-        
-        if self.trmean_pooling == False and self.trmax_pooling == False:
-            self.trpooling_size = None
-            self.trpooling_steps = None
-        elif self.trpooling_steps is None and self.trpooling_size is None:
-            self.trpooling_steps = self.trpooling_size = self.pooling_steps
-        elif self.trpooling_steps is None:
-            self.trpooling_steps = self.trpooling_size
-        elif self.trpooling_size is None:
-            self.trpooling_size = self.trpooling_steps
+        self.trweighted_pooling = trweighted_pooling
         
         # all to default if
         if self.transformer_convolutions == 0:
             self.trstrides, self.trdilations, self.trconv_dim = None, None, None
-            self.l_trkernels, self.trmax_pooling, self.trmean_pooling, self.trpooling_size, self.trpooling_steps = None, False, False, None, None
+            self.l_trkernels, self.trmax_pooling, self.trmean_pooling, self.trweighted_pooling = None, 0,0,0
         if self.dilated_convolutions == 0 and self.transformer_convolutions == 0:
              self.conv_increase = 1   
         
@@ -325,8 +303,7 @@ class bpcnn(nn.Module):
         if self.verbose:
             print('Convolutions', currdim, currlen)
 
-        ## a function that multiplies every kernel and fixed kernel with its own value and subtracts 
-        # a bias, necessary for fixed kernels which do not come with a bias. Bias needs to be learned for sparsity    
+        ## a function that multiplies every kernel and fixed kernel with its own value and subtracts a bias, necessary for fixed kernels which do not come with a bias. Bias needs to be learned for sparsity    
         modellist = OrderedDict()
         if self.kernel_thresholding > 0:
             modellist['Kernelthresh'] = Kernel_linear(currdim, self.kernel_thresholding)
@@ -336,10 +313,10 @@ class bpcnn(nn.Module):
         
         # Max and mean pooling layers
         if self.max_pooling or self.mean_pooling:
-            self.player = pooling_layer(max_pooling, mean_pooling, pooling_size=self.pooling_size, stride=self.pooling_steps, padding = int(np.ceil((self.pooling_size-currlen%self.pooling_steps)/2))*int(currlen%self.pooling_steps>0))
+            self.player = pooling_layer(max_pooling, mean_pooling, weighted_pooling, pooling_size=self.pooling_size, stride=self.pooling_steps, padding = int(np.ceil((self.pooling_size-currlen%self.pooling_steps)/2))*int(currlen%self.pooling_steps>0))
             modellist['Pooling'] = self.player
             currlen = int(np.ceil(currlen/self.pooling_steps))
-            currdim = (int(self.max_pooling) + int(self.mean_pooling)) * currdim
+            currdim = max(1,int(self.max_pooling) + int(self.mean_pooling)) * currdim
             if self.verbose:
                 print('Pooling', currdim, currlen)
         
@@ -350,15 +327,7 @@ class bpcnn(nn.Module):
         
         # Initialize additional convolutional layers
         if self.dilated_convolutions > 0:
-            if self.dilmax_pooling:
-                dilmaxpooling_size = self.dilpooling_size
-            else:
-                dilmaxpooling_size = 0
-            if self.dilmean_pooling:
-                dilmeanpooling_size = self.dilpooling_size
-            else:
-                dilmeanpooling_size = 0
-            self.convolution_layers = Res_Conv1d(currdim, currlen, currdim, self.l_dilkernels, self.dilated_convolutions, kernel_increase = self.conv_increase, max_pooling = dilmaxpooling_size, mean_pooling=dilmeanpooling_size, residual_after = self.dilpooling_residual, activation_function = net_function, strides = strides, dilations = dilations, bias = True, dropout = dropout, residual_entire = self.dilresidual_entire)
+            self.convolution_layers = Res_Conv1d(currdim, currlen, currdim, self.l_dilkernels, self.dilated_convolutions, kernel_increase = self.conv_increase, max_pooling = dilmax_pooling, mean_pooling=dilmean_pooling, weighted_pooling=dilweighted_pooling, residual_after = self.dilpooling_residual, activation_function = net_function, strides = strides, dilations = dilations, bias = True, dropout = dropout, residual_entire = self.dilresidual_entire, concatenate_residual = dilresidual_concat)
             currdim, currlen = self.convolution_layers.currdim, self.convolution_layers.currlen
             if self.verbose:
                 print('2nd convolutions', currdim, currlen)
@@ -382,8 +351,22 @@ class bpcnn(nn.Module):
                 currdim = int(currdim/self.n_distattention)
                 if self.verbose:
                     print('Sum multi-head attention', currdim, currlen)
-        elif self.n_attention > 0: # Number of attentionblocks
+        
+        # Long-range interpolated convolution to capture distal interactions
+        elif self.n_interpolated_conv > 0:
+            if self.dim_embattention is None:
+                self.dim_embattention = currdim
+            if self.n_distattention == 0:
+                self.n_distattention = 16
+            
+            self.distattention = Res_Conv1d(currdim, currlen, self.dim_embattention, self.n_distattention, self.n_interpolated_conv, kernel_increase = self.dim_distattention, max_pooling = attentionmax_pooling, mean_pooling=0, weighted_pooling=attentionweighted_pooling, residual_after = 1, residual_same_len = False, activation_function = net_function, strides = attentionconv_pooling, dilations = 2, bias = True, dropout = self.dropout, batch_norm = self.batch_norm, act_func_before = False, residual_entire = False, concatenate_residual = self.sum_attention, linear_layer = self.sum_attention, long_conv = True, interpolation = 'linear', weight_function = 'linear', multiplier=attention_multiplier)
 
+            currlen = self.distattention.currlen
+            currdim = self.distattention.currdim
+            if self.verbose:
+                print('interpolated convolutions', currdim, currlen)
+        
+        elif self.n_attention > 0: # Number of attentionblocks
             distattention = OrderedDict()
             for na in range(self.n_attention):
                 distattention['Mheadattention'+str(na)] = MyAttention_layer(currdim, int(self.dim_distattention *currdim), self.n_distattention, dim_values = self.dim_embattention, in_len= currlen, dropout = dropout, bias = False, residual = True, sum_out = self.sum_attention, batchnorm = self.batch_norm)
@@ -391,10 +374,15 @@ class bpcnn(nn.Module):
                     currdim = int(self.dim_distattention *currdim)
                 else:
                     currdim = self.dim_embattention
-                if self.maxpool_attention > 0:
-                    if int(np.floor(1. + (currlen - (maxpool_attention-1)-1)/maxpool_attention)) > 0:
-                        distattention['Maxpoolattention'+str(na)]= pooling_layer(True, False, pooling_size= maxpool_attention, stride=maxpool_attention)
-                        currlen = int(np.floor(1. + (currlen - (maxpool_attention-1)-1)/maxpool_attention))
+                if self.attentionmax_pooling > 0:
+                    if int(np.floor(1. + (currlen - (attentionmax_pooling-1)-1)/attentionmax_pooling)) > 0:
+                        distattention['Maxpoolattention'+str(na)]= pooling_layer(True, False, False, pooling_size= attentionmax_pooling, stride=attentionmax_pooling,padding = int(np.ceil((attentionmax_pooling-currlen%attentionmax_pooling)/2))*int(currlen%attentionmax_pooling>0))
+                        currlen = int(np.floor(1. + (currlen - (attentionmax_pooling-1)-1)/attentionmax_pooling))
+                        
+                if self.attentionweighted_pooling > 0:
+                    if int(np.floor(1. + (currlen - (attentionweighted_pooling-1)-1)/attentionweighted_pooling)) > 0:
+                        distattention['weightedpoolattention'+str(na)]= pooling_layer(False, False, True, pooling_size= attentionweighted_pooling, stride=attentionweighted_pooling, padding = int(np.ceil((attentionweighted_pooling-currlen%attentionweighted_pooling)/2))*int(currlen%attentionweighted_pooling>0))
+                        currlen = int(np.floor(1. + (currlen - (attentionweighted_pooling-1)-1)/attentionweighted_pooling))
             self.distattention = nn.Sequential(distattention)
             if self.verbose:
                 print('Attention', currdim, currlen)
@@ -405,25 +393,17 @@ class bpcnn(nn.Module):
         if self.transformer_convolutions > 0:
             if self.trconv_dim is None:
                 self.trconv_dim = currdim
-            if self.trmax_pooling:
-                trmaxpooling_size = self.trpooling_size
-            else:
-                trmaxpooling_size = 0
-            if self.trmean_pooling:
-                trmeanpooling_size = self.trpooling_size
-            else:
-                trmeanpooling_size = 0
+            
             self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmaxpooling_size, mean_pooling=trmeanpooling_size, residual_after = self.trpooling_residual, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
             currdim, currlen = self.trconvolution_layers.currdim, self.trconvolution_layers.currlen
             if self.verbose:
                 print('Convolution after attention', currdim, currlen)
         
-        elif self.trmax_pooling or self.trmean_pooling and self.transformer_convolutions == 0:
-            self.trconvolution_layers = pooling_layer(self.trmax_pooling, self.trmean_pooling, 
-                    pooling_size=self.trpooling_size, stride=self.trpooling_steps, 
-                    padding = np.ceil((self.trpooling_size-currlen%self.trpooling_steps)/2)*int(currlen%self.trpooling_steps>0))
-            currlen = int(np.ceil(currlen/self.trpooling_steps))
-            currdim = (int(self.trmax_pooling) + int(self.trmean_pooling)) * currdim
+        elif (self.trmax_pooling >0  or self.trmean_pooling >0 or self.trweighted_pooling > 0) and self.transformer_convolutions == 0:
+            trpooling_size = max(max(self.trmax_pooling,self.trmean_pooling),self.trweighted_pooling)
+            self.trconvolution_layers = pooling_layer(self.trmax_pooling>0, self.trmean_pooling>0, self.trweighted_pooling > 0, pooling_size=trpooling_size, stride=trpooling_size, padding = np.ceil((trpooling_size-currlen%trpooling_size)/2)*int(currlen%trpooling_size>0))
+            currlen = int(np.ceil(currlen/self.trpooling_size))
+            currdim = (int(self.trmax_pooling>0) + int(self.trmean_pooling>0)) * currdim
         
         # Initialize gapped convolutions
         if self.gapped_convs is not None:
@@ -448,7 +428,6 @@ class bpcnn(nn.Module):
             cutedges = [int(np.floor((currlen-l_out)/2)), int(np.ceil((currlen-l_out)/2))]
             print(currlen, 'larger than l_out\nMake sure the outputs are correctly aligned to the input regions if edges are cut', cutedges)
 
-        # classifier contains the sequential list of layers
         classifier = OrderedDict()
         self.linear_classifier = final_convolution(currdim, n_classes, self.final_kernel, cut_sites = cutedges, strides = self.final_strides, batch_norm = self.batch_norm, predict_from_dist = self.predict_from_dist)
         
@@ -544,7 +523,7 @@ class bpcnn(nn.Module):
         
         return pred
     
-
+    
     def fit(self, X, Y, XYval = None, sample_weights = None):
         self.saveloss = fit_model(self, X, Y, XYval = XYval, sample_weights = sample_weights, loss_function = self.loss_function, validation_loss = self.validation_loss, batchsize = self.batchsize, device = self.device, optimizer = self.optimizer, optim_params = self.optim_params, verbose = self.verbose, lr = self.lr, kernel_lr = self.kernel_lr, hot_start = self.hot_start, warm_start = self.warm_start, outname = self.outname, adjust_lr = self.adjust_lr, patience = self.patience, init_adjust = self.init_adjust, keepmodel = self.keepmodel, load_previous = self.load_previous, write_steps = self.write_steps, checkval = self.checkval, writeloss = self.writeloss, init_epochs = self.init_epochs, epochs = self.epochs, l1reg_last = self.l1reg_last, l2_reg_last = self.l2reg_last, l1_kernel = self.l1_kernel, reverse_sign = self.reverse_sign, shift_back = self.shift_sequence, random_shift=self.random_shift, smooth_onehot = self.smooth_onehot, restart = self.restart, masks = self.masks, nmasks = self.nmasks, augment_representation = self.augment_representation, aug_kernel_size = self.aug_kernel_size, aug_conv_layers = self.aug_conv_layers, aug_loss_masked = self.aug_loss_masked, aug_loss = self.aug_loss, aug_loss_mix = self.aug_loss_mix, **self.kwargs)
         
@@ -681,10 +660,38 @@ if __name__ == '__main__':
         outname +='_RNDM'
         permute = np.permute(len(X))
         Y = Y[permute]
+
+    if '--npfloat16' in sys.argv:
+        scaletype = np.float16
+    else:
+        scaletype = np.float32
+        
+
+    if '--norm_center' in sys.argv:
+        ncenter = int(sys.argv[sys.argv.index('--norm_center')+1])
+        Cm = np.sum(Y[...,int((np.shape(Y)[-1]+ncenter)/2)-ncenter: int((np.shape(Y)[-1]+ncenter)/2)], axis = -1)
+        Cy = np.sum(Y, axis = -1)
+        Cy[Cy == 0] = 1
+        C = Cm/Cy
+        Y = Y.astype(scaletype)*C[...,None].astype(scaletype)
+        outname += 'nc'+str(ncenter)
+
+    if '--quantile_norm' in sys.argv:
+        Cy = np.sum(Y, axis = -1)
+        M = np.mean(np.sort(Cy, axis = 0), axis = 1)
+        Cm = M[np.argsort(np.argsort(Cy, axis = 0), axis = 0)]
+        Cy[Cy==0] = 1
+        C = Cm/Cy
+        Y = Y.astype(scaletype)*C[...,None].astype(scaletype)
+        outname += 'qtln'
     
     if '--logcounts' in sys.argv:
         Y = np.log(1+Y)
         outname += 'lg'
+    
+    if '--log2counts' in sys.argv:
+        Y = np.log2(2+Y)
+        outname += 'lg2'
     
     if '--norm2output' in sys.argv:
         print ('ATTENTION: output has been normalized along data points')
@@ -703,6 +710,14 @@ if __name__ == '__main__':
         outname += '-n1outb'
         outnorm =np.sum(Y, axis = 2)[...,None]
         Y = Y/outnorm
+    
+    if '--npfloat16' in sys.argv:
+        # should round before using this, have to compute how many decimals based on largest number
+        # should also warn if largest number is too big
+        Y = Y.astype(np.float16)
+    
+    if '--npfloat32' in sys.argv:
+        Y = Y.astype(np.float32)
     
     pfms = None
     pwmusage = 'none'
@@ -851,7 +866,7 @@ if __name__ == '__main__':
         init_kernels = OrderedDict({ 'convolutions.weight': torch.Tensor(init_kernels[np.argsort(-np.sum(init_kernels, axis = (1,2)))])})
         load_parameters(model, init_kernels, allow_reduction = True)
     
-    # this calls fit function which calls train.fit_model() which is given the loss function and other params
+    
     if train_model:
         model.fit(X[trainset], Y[trainset], XYval = [X[valset], Y[valset]], sample_weights = weights)
     
@@ -876,6 +891,12 @@ if __name__ == '__main__':
         #print(''.join(ntsus[np.argmax(Y[testset][0], axis = 0)]))
     else:
         Y_pred = model.predict(X[testset])
+    
+    if Y is not None:
+        Ytest = Y[testset]
+    if '--npfloat16' in sys.argv:
+        Ytest = Ytest.astype(np.float32)
+    
     
     if '--norm2output' in sys.argv:
         Y *= outnorm
@@ -914,10 +935,10 @@ if __name__ == '__main__':
             print('Testset length reduced to significant genes from', tlen, 'to', len(testset))
 
         # USE: --aurocaverage --auprcaverage --mseaverage --correlationaverage
-        print_averages(Y_pred, Y[testset], testclasses, sys.argv)
+        print_averages(Y_pred, Ytest, testclasses, sys.argv)
         
         # USE: --save_correlation_perclass --save_auroc_perclass --save_auprc_perclass --save_mse_perclass --save_correlation_pergene '--save_mse_pergene --save_auroc_pergene --save_auprc_pergene --save_topdowncorrelation_perclass
-        save_performance(Y_pred, Y[testset], testclasses, experiments, names[testset], outname, sys.argv, compare_random = True)
+        save_performance(Y_pred, Ytest, testclasses, experiments, names[testset], outname, sys.argv, compare_random = True)
         
     if '--save_predictions' in sys.argv:
         print('SAVED', outname+'_pred.npz')
@@ -926,7 +947,7 @@ if __name__ == '__main__':
     if '--save_embeddings' in sys.argv:
         emb_loc = sys.argv[sys.argv.index('--save_embeddings')+1]
         Y_emb = []
-        for b in range(max(1,int(len(testset)/model.batchsize))):
+        for b in range(max(1,int(len(testset)/model.batchsize) + int(len(testset)%model.batchsize > 0))):
             yemb = model.forward(torch.Tensor(X[testset[b*model.batchsize:(b+1)*model.batchsize]]).to(model.device), location = emb_loc)
             Y_emb.append(yemb.detach().cpu().numpy())
         Y_emb = np.concatenate(Y_emb, axis = 0)
@@ -986,7 +1007,7 @@ if __name__ == '__main__':
         # However training importance provide impacts of patterns from overfitting
         # Test set on the other hand could lack the statistical power
         if '--testset_importance' in sys.argv:
-            motifimpact, impact_direction = compute_importance(model, X[testset], Y[testset], activation_measure = activation_measure, pwm_in = model.pwm_out, normalize = False)
+            motifimpact, impact_direction = compute_importance(model, X[testset], Ytest, activation_measure = activation_measure, pwm_in = model.pwm_out, normalize = False)
             np.savetxt(outname+'_kernel_importance_test.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), motifimpact], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
             np.savetxt(outname+'_kernel_impact_test.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), impact_direction], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
             

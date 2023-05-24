@@ -74,13 +74,33 @@ if __name__ == '__main__':
     if '--similarity' in sys.argv:
         reverse = True
         ylabel = 'Similarity'
-        
+    
+    if '--ylabel' in sys.argv:
+        ylabel = sys.argv[sys.argv.index('--ylabel')+1]
+    
     classname, classvalue = read_in(files, reverse = reverse, allthesame = ats, valcol = valcol)
+    
+    if '--rescaletop' in sys.argv:
+        tops = np.genfromtxt(sys.argv[sys.argv.index('--rescaletop')+1], dtype = str)
+        tops = tops[np.argsort(tops[:,0])]
+        ylabel += '/replica'
+        if isinstance(classname, list):
+            for r, rname in enumerate(classname):
+                mask = np.isin(np.sort(tops[:,0]),rname)
+                classvalue[r] /= tops[mask,1].astype(float)
+                classvalue[r][classvalue[r] > 2] = 2
+                classvalue[r][classvalue[r] < -2] = -2
+        else:
+            mask = np.isin(np.sort(tops[:,0]),classname)
+            classvalue /= tops[mask,1].astype(float)
+            classvalue[classvalue > 2] = 2
+            classvalue[classvalue < -2] = -2        
+        
     
     if '--filter' in sys.argv:
         datapoints = np.genfromtxt(sys.argv[sys.argv.index('--filter')+1], dtype = str)
         if isinstance(classname, list):
-            for r, rname in enueerate(classname):
+            for r, rname in enumerate(classname):
                 mask = np.isin(rname, datapoints)
                 classvalue[r] = classvalue[r][mask]
         else:
@@ -121,7 +141,12 @@ if __name__ == '__main__':
     swarm = True
     if '--noswarm' in sys.argv:
         swarm = False
-            
+        
+    connect_swarms = False
+    if '--connect_swarms' in sys.argv:
+        connect_swarms = True
+    
+        
 
     if '--scatter_colors' in sys.argv:
         col_features = np.genfromtxt(sys.argv[sys.argv.index('--scatter_colors')+1], dtype = str)
@@ -162,7 +187,7 @@ if __name__ == '__main__':
             plotnames = 0
             if '--add_names' in sys.argv:
                 plotnames = int(sys.argv.index('--add_names')+1)
-        plot_distribution(classvalue, modnames, outname = outname, swarm = swarm, plotnames = plotnames, scatter_color = col_features, scatter_size = size_features, ylabel = ylabel)
+        plot_distribution(classvalue, modnames, outname = outname, swarm = swarm, plotnames = plotnames, scatter_color = col_features, scatter_size = size_features, connect_swarm = connect_swarms, ylabel = ylabel)
         
         
     elif '--plot_heatmap' in sys.argv:

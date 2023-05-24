@@ -4,24 +4,32 @@ import sys, os
 from scipy.stats import pearsonr 
 from sklearn.cluster import AgglomerativeClustering
 
-def compare_ppms(ppms, ppms_ref, find_bestmatch = True, fill_logp_self = 0, one_half = True, min_sim = 5, padding = 0.25, infocont = False, bk_freq = 0.25):
+def compare_ppms(ppms, ppms_ref, find_bestmatch = True, fill_logp_self = 0, one_half = True, min_sim = 5, padding = 0.25, infocont = False, bk_freq = 0.25, non_zero_elements = False):
     # measure lengths of motifs
     motif_len, motif_len_ref = [np.shape(ppm)[0] for ppm in ppms], [np.shape(ppm)[0] for ppm in ppms_ref]
+    # alignment offsets that will be saved
     offsets = np.zeros((len(ppms), len(ppms_ref)), dtype = int)
+    # log_pvalues of correlation that will be saved
     log_pvalues = np.zeros((len(ppms), len(ppms_ref)), dtype = float)
+    # correlation matrix itself
     correlation = np.zeros((len(ppms), len(ppms_ref)), dtype = float)
+    # whether to measure correlation of frequencies (pfms) of information content (pwms)
     if infocont:
-        padding = max(0,np.log2(padding/bk_freq))
+        padding = max(0,np.log2(padding/bk_freq)) # padding needs to be adjusted if information content is chosen
     for p, ppm in enumerate(ppms):
+        # just to check the speed of the algorithm
         if p% 25 == 0:
             print(p)
-        if one_half: 
+        
+        if one_half: # if one_half then ppms and ppms_ref have to be identical 
             p_start = p+1
         else:
             p_start = 0
+        # normalize pfm to pwm
         if infocont:
             ppm = np.log2(ppm/bk_freq)
             ppm[ppm<0] = 0
+            
         for q in range(p_start, len(ppms_ref)):
             qpm = ppms_ref[q]
             if infocont:
@@ -31,8 +39,6 @@ def compare_ppms(ppms, ppms_ref, find_bestmatch = True, fill_logp_self = 0, one_
             pearcors = []
             offs = []
             
-            #vectors = []
-            #shorts = []
             for i in range(min(0,-motif_len[p]+min_sim), motif_len_ref[q]-min(motif_len[p],min_sim) + 1):
                 if padding is not None:
                     refppm, testppm = np.ones((motif_len_ref[q]-min(motif_len[p],min_sim) + motif_len[p]-min(0,-motif_len[p]+min_sim),4))*padding, np.ones((motif_len_ref[q]-min(motif_len[p],min_sim) + motif_len[p]-min(0,-motif_len[p]+min_sim),4))*padding
@@ -43,7 +49,11 @@ def compare_ppms(ppms, ppms_ref, find_bestmatch = True, fill_logp_self = 0, one_
                 else:
                     refppm = qpm[max(i,0):min(motif_len_ref[q],motif_len[p]+i)]
                     testppm = ppm[max(0,-i): min(motif_len[p],motif_len_ref[q]-i)]
-                peacor, pval = pearsonr(testppm.flatten(), refppm.flatten())
+                if non_zero_elements:
+                    nonzmask = (testppm != 0) | (refppm != 0)
+                    peacor, pval = pearsonr(testppm[nonzmask].flatten(), refppm[nonzmask].flatten())
+                else:
+                    peacor, pval = pearsonr(testppm.flatten(), refppm.flatten())
                 #vectors.append([testppm.flatten(), refppm.flatten()])
                 #shorts.append(pfm2iupac([testppm, refppm], bk_freq = 0.28))
                 pvals.append(-np.sign(peacor)*np.log10(pval))
@@ -63,7 +73,7 @@ def compare_ppms(ppms, ppms_ref, find_bestmatch = True, fill_logp_self = 0, one_
                 #plt.show()
                 #plt.close()
     log_pvalues[np.isinf(log_pvalues)] = fill_logp_self
-    log_pvalues = log_pvalues * np.sign(correlation)
+    #log_pvalues = log_pvalues * np.sign(correlation)
     if one_half:
         np.fill_diagonal(log_pvalues, fill_logp_self)
     
@@ -158,7 +168,7 @@ def write_pwm(file_path, pwms, names):
         obj.write('\n')
     
 
-def combine_pwms(pwms, clusters, similarity, offsets, maxnorm = True, remove_low = 0.5):
+def combine_pwms(pwms, clusters, similarity, offsets, maxnorm = True, remove_low = 0.5, method = 'sum'):
     lenpwms = np.array([len(pwm) for pwm in pwms])
     unclusters = np.unique(clusters)
     comb_pwms = []
@@ -177,27 +187,34 @@ def combine_pwms(pwms, clusters, similarity, offsets, maxnorm = True, remove_low
             #print(similarity[mask][:, mask])
             #print(correlation[mask][:,mask])
             seed = np.zeros((np.amax(off+clusterlen)-np.amin(off),len(pwms[0][0])))
+            seedcount = np.zeros(len(seed))
             #seed2 = np.copy(seed)
             seed[-np.amin(off):lenpwms[mask[simcluster]]-np.amin(off)] = pwms[mask[simcluster]]
+            seedcount[-np.amin(off):lenpwms[mask[simcluster]]-np.amin(off)] += 1
             #seed1 = np.copy(seed)
             #print(pfm2iupac([seed], bk_freq = 0.28)[0])
             for m, ma in enumerate(mask):
+                #print(m,ma)
                 if m != simcluster:
                     seed[-np.amin(off)+off[m]:lenpwms[ma]+off[m]-np.amin(off)] += pwms[ma]
+                    seedcount[-np.amin(off)+off[m]:lenpwms[ma]+off[m]-np.amin(off)] += 1
                     #check = np.copy(seed2)
                     #check[-np.amin(off)+off[m]:lenpwms[ma]+off[m]-np.amin(off)] = pwms[ma]
                     #print(pfm2iupac([check], bk_freq = 0.28)[0], pearsonr(check.flatten(), seed1.flatten()))
-            if maxnorm:
-                seed = seed/np.amax(np.sum(seed,axis = 1))
-            else:
-                seed = seed/np.sum(seed,axis = 1)[:, None]
-            #print(pfm2iupac([seed], bk_freq = 0.28)[0])
-            if remove_low > 0:
-                edges = np.where(np.sum(seed, axis = 1)>remove_low)[0]
-                seed = seed[edges[0]:edges[-1]+1]
-            comb_pwms.append(seed)
+            if method == 'mean':
+                seed = seed/seedcount[:,None]
         else:
-            comb_pwms.append(pwms[mask[0]])
+            seed = pwms[mask[0]]
+        
+        
+        if maxnorm:
+            seed = seed/np.amax(np.sum(seed,axis = 1))
+        else:
+            seed = seed/np.sum(seed,axis = 1)[:, None]
+        if remove_low > 0:
+            edges = np.where(np.sum(seed, axis = 1)>remove_low)[0]
+            seed = seed[edges[0]:edges[-1]+1]
+        comb_pwms.append(seed)
     return comb_pwms
 
 
@@ -205,7 +222,10 @@ def combine_pwms(pwms, clusters, similarity, offsets, maxnorm = True, remove_low
 if __name__ == '__main__':
     pwmfile = sys.argv[1]
     outname = os.path.splitext(pwmfile)[0]
-    pwm_set,pwmnames = read_pwm(pwmfile, nameline = 'TF Name')
+    nameline = 'TF Name'
+    if '--nameline' in sys.argv:
+        nameline = sys.argv[sys.argv.index('--nameline')+1]
+    pwm_set,pwmnames = read_pwm(pwmfile, nameline = nameline)
     
     print(np.shape(pwm_set[0]))
     

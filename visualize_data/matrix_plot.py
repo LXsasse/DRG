@@ -3,7 +3,6 @@ import sys, os
 import matplotlib.pyplot as plt
 from functools import reduce
 import glob
-import seaborn as sns
 from matplotlib import cm
 from scipy.spatial.distance import pdist, cdist
 from scipy.cluster.hierarchy import dendrogram, linkage
@@ -235,7 +234,7 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
     return sortx, sorty
 
 
-def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = True, grid = True, swarm = True, plotnames = 0, datanames = None, scatter_color = None, scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, sort = 'top', sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size', ylabel = None):
+def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = True, grid = True, swarm = True, plotnames = 0, datanames = None, scatter_color = None, scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, connect_swarm = True, sort = 'top', sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size', ylabel = None):
     fig = plt.figure(figsize = (len(modnames)*xwidth, height), dpi = dpi)
     ax = fig.add_subplot(111)
     ax.set_position([0.1,0.1,0.8,0.8])
@@ -253,6 +252,10 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
         if colormax is None:
             colormax = np.amax(scatter_color)
         
+        if connect_swarm and len(np.shape(matrix)) > 1:
+            xposses = []
+            randomshift = np.random.random(len(matrix[0]))
+        
         for i, set1 in enumerate(matrix):
             set1 = np.array(set1)
             if sort == 'top':
@@ -267,7 +270,7 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
                 sccolor = (scatter_color-colormin)/(colormax-colormin)
                 
             if scatter_size is None:
-                scsize = np.ones(len(setsort))*plt.rcParams['lines.markersize'] ** 2.
+                scsize = 0.2*np.ones(len(setsort))*plt.rcParams['lines.markersize'] ** 2.
             elif isinstance(scatter_size, float) or isinstance(scatter_size, int):
                 scsize = scatter_size * np.ones(len(setsort))*plt.rcParams['lines.markersize'] ** 2.
             else:
@@ -278,10 +281,23 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
             if xorder == 'size' and scatter_size is not None and not isinstance(scatter_size, float) and not isinstance(scatter_size, int):
                 randx = i + width * ((scsize-np.amin(scsize))/(np.amax(scsize)-np.amin(scsize)) - 0.5)
             else:
-                randx = i + width * (np.random.random(len(setsort))-0.5)
+                if connect_swarm and len(np.shape(matrix)) > 1:
+                    randx = i + width/2 * (randomshift-0.5)
+                else:
+                    randx = i + width * (np.random.random(len(setsort))-0.5)
             
             ax.scatter(randx[setsort], set1[setsort], cmap= scatter_colormap, s = scsize[setsort], c = sccolor[setsort], alpha = scatter_alpha, vmin = 0, vmax = 1, lw = 0)
+            if connect_swarm and len(np.shape(matrix)) > 1:
+                xposses.append(randx)
+        
+        if connect_swarm and len(np.shape(matrix)) > 1:
+            xposses=np.array(xposses)
+            for j, setj in enumerate(np.array(matrix).T):
+                ax.plot(xposses[:,j], setj, color  = 'grey', alpha = 0.5, lw = 0.5)
+        
                 
+                
+            
         # Determine which scatters should get a name written next to them
         if plotnames> 0 and datanames is not None:
             for mat in matrix:

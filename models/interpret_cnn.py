@@ -65,6 +65,26 @@ def kernel_to_ppm(kernels, kernel_bias = None, bk_freq = None):
     ppms = ppms/np.sum(ppms, axis = 1)[:,None, :]
     return ppms
 
+def pwms_from_seqs(ohseqs, activations, cut):
+    minact = np.amin(activations, axis = 1)
+    activations = activations - minact[:,None]
+    maxact = np.amax(activations, axis = 1)
+    activations = activations/maxact[:,None]
+    seqs = np.where(activations >= cut)
+    pwms = []
+    for a, act in enumerate(activations):
+        pwms.append(np.sum(ohseqs[seqs[1][seqs[0]==a]], axis = 0)/np.sum(ohseqs[seqs[1][seqs[0]==a]], axis = (0,1))[None, :])
+    return np.array(pwms)
+    
+    
+def genseq(lseq, nseq):
+    seqs = np.zeros((nseq,4,lseq))
+    pos = np.random.randint(0,4,lseq*nseq)
+    pos0 = (np.arange(lseq*nseq,dtype=int)/lseq).astype(int)
+    pos1 = np.arange(lseq*nseq,dtype=int)%lseq
+    seqs[pos0,pos,pos1] = 1
+    return seqs
+
 # Could use this to propagate importance through network and determine individual nodes and then interpret them.
 # perform zscore test for each parameter as in linear regression
 def parameter_importance(ypred, y, coef_, inputs):
