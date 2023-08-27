@@ -7,14 +7,17 @@ from torch import Tensor
 from torch.nn.parameter import Parameter
 import math
 import torch.nn.functional as F
-
+from fft_conv_pytorch import fft_conv
 
 
 class EXPmax(nn.Module):
     def __init__(self, crop_max = 128):
         super(EXPmax, self).__init__()
         self.cmax = np.log(crop_max)
-        self.thresh = nn.Threshold(-self.cmax, -self.cmax)
+        #x if x > cmax
+        #cmax if x < cmax
+        # therefore perform on the negative value of the max
+        self.thresh = nn.Threshold(-self.cmax, -self.cmax) 
     def forward(self, x):
         x = -self.thresh(-x)
         return torch.exp(x)
@@ -43,13 +46,20 @@ class ReLUnonZero(nn.Module):
         self.relu = nn.ReLU()
     def forward(self, x):
         return self.relu(x) + self.min_val
-    
+
+class SinAct(nn.Module):
+    def __init__(self):
+        super(SinAct, self).__init__()
+    def forward(self, x):
+        return torch.sin(x)
+        
 
 func_dict0 = {'ReLU': nn.ReLU(),
               'ReLUnonZero': ReLUnonZero(),
               'GELU': nn.GELU(),
               'Sigmoid': nn.Sigmoid(),
               'Tanh': nn.Tanh(),
+              'Sin': SinAct(),
               'Id0': nn.Identity(),
               'CLAMP': CapOut(),
               'Softmax' : nn.Softmax(),
@@ -70,20 +80,130 @@ class mixfunc(nn.Module):
 func_dict = func_dict0 | {'cReLU': mixfunc('ReLU', 'CLAMP'),
                           'cGELU': mixfunc('GELU', 'CLAMP')}
 
-class fcc_convolution(nn.Module):
-    def __init__(self, n_in, n_out, l_kernel, n_layers, connect_function = 'GELU'):
-        self.weight = nn.Parameter(torch.rand(n_in, n_out, l_kernel))
+class conv_nonlinear(nn.Module):
+    def __init__(self, in_channels, n_kernels, l_kernels, stride = 1, nfc =5, fclayer_size = None, nfclayer_increase = 1.2, position_wise = False, explicit = False, bias = False, activation = 'GELU', dropout = 0):
+        super(conv_nonlinear, self).__init__()
+        self.in_channels = in_channels
+        self.n_kernels = n_kernels
+        self.l_kernels = l_kernels
+        self.nfc = nfc
+        self.position_wise = position_wise
+        self.explicit = explicit
+        self.bias = bias
+        self.stride = stride
+        self.dropout = dropout # in fully connected layers
+        self.nfclayer_increase = nfclayer_increase
+        self.fclayer_size = fclayer_size
+        # we only need the conv if we sum over all bases before giving it to the next layer
+        if self.position_wise:
+            self.conv_weight = nn.Parameter(torch.empty((n_kernels, in_channels, l_kernels)))
+            if self.bias:
+                self.conv_bias = nn.Parameter(torch.empty((1,n_kernels,1,1,1)))
+            else:
+                self.conv_bias = None
+            
+            self.init_parameters(self.conv_weight, self.conv_bias)
         
+        indim = in_channels * l_kernels
+        if position_wise:
+            indim = l_kernels
+            
+        if explicit:
+            indim = indim + int((indim*(indim - 1))/2)
+            nfc_weights = torch.empty((1,n_kernels,1, indim, 1))
+            nfc_bias = torch.empty((1,n_kernels, 1, 1))
+            self.init_parameters(nfc_weights, nfc_bias)
+            self.nfc_weights, self.nfc_bias = nn.Parameter(nfc_weights), nn.Parameter(nfc_bias)
+                
+        else:
+            self.activation = func_dict0[activation]
+            self.nfc_weights = nn.ParameterList()
+            self.nfc_bias = nn.ParameterList()
+            if self.fclayer_size is not None:
+                nfc_weight = torch.empty((1,n_kernels,1, indim, fclayer_size))
+                nfc_bias = torch.empty((1,n_kernels, 1, fclayer_size))
+                self.init_parameters(nfc_weight, nfc_bias)
+                self.nfc_weights.append(nn.Parameter(nfc_weight))
+                self.nfc_bias.append(nn.Parameter(nfc_bias))
+                indim = fclayer_size
+            for i in range(int(nfc/2)):
+                nfc_weight = torch.empty((1,n_kernels,1, indim, int(indim*nfclayer_increase)))
+                nfc_bias = torch.empty((1,n_kernels, 1, int(indim*nfclayer_increase)))
+                self.init_parameters(nfc_weight, nfc_bias)
+                self.nfc_weights.append(nn.Parameter(nfc_weight))
+                self.nfc_bias.append(nn.Parameter(nfc_bias))
+                indim = int(indim*nfclayer_increase)
+            if nfc%2 == 1:
+                nfc_weight = torch.empty((1,n_kernels,1, indim, indim))
+                nfc_bias = torch.empty((1,n_kernels, 1, indim))
+                self.init_parameters(nfc_weight, nfc_bias)
+                self.nfc_weights.append(nn.Parameter(nfc_weight))
+                self.nfc_bias.append(nn.Parameter(nfc_bias))
+            for i in range(int(nfc/2)):
+                nfc_weight = torch.empty((1,n_kernels,1, indim, int(indim/nfclayer_increase)))
+                nfc_bias = torch.empty((1,n_kernels, 1, int(indim/nfclayer_increase)))
+                self.init_parameters(nfc_weight, nfc_bias)
+                self.nfc_weights.append(nn.Parameter(nfc_weight))
+                self.nfc_bias.append(nn.Parameter(nfc_bias))
+                indim = int(indim/nfclayer_increase)
+            if fclayer_size is not None:
+                self.nfc +=1
+            if dropout>0:
+                self.Dropout = nn.Dropout(dropout)
+        
+            self.head = nn.Linear(indim,1)
+        
+    def init_parameters(self, weight, bias):
+        nn.init.kaiming_uniform_(weight, a=np.sqrt(5))
+        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(weight)
+        if bias is not None:
+            bound = 1. / np.sqrt(fan_in) if fan_in > 0 else 0
+            nn.init.uniform_(bias, -bound, bound)
+
+
+    def polynomial_features(self, x):
+        xs = x.size(dim = -1)
+        ind = torch.triu_indices(xs,xs,1)
+        x = torch.cat([x,(x.unsqueeze(-1) * x.unsqueeze(-2))[...,ind[0], ind[1]]], dim = -1)
+        return x
+
     def forward(self, x):
-        lx = x.size(dim = -1)
-        # maybe work with 2d convolutions
-        # Include customized Convolutions: 
-    # CNN network for each convolution, can be interpreted as one complex motif, should not sum over all positions but instead put them into a fully connected network and only sum at the end. So that this network creates outputs for each position 
+        print(x.size())
+        x = x.unfold(dimension = -1, size = self.l_kernels, step = self.stride)
+        x = x.unsqueeze(1)
+        if self.position_wise:
+            x = x * self.conv_weight.unsqueeze(0).unsqueeze(-2)
+            x = x.sum(dim=2).unsqueeze(dim = 2)
+            if self.bias:
+                x += self.conv_bias
+            if not self.explicit:
+                x = self.activation(x)
+        x = torch.transpose(x, -2,-3)
+        x = x.flatten(start_dim = 3)
+        print(x.size())
+        if self.explicit:
+            x = self.polynomial_features(x)
+            x = x.unsqueeze(-1) * self.nfc_weights 
+            x = x.sum(dim = -2)
+            x += self.nfc_bias   
+        else:
+            for n in range(self.nfc):
+                if self.dropout > 0:
+                    x = self.Dropout(x)
+                x = x.unsqueeze(-1) * self.nfc_weights[n] 
+                x = x.sum(dim = -2)
+                x += self.nfc_bias[n]
+                x = self.activation(x)
+                print(x.size())
+            x = self.head(x)
+        x = x.squeeze(-1)
+        print(x.size())
+        return x
 
 
 # Module that computes the correlation as a loss function 
 class correlation_loss(nn.Module):
-    def __init__(self, dim = 0, reduction = 'mean', eps = 1e-6, sum_axis = None):
+    def __init__(self, dim = 0, reduction = 'mean', eps = 1e-16, sum_axis = None):
         super(correlation_loss, self).__init__()
         self.dim = dim
         self.reduction = reduction
@@ -458,9 +578,9 @@ class simple_multi_output(nn.Module):
                 xa, xb = self.pre_function(xa), self.pre_function(xb)
                 
             if 'DIFFERENCE' == self.out_relation.upper():
-                x = xb - xa
-            elif 'DIFFERENCE' in self.out_relation.upper():
                 x = xa - xb
+            elif 'EXPDIFFERENCE' in self.out_relation.upper():
+                x = xb - xa
             elif 'FRACTION' in self.out_relation.upper():
                 x = (xa+self.offset)/(xb+self.offset)
             
@@ -711,7 +831,7 @@ class Residual_convolution(nn.Module):
         return x
 
 class Padded_Conv1d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=None, dilation=1, bias=True, padding_mode='zeros', value = None, reverse_complement = False):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=None, dilation=1, bias=True, groups = 1,padding_mode='zeros', value = None, reverse_complement = False, complement_pool = 'max', nlconv = False, **kwargs):
         super(Padded_Conv1d, self).__init__()
         self.in_channels = in_channels, 
         self.out_channels = out_channels
@@ -721,23 +841,43 @@ class Padded_Conv1d(nn.Module):
         if isinstance(self.padding, int):
             self.padding = [padding, padding]
         self.dilation = dilation
+        self.groups = groups
         self.bias = bias
         self.padding_mode = padding_mode
         self.value = value
         if padding_mode == 'zeros':
             self.padding_mode = 'constant'
             self.value = 0
-        self.conv1d = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=0, dilation=dilation, bias=bias)
-        self.reverse_complement = reverse_complement
-        
-    def forward(self, x):
-        if self.padding is not None:
-            x = F.pad(x, self.padding, mode = self.padding_mode, value = self.value)
-        if self.reverse_complement:
-            xr = torch.flip(self.conv1d(torch.flip(x, dims = [-2,-1])), dims = [-2])
-            xf = self.conv1d(x)
-            x = torch.amax(torch.cat([xf.unsqueeze(0), xr.unsqueeze(0)], dim = 0), dim = 0)
+        if nlconv:
+            self.conv1d = conv_nonlinear(in_channels, out_channels, kernel_size, stride = stride, bias = bias, **kwargs)
         else:
+            self.conv1d = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=0, dilation=dilation, groups = groups, bias=bias)
+        self.reverse_complement = reverse_complement
+        self.complement_pool = complement_pool 
+    def forward(self, x):
+        
+        if self.reverse_complement:
+            # Only works if order of bases is A, C, G, T because A->T, C->G, ...
+            xr = torch.flip(x, dims = [-2,-1])
+            if self.padding is not None:
+                # Need to pad separately so if padding is list of different sizes for left and right, the two sequences align.
+                xr = F.pad(xr, self.padding, mode = self.padding_mode, value = self.value)
+                x = F.pad(x, self.padding, mode = self.padding_mode, value = self.value)
+            xr = self.conv1d(xr)
+            xr = torch.flip(xr, dims = [-1])
+            xf = self.conv1d(x)
+            if self.complement_pool == 'max':
+                x = torch.amax(torch.cat([xf.unsqueeze(0), xr.unsqueeze(0)], dim = 0), dim = 0)
+            elif self.complement_pool == 'mean':
+                x = torch.mean(torch.cat([xf.unsqueeze(0), xr.unsqueeze(0)], dim = 0), dim = 0)
+            elif self.complement_pool == 'weighted':
+                x = torch.cat([xf.unsqueeze(0), xr.unsqueeze(0)], dim = 0)
+                norm = x.softmax(dim = 0)
+                x = x * norm/torch.sum(norm, dim = 0).unsqueeze(dim = 0)
+                x = torch.sum(x, dim = 0)
+        else:
+            if self.padding is not None:
+                x = F.pad(x, self.padding, mode = self.padding_mode, value = self.value)
             x = self.conv1d(x)
         return x
 
@@ -787,7 +927,7 @@ class RC_Conv1d(nn.Module):
         # reverse complement row is read in the opposite direction by the tf, therefore, we would need to reverse the weights of the kernels in the last dimension and then read it from left to right.
         # Instead we can flip the direction of the input and the flip the output back so that the positions are properly aligned again.
         if self.reverse_complement:
-            x = torch.cat([x, torch.flip(x,dims = 1)])
+            x = torch.cat([x, torch.flip(x,dims = [1,2])]) # change bases to complement
             xf = F.conv2d(x[:,:int(x.size(dim =1)/2)].unsqueeze(1), self.weight.unsqueeze(1), bias = self.bias, stride = (self.stride_rows, self.stride), dilation = (1, self.dilation))
             xb = torch.flip(F.conv2d(torch.flip(x[:,-int(x.size(dim =1)/2):].unsqueeze(1), dims = [-1]), self.weight.unsqueeze(1), bias = self.bias, stride = (self.stride_rows, self.stride), dilation = (1, self.dilation)) , dims = [-1])
             x = torch.cat([xf, xb], dim = 2)
@@ -797,9 +937,11 @@ class RC_Conv1d(nn.Module):
             x = torch.flatten(x,start_dim = 1, end_dim = 2)
         return x
 
-from fft_conv_pytorch import fft_conv
+
 # Uses several concatenated kernels with interpolation to compute long-range interactions
 # later introduce learnable weight function from center kernel output. 
+# To implement: Long kernel parameters being generated by MLP network that uses positional embedding (f.e. sinus vector from attention) as only input. Parameters of this network are updated during learing. 
+
 class Interpolated_Conv(nn.Module):
     def __init__(self,
                  seq_len, # sequence length
@@ -807,17 +949,20 @@ class Interpolated_Conv(nn.Module):
                  out_channels, # number of kernels
                  kernel_size =16, # length of kernel for each interpolation
                  stride = None, # stride of kernel
-                 dilation = 2, # dilation
+                 dilation = 2, # factor of size increase per distance
                  bias = None,
                  interpolation = 'linear', # method to interpolate between two parameters
-                 weight_function = 'linear', # weight function to account for distance to center
+                 weight_function = 'exp', # weight function to account for distance to center
                  # Currently distfunction can be linear (multiplier * d) or exp (multiplier**d)
                  # later this should be an easily parameterizable function that depends on weighted_pooling of center kernel and can be learned as well.
                  # easiest could be step function that has values between 0,1 (sigmoind), for a certain range (like 100bp, or the number of kernels)
-                 multiplier = 0.5, # if step_function then multiplier is the step_size
+                 multiplier = None, # if step_function then multiplier is the step_size
+                 offset = 0.1, # offset for window function
                  ):
         
         super(Interpolated_Conv, self).__init__()
+        if multiplier is None:
+            multiplier = 0.5**(1./(seq_len/4))
         
         self.seq_len = seq_len
         self.padding = int(seq_len)
@@ -841,13 +986,18 @@ class Interpolated_Conv(nn.Module):
             self.kernel_list.append(kernel) 
             kernel_len += kernel_size*dilation**i
             i += 1
-        
+        '''
         if weight_function == 'learnable':
             self.multiplier_weight = nn.Sequential(nn.Conv1d(out_channels, len(self.kernel_list), 1, bias = True), nn.Sigmoid())
-        elif weight_function == 'exp':
-            self.register_buffer('multiplier', multiplier**np.arange(len(self.kernel_list)))
+        el
+        '''
+        if weight_function == 'exp':
+            print(multiplier, self.seq_len, offset)
+            self.multiplier = multiplier**torch.arange(int(self.seq_len))*(1.-offset)+offset
         elif weight_function == 'linear':
-            self.register_buffer('multiplier', (len(self.kernel_list) -1 -torch.arange(len(self.kernel_list)))/(len(self.kernel_list) -1)*(1-multiplier) + multiplier )
+            self.multiplier = ((self.seq_len -1 -torch.arange(int(self.seq_len)))/(int(self.seq_len) -1)*(1-offset)) + offset
+        else:
+            self.multiplier = torch.ones(int(self.seq_len))*multiplier
     
         self.register_buffer('kernel_norm', torch.ones(in_channels, 1))
         self.register_buffer('kernel_norm_initialized', torch.tensor(0, dtype=torch.bool))
@@ -858,7 +1008,7 @@ class Interpolated_Conv(nn.Module):
             self.bias = nn.Parameter(torch.randn(1,out_channels,1))
         
     def forward(self, x):
-        
+        '''
         if self.weight_function == 'learnable':
             # creates binned weights for every position of ther kernel center
             xcenter = F.conv1d(x, self.kernel_list[0].view(-1,self.in_channels, self.kernel_size) ,padding = 'same')
@@ -867,7 +1017,7 @@ class Interpolated_Conv(nn.Module):
             # Maybe one can find a way to include this with FFT but don't know how to do that yet or if even possible.
             # We would have to generate a different long kernel for every position. 
             # or we multiply it with the sequence and have several sequence inputs. Either way it would increase the time by l_seq
-        
+        '''
         kernel_list = []
         for l in range(len(self.kernel_list)):
             k = F.interpolate(self.kernel_list[l], scale_factor = self.dilation**l,mode = self.interpolation)
@@ -888,11 +1038,98 @@ class Interpolated_Conv(nn.Module):
         return out
             
  
+class Hyena_Conv(nn.Module):
+    def __init__(self,
+                 seq_len, # sequence length
+                 in_channels, 
+                 n_iter = 4, # number of long convolutions
+                 out_channels = None, # number kernels for the value, usually the same as input if not define differently
+                 kernel_size = 3, # length of depthwise kernel embedding learning
+                 dim_posemb = 128, # dimension of positional embedding
+                 n_ffn = 3, # number of feedforward layers to generate column of paramter matrix
+                 weight_function = 'exp', # weight function to account for distance to center
+                 multiplier = None, # if step_function then multiplier is the step_size
+                 offset = 0.1, # offset for window function
+                 convpred_activation = 'Sin'
+                 ):
+        
+        super(Hyena_Conv, self).__init__()
+        
+        self.seq_len = seq_len
+        self.padding = int(seq_len)
+        self.in_channels = in_channels
+        self.n_iter = n_iter
+        if out_channels is None:
+            self.out_channels = in_channels
+        else:
+            self.out_channels = out_channels
+            
+        if multiplier is None:
+            multiplier = 0.5**(1./(seq_len/4))
+        self.kernel_size = kernel_size
+        self.dim_posemb = dim_posemb
+        
+        self.n_ffn = n_ffn
+        self.weight_function = weight_function
+        self.offset = offset
+        self.convpred_activation = convpred_activation
+        self.linembed = nn.Conv1d(self.in_channels, (n_iter+1)*self.out_channels, 1, bias = False)
+        self.depthwiseconv = Padded_Conv1d( (n_iter+1)*self.out_channels, (n_iter+1)*self.out_channels, self.kernel_size, padding = (int(self.kernel_size/2)-int(self.kernel_size%2==0), int(self.kernel_size/2)), bias=False, groups = (n_iter+1)*self.out_channels)
+        
+        self.register_buffer('pos_embedding', self.init_pos_embedding(self.dim_posemb,seq_len*2+1))
+        self.param_generator = Res_Conv1d(self.dim_posemb, self.seq_len*2, n_iter * self.out_channels, 1, n_ffn, kernel_increase = 1., max_pooling = 0, mean_pooling=0, weighted_pooling=0, pooling_after = 1, residual_after = n_ffn+10, residual_same_len = False, activation_function = convpred_activation, is_modified = False, strides = 1, dilations = 1, bias = False, dropout = 0., batch_norm = False, act_func_before = True, residual_entire = False, concatenate_residual = False, linear_layer = False, linear_func = None, long_conv = False)
+        
+        if weight_function == 'exp':
+            multiplier = multiplier**torch.arange(self.seq_len)*(1.-offset)+offset
+        elif weight_function == 'linear':
+            multiplier = ((self.seq_len -1 -torch.arange(self.seq_len))/(self.seq_len -1)*(1-offset)) + offset
+        else:
+            multiplier = torch.ones(self.seq_len)*multiplier
+    
+        multiplier = torch.cat([multiplier.flip(-1), multiplier[[0]], multiplier])
+        self.register_buffer('multiplier', multiplier)
+        
+    # this function initializes the positional embedding that is constant and will not be updated
+    def init_pos_embedding(self, dim, length):
+        # number of dimensions represented by sines
+        dsin = int(dim/2)
+        # nubmer of dimensions represented by cosines
+        dcos = dim - dsin
+        # each dimension has a different wavelength with which the sine and cosine oszilate
+        # from (length/2)**10/dsin to (length/2)**(10+dsin)/dsin
+        # the orignal in the paper is 10000**2i/dsin, but this might be inadequate for the length of the sequences that we're using since this results in very long wavelengths and very little change
+        sinwavelengths = length/(0.8+1.2**(torch.arange(dsin)+1)).unsqueeze(-1)
+        coswavelengths = length/(0.8+1.2**(torch.arange(dcos)+1)).unsqueeze(-1)
+        # for each position, there will be a different combination of sine and cosine values
+        xpos = torch.arange(-int(length/2),int(length/2)+1).unsqueeze(0)
+        sines = torch.sin(2*np.pi*xpos/sinwavelengths)
+        cosines = torch.cos(2*np.pi*xpos/coswavelengths)
+        posrep = torch.cat([sines,cosines], dim = 0).unsqueeze(0)
+        # posrep dimension: (dim, length)
+        return posrep
+    
+    def forward(self, x):
+        
+        embed = self.linembed(x)
+        embed = self.depthwiseconv(embed)
+        eshape = embed.size()
+        embed = embed.reshape(eshape[0], self.n_iter +1, self.out_channels ,eshape[-1])
+        k = self.param_generator(self.pos_embedding)
+        k = k*self.multiplier
+        ks = k.size()
+        k = k.reshape(ks[0], self.n_iter, self.out_channels, ks[-1])
+        z = embed[:, 0]
+        for ni in range(self.n_iter):
+            hu = fft_conv(z, k[:, ni], padding = self.padding, stride = 1)
+            z = hu * embed[:, ni+1]
+        return z
+
+
  
  
 # Tower of residual dilated convolution blocks
 class Res_Conv1d(nn.Module):
-    def __init__(self, indim, inlen, n_kernels, l_kernels, n_layers, kernel_increase = 1., max_pooling = 0, mean_pooling=0, weighted_pooling=0, residual_after = 1, residual_same_len = False, activation_function = 'GELU', is_modified = False, strides = 1, dilations = 1, bias = True, dropout = 0., batch_norm = False, act_func_before = True, residual_entire = False, concatenate_residual = False, linear_layer = False, linear_func = None, long_conv = False, **kwargs):
+    def __init__(self, indim, inlen, n_kernels, l_kernels, n_layers, kernel_increase = 1., max_pooling = 0, mean_pooling=0, weighted_pooling=0, pooling_after = 1, residual_after = 1, residual_same_len = False, activation_function = 'GELU', is_modified = False, strides = 1, dilations = 1, bias = True, dropout = 0., batch_norm = False, act_func_before = True, residual_entire = False, concatenate_residual = False, linear_layer = False, linear_func = None, long_conv = False, **kwargs):
         '''
         indim: number of channels of input at axis 1
         inlen: len of sequence of input at axis 2
@@ -902,11 +1139,14 @@ class Res_Conv1d(nn.Module):
         max_pooling: if > 0 then maxpooling with stride and size
         mean_pooling: if > 0 then meanpooling with stride and size
         weighted_pooling: if > 0 then weightedpooling with stride and size
+        pooling_after : normally pooling is performed after every step but can also be performed after several steps
         residual_after: after how many conv layers a residual should be added
         residual_same_len: If True, even if the convolutional layer does not change the dimension of the output to the input, a mean pooling will be performed that meanpools in the size and stride as the convolutional layer
         # concatenate_residual concatenates the channels of residual with channels of the prediction instead of summing them up.
         '''
         super(Res_Conv1d, self).__init__()
+        if residual_after is None:
+            residual_after = n_layers +10
         self.residual_after = residual_after
         self.convlayers = nn.ModuleDict()
         kernel_function = func_dict[activation_function]
@@ -1013,7 +1253,7 @@ class Res_Conv1d(nn.Module):
             if dropout > 0.:
                 self.convlayers['Dropout_Convs'+str(n)] = nn.Dropout(p=dropout)
             
-            if psize > 0:
+            if (psize > 0 and (n+1)%pooling_after == 0):
                 if psize > currlen:
                     break
                 maxpad = int(np.ceil((psize - currlen%psize)/2))*int(currlen%psize>0)
@@ -1446,8 +1686,8 @@ class MyAttention_layer(nn.Module):
         # each dimension has a different wavelength with which the sine and cosine oszilate
         # from (length/2)**10/dsin to (length/2)**(10+dsin)/dsin
         # the orignal in the paper is 10000**2i/dsin, but this might be inadequate for the length of the sequences that we're using since this results in very long wavelengths and very little change
-        sinwavelengths = (length/2)**((torch.arange(dsin)+10)/dsin).unsqueeze(-1)
-        coswavelengths = (length/2)**((torch.arange(dcos)+10)/dcos).unsqueeze(-1)
+        sinwavelengths = length/(0.8+1.2**(torch.arange(dsin)+1)).unsqueeze(-1)
+        coswavelengths = length/(0.8+1.2**(torch.arange(dcos)+1)).unsqueeze(-1)
         # for each position, there will be a different combination of sine and cosine values
         xpos = torch.arange(length).unsqueeze(0)
         sines = torch.sin(2*np.pi*xpos/sinwavelengths)
@@ -1455,7 +1695,6 @@ class MyAttention_layer(nn.Module):
         posrep = torch.cat([sines,cosines], dim = 0)
         # posrep dimension: (dim, length)
         return posrep
-        
     def forward(self,x):
         
         if self.batchnorm:

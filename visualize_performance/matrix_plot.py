@@ -7,6 +7,7 @@ from matplotlib import cm
 from scipy.spatial.distance import pdist, cdist
 from scipy.cluster.hierarchy import dendrogram, linkage
 import seaborn as sns
+import matplotlib as mpl
 
 def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty = None, x_attributes = None, y_attributes = None, xattr_name = None, yattr_name = None, heatmapcolor = cm.BrBG_r, xatt_color = None, yatt_color = None, pwms = None, combine_cutx = 0., combine_cuty = 0., color_cutx = 0., color_cuty = 0., plot_value = False, vmin = None, vmax = None, grid = False, xdenline = None, ydenline = None, xlabel = None, ylabel = None, xticklabels = None, yticklabels  = None, dpi = 100, figname = None, maxsize = 20):
     
@@ -234,7 +235,101 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
     return sortx, sorty
 
 
-def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = True, grid = True, swarm = True, plotnames = 0, datanames = None, scatter_color = None, scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, connect_swarm = True, sort = 'top', sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size', ylabel = None):
+def simple_beeswarm(y, nbins=None):
+    """
+    Returns x coordinates for the points in ``y``, so that plotting ``x`` and
+    ``y`` results in a bee swarm plot.
+    """
+    y = np.asarray(y)
+    if nbins is None:
+        nbins = len(y) // 6
+
+    # Get upper bounds of bins
+    x = np.zeros(len(y))
+    ylo = np.min(y)
+    yhi = np.max(y)
+    dy = (yhi - ylo) / nbins
+    ybins = np.linspace(ylo + dy, yhi - dy, nbins - 1)
+
+    # Divide indices into bins
+    i = np.arange(len(y))
+    ibs = [0] * nbins
+    ybs = [0] * nbins
+    nmax = 0
+    for j, ybin in enumerate(ybins):
+        f = y <= ybin
+        ibs[j], ybs[j] = i[f], y[f]
+        nmax = max(nmax, len(ibs[j]))
+        f = ~f
+        i, y = i[f], y[f]
+    ibs[-1], ybs[-1] = i, y
+    nmax = max(nmax, len(ibs[-1]))
+
+    # Assign x indices
+    dx = 1 / (nmax // 2)
+    for i, y in zip(ibs, ybs):
+        if len(i) > 1:
+            j = len(i) % 2
+            i = i[np.argsort(y)]
+            a = i[j::2]
+            b = i[j+1::2]
+            x[a] = (0.5 + j / 3 + np.arange(len(b))) * dx
+            x[b] = (0.5 + j / 3 + np.arange(len(b))) * -dx
+
+    return x
+
+def approximate_density(set1, bins = 20, moves = 4, miny=None, maxy = None):
+    if miny is None:
+        miny = np.amin(set1)
+    if maxy is None:
+        maxy = np.amax(set1)
+    bsize = (maxy-miny)/bins
+    for m in range(moves):
+        bins1 = np.linspace(miny-(m+1)*bsize/(moves+1), maxy-(m+1)*bsize/(moves+1),bins + 1)
+        bins2 = np.linspace(miny+(m+1)*bsize/(moves+1), maxy+(m+1)*bsize/(moves+1),bins + 1)
+        density= np.array([np.sum((set1 >= bins1[b]) * (set1<bins1[b+1])) for b in range(len(bins1)-1)])
+        density2= np.array([np.sum((set1 >= bins2[b]) * (set1<bins2[b+1])) for b in range(len(bins2)-1)])
+        density = density/np.amax(density)
+        density2 = density2/np.amax(density2)
+        dens = np.zeros(len(set1))
+        dcount = np.zeros(len(set1))
+        for b in range(bins):
+            dens[(set1 >= bins1[b]) * (set1<bins1[b+1])] += density[b]
+            dens[(set1 >= bins2[b]) * (set1<bins2[b+1])] += density[b]
+            dcount[(set1 >= bins1[b]) * (set1<bins1[b+1])] += 1
+            dcount[(set1 >= bins2[b]) * (set1<bins2[b+1])] += 1
+        dens = dens/dcount
+    return dens
+
+def plot_distribution(matrix, modnames, split = 1, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = False, showfliers = False, showcaps = True, facecolor = None, grid = True, swarm = False, plotnames = 0, datanames = None, scatter_color = 'grey', scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, connect_swarm = True, sort = 'top', sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size', ylabel = None, fmt = 'jpg'):
+    
+    positions = np.arange(len(matrix))
+    print(positions)
+    fcolor = None
+    if split > 1:
+        if len(matrix) == split:
+            matrix = [m for ma in matrix for m in ma]
+        
+        if width * split >1:
+            width = width/split
+        
+        positions = []
+        for s in range(split):
+            positions.append(np.arange(int(len(matrix)/split)) + width*s - (split*width/2) + width/2)
+        positions = np.concatenate(positions)
+        
+        if isinstance(facecolor, list):
+            if len(facecolor) == split:
+                fcolor = [facecolor[c] for c in range(split) for j in range(int(len(matrix)/split))]
+            else:
+                fcolor = [facecolor[c] for c in range(len(matrix))]
+            facecolor = None
+            
+    
+    if facecolor is None:
+        facecolor = (0,0,0,0)
+
+    
     fig = plt.figure(figsize = (len(modnames)*xwidth, height), dpi = dpi)
     ax = fig.add_subplot(111)
     ax.set_position([0.1,0.1,0.8,0.8])
@@ -244,12 +339,14 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
         ax.set_ylabel(ylabel)
         
     matrix = list(matrix)
+    
     if swarm:
         #sns.swarmplot(data=matrix, color = 'k', size = size, ax = ax)
         # replace swarmplot with scatterplot with random location within width
-        if colormin is None:
+        
+        if colormin is None and not isinstance(scatter_color, str):
             colormin = np.amin(scatter_color)
-        if colormax is None:
+        if colormax is None and not isinstance(scatter_color, str):
             colormax = np.amax(scatter_color)
         
         if connect_swarm and len(np.shape(matrix)) > 1:
@@ -266,6 +363,8 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
             if scatter_color is None:
                 scatter_colormap = cm.twilight
                 sccolor = np.ones(len(setsort))*0.25
+            elif isinstance(scatter_color, str):
+                sccolor = np.array([scatter_color for ci in range(len(setsort))])
             else:
                 sccolor = (scatter_color-colormin)/(colormax-colormin)
                 
@@ -279,14 +378,15 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
                 scsize *= plt.rcParams['lines.markersize'] ** 2.
                 
             if xorder == 'size' and scatter_size is not None and not isinstance(scatter_size, float) and not isinstance(scatter_size, int):
-                randx = i + width * ((scsize-np.amin(scsize))/(np.amax(scsize)-np.amin(scsize)) - 0.5)
+                randx = positions[i] + width * ((scsize-np.amin(scsize))/(np.amax(scsize)-np.amin(scsize)) - 0.5)
             else:
+                dens = approximate_density(set1)
                 if connect_swarm and len(np.shape(matrix)) > 1:
-                    randx = i + width/2 * (randomshift-0.5)
+                    randx = positions[i] + dens *width/2 * (randomshift-0.5)
                 else:
-                    randx = i + width * (np.random.random(len(setsort))-0.5)
+                    randx = positions[i] + dens * width * (np.random.random(len(setsort))-0.5) # + width/2 * simple_beeswarm(set1, nbins = 40) #
             
-            ax.scatter(randx[setsort], set1[setsort], cmap= scatter_colormap, s = scsize[setsort], c = sccolor[setsort], alpha = scatter_alpha, vmin = 0, vmax = 1, lw = 0)
+            ax.scatter(randx[setsort], set1[setsort], cmap= scatter_colormap, s = scsize[setsort], c = sccolor[setsort], alpha = scatter_alpha, vmin = 0, vmax = 1, lw = 0, zorder = 5)
             if connect_swarm and len(np.shape(matrix)) > 1:
                 xposses.append(randx)
         
@@ -294,16 +394,13 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
             xposses=np.array(xposses)
             for j, setj in enumerate(np.array(matrix).T):
                 ax.plot(xposses[:,j], setj, color  = 'grey', alpha = 0.5, lw = 0.5)
-        
-                
-                
             
         # Determine which scatters should get a name written next to them
         if plotnames> 0 and datanames is not None:
             for mat in matrix:
                 which_to_plot = np.argsort(-mat)[:plotnames]
-    
-    if scatter_color is not None and swarm:
+    # generate colorbar
+    if ((scatter_color is not None) and (not isinstance(scatter_color, str))) and swarm:
         axcol = fig.add_subplot(911)
         axcol.set_position([0.6,0.925,0.3, 0.05])
         axcol.tick_params(bottom = False, labelbottom = False, labeltop = True, top = True, left = False, labelleft = False)
@@ -311,10 +408,18 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
         axcol.set_xticks([0,50,101])
         axcol.set_xticklabels([round(colormin,1), round((colormin+colormax)/2,1), round(colormax,1)], rotation = 90)
     
-    ax = sns.boxplot(data=matrix,showcaps=False,boxprops={'facecolor':'None'},
-    showfliers=False,whiskerprops={'linewidth':1},ax = ax, width = width)
+    bplot = ax.boxplot(matrix, positions = positions, showcaps=showcaps, patch_artist = True, boxprops={'facecolor':facecolor}, showfliers=showfliers, whiskerprops={'linewidth':1}, widths = width,zorder = 4)
+    
+    if fcolor is not None:
+        for patch, color in zip(bplot['boxes'], fcolor):
+            patch.set_facecolor(color)
+            fc = patch.get_facecolor()
+            patch.set_facecolor(mpl.colors.to_rgba(fc, 0.7))
+            
+    
     if show_mean:
-        ax.plot(np.arange(len(matrix)), [np.mean(mat) for mat in matrix], color = 'r', marker = 's')
+        ax.plot(np.sort(positions), [np.mean(matrix[s]) for s in np.argsort(positions)], color = 'r', marker = 's', zorder = 6, markersize = 3, ls = '--', lw = 0.5)
+    
     ax.set_xticks(np.arange(len(modnames)))
     ax.set_xticklabels(modnames, rotation = 90)
     if grid:
@@ -323,6 +428,6 @@ def plot_distribution(matrix, modnames, outname = None, xwidth = 0.6, height = 4
         #fig.tight_layout()
         plt.show()
     else:
-        fig.savefig(outname+'_distribution.jpg', dpi = savedpi, bbox_inches = 'tight')
+        fig.savefig(outname+'_distribution.'+fmt, dpi = savedpi, bbox_inches = 'tight')
 
 

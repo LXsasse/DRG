@@ -22,7 +22,7 @@ from output import print_averages, save_performance, plot_scatter
 from functions import dist_measures
 from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance 
 from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters
-from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, Padded_Conv1d, RC_Conv1d, PredictionHead
+from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, Padded_Conv1d, RC_Conv1d, PredictionHead, Hyena_Conv
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
@@ -32,7 +32,7 @@ from output import add_params_to_outname
 
 # highly flexible Convolutional neural network architecture
 class cnn(nn.Module):
-    def __init__(self, loss_function = 'MSE', validation_loss = None, loss_weights = 1, val_loss_weights = 1, n_features = None, reverse_complement = False, n_classes = 1, l_seqs = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = True, mean_pooling = False, weighted_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = 0, dilmean_pooling = 0, dilweighted_pooling= 0, dilpooling_residual = 1, dilresidual_entire = False, dilresidual_concat = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_interpolated_conv = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, attentionmax_pooling = 0, attentionweighted_pooling = 0, attentionconv_pooling = 1, attention_multiplier = 0.5, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = 0, trmean_pooling = 0, trweighted_pooling = 0, trpooling_residual = 1, trresidual_entire = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False,  final_convolutions = 0, final_conv_dim = None, l_finalkernels = 4, finalmax_pooling = 0, finalmean_pooling = 0, finalweighted_pooling =1, finalstrides = 1, finaldilations = 1, nfc_layers = 0, nfc_residuals = 0, fc_function = None, layer_widening = 1.1, interaction_layer = False, neuralnetout = 0, dropout = 0., conv_dropout=0., attention_dropout = 0., fc_dropout = 0., batch_norm = False, conv_batch_norm = False, attention_batch_norm = False, fc_batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, optim_weight_decay = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 1, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
+    def __init__(self, loss_function = 'MSE', validation_loss = None, loss_weights = 1, val_loss_weights = 1, n_features = None, reverse_complement = False, complement_pool = 'max', n_classes = 1, l_seqs = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, nlconv = False, nlconv_position_wise = False, nlconv_fclayer = None, nlconv_explicit = False, nlconv_nfc = 5, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = True, mean_pooling = False, weighted_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = 0, dilmean_pooling = 0, dilweighted_pooling= 0, dilpooling_steps = 1, dilpooling_residual = 1, dilresidual_entire = False, dilresidual_concat = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_interpolated_conv = 0, n_hyenaconv = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, attentionmax_pooling = 0, attentionweighted_pooling = 0, attentionconv_pooling = 1, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = 0, trmean_pooling = 0, trweighted_pooling = 0, trpooling_residual = 1, trpooling_steps = 1, trresidual_entire = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False,  final_convolutions = 0, final_conv_dim = None, l_finalkernels = 4, finalmax_pooling = 0, finalmean_pooling = 0, finalweighted_pooling =1, finalstrides = 1, finaldilations = 1, fclayer_size = None, nfc_layers = 0, nfc_residuals = 0, fc_function = None, layer_widening = 1.1, interaction_layer = False, neuralnetout = 0, dropout = 0., conv_dropout=0., attention_dropout = 0., fc_dropout = 0., batch_norm = False, conv_batch_norm = False, attention_batch_norm = False, fc_batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, optim_weight_decay = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 1, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
         
         super(cnn, self).__init__()
         
@@ -53,6 +53,7 @@ class cnn(nn.Module):
         
         self.n_features = n_features # Number of features in one-hot coding
         self.reverse_complement = reverse_complement # whether to use reverse complement in first CNN
+        self.complement_pool = complement_pool # pooling between motif on the positive and negative strand. 
         self.l_seqs = l_seqs # length of padded sequences
         self.n_classes = n_classes # output classes to predict
         
@@ -80,6 +81,13 @@ class cnn(nn.Module):
         self.l_kernels = l_kernels # length of learnable kernels
         self.kernel_bias = kernel_bias # Turn on/off bias of kernels
         self.kernel_function = kernel_function # Non-linear function applied to kernel outputs
+        
+        self.nlconv = nlconv
+        self.nlconv_position_wise = nlconv_position_wise
+        self.nlconv_fclayer = nlconv_fclayer
+        self.nlconv_explicit =nlconv_explicit
+        self.nlconv_nfc = nlconv_nfc
+        
         self.net_function = net_function # Non-linear function applied to other layers
         self.kernel_thresholding = kernel_thresholding # Thresholding function a_i*k_i=bi for each kernel, important to use with pwms because they don't have any cutoffs
         self.fixed_kernels = fixed_kernels # set of fixed value kernels (pwms)
@@ -115,6 +123,7 @@ class cnn(nn.Module):
         self.dilations = dilations # Dilations of additional convolutions
         self.conv_increase = conv_increase # Factor by which number of additional convolutions increases in each layer
         self.dilpooling_residual = dilpooling_residual # Number of convolutions before residual is added
+        self.dilpooling_steps = dilpooling_steps # Number of steps after which pooling is performed
         self.dilresidual_entire = dilresidual_entire # if residual should be forwarded from beginning to end of dilated block
         self.dilresidual_concat = dilresidual_concat # if True the residual will be concatenated with the predictions instead of summed. 
         
@@ -143,7 +152,8 @@ class cnn(nn.Module):
         # chose one of the three possible long-range interaction modules.
         self.n_transformer = n_transformer # uses nn.TransformerEncoder
         self.n_attention = n_attention # uses MyAttention_layer
-        self.n_interpolated_conv = n_interpolated_conv # uses 
+        self.n_interpolated_conv = n_interpolated_conv # uses intperpolated short kernels to generate long-convolutin that is as long as sequence
+        self.n_hyenaconv = n_hyenaconv # hyena convolution that can be used instead of attention 
         
         self.n_distattention = n_distattention # intializes the distance_attention with n heads
         self.dim_distattention = dim_distattention # multiplicative value by which dimension will be increased in embedding
@@ -154,10 +164,10 @@ class cnn(nn.Module):
         self.attentionweighted_pooling = attentionweighted_pooling # generate maxpool layer after attention layer to reduce length of input
         
         self.attentionconv_pooling = attentionconv_pooling # this is the stride if interpolated_conv
-        self.attention_multiplier = attention_multiplier # this is the multiplier ins interpolated_conv
         
         self.transformer_convolutions = transformer_convolutions # Number of additional convolutions afer transformer layer
         self.trpooling_residual = trpooling_residual # Number of layers that are scipped by residual layer
+        self.trpooling_steps = trpooling_steps # Number of convs after which pooling will be performed 
         self.trresidual_entire = trresidual_entire # if residual from start of block should be added to after last convolution
         self.trstrides = trstrides #Strides of additional convolutions
         self.trdilations = trdilations # Dilations of additional convolutions
@@ -198,7 +208,7 @@ class cnn(nn.Module):
         self.finaldilations = finaldilations
         
         
-        
+        self.fclayer_size = fclayer_size # Size of input to fully connected layers
         self.nfc_layers = nfc_layers # Number of fully connected ReLU layers after pooling before last layer
         self.nfc_residuals = nfc_residuals # Number of layers after which residuals should be added
         if fc_function is None:
@@ -319,7 +329,7 @@ class cnn(nn.Module):
         # initialize convolutional layer and compute new feature dimension and length of sequence
         if self.num_kernels > 0:
             #self.convolutions = nn.Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = int(self.l_kernels/2) )
-            self.convolutions = Padded_Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = [int(self.l_kernels/2)-int(self.l_kernels%2==0), int(self.l_kernels/2)], reverse_complement = reverse_complement)
+            self.convolutions = Padded_Conv1d(self.n_features, self.num_kernels, kernel_size = self.l_kernels, bias = self.kernel_bias, padding = [int(self.l_kernels/2)-int(self.l_kernels%2==0), int(self.l_kernels/2)], reverse_complement = reverse_complement, complement_pool = self.complement_pool, nlconv = self.nlconv, position_wise = self.nlconv_position_wise, fclayer_size = self.nlconv_fclayer, explicit = self.nlconv_explicit, nfc = self.nlconv_nfc)
             currdim = np.copy(self.num_kernels)
         
         if self.fixed_kernels is not None:
@@ -355,7 +365,7 @@ class cnn(nn.Module):
         
         # Initialize additional convolutional layers
         if self.dilated_convolutions > 0:
-            self.convolution_layers = Res_Conv1d(currdim, currlen, currdim, self.l_dilkernels, self.dilated_convolutions, kernel_increase = self.conv_increase, max_pooling = dilmax_pooling, mean_pooling=dilmean_pooling, weighted_pooling=dilweighted_pooling, residual_after = self.dilpooling_residual, activation_function = net_function, strides = strides, dilations = dilations, bias = False, batch_norm = self.conv_batch_norm, dropout = self.conv_dropout, residual_entire = self.dilresidual_entire, concatenate_residual = dilresidual_concat, is_modified = True)
+            self.convolution_layers = Res_Conv1d(currdim, currlen, currdim, self.l_dilkernels, self.dilated_convolutions, kernel_increase = self.conv_increase, max_pooling = dilmax_pooling, mean_pooling=dilmean_pooling, weighted_pooling=dilweighted_pooling, residual_after = self.dilpooling_residual, pooling_after = self.dilpooling_steps, activation_function = net_function, strides = strides, dilations = dilations, bias = False, batch_norm = self.conv_batch_norm, dropout = self.conv_dropout, residual_entire = self.dilresidual_entire, concatenate_residual = dilresidual_concat, is_modified = True)
             currdim, currlen = self.convolution_layers.currdim, self.convolution_layers.currlen
             if self.verbose:
                 print('2nd convolutions', currdim, currlen)
@@ -388,7 +398,7 @@ class cnn(nn.Module):
             if self.n_distattention == 0:
                 self.n_distattention = 16
             
-            self.distattention = Res_Conv1d(currdim, currlen, self.dim_embattention, self.n_distattention, self.n_interpolated_conv, kernel_increase = self.dim_distattention, max_pooling = attentionmax_pooling, mean_pooling=0, weighted_pooling=attentionweighted_pooling, residual_after = 1, residual_same_len = False, activation_function = net_function, strides = attentionconv_pooling, dilations = 2, bias = True, dropout = self.attention_dropout, batch_norm = self.attention_batch_norm, act_func_before = False, residual_entire = False, concatenate_residual = self.sum_attention, linear_layer = self.sum_attention, long_conv = True, interpolation = 'linear', weight_function = 'linear', multiplier=attention_multiplier)
+            self.distattention = Res_Conv1d(currdim, currlen, self.dim_embattention, self.n_distattention, self.n_interpolated_conv, kernel_increase = self.dim_distattention, max_pooling = attentionmax_pooling, mean_pooling=0, weighted_pooling=attentionweighted_pooling, residual_after = 1, residual_same_len = False, activation_function = net_function, strides = attentionconv_pooling, dilations = 2, bias = True, dropout = self.attention_dropout, batch_norm = self.attention_batch_norm, act_func_before = False, residual_entire = False, concatenate_residual = self.sum_attention, linear_layer = self.sum_attention, long_conv = True, interpolation = 'linear')
 
             currlen = self.distattention.currlen
             currdim = self.distattention.currdim
@@ -417,6 +427,30 @@ class cnn(nn.Module):
             self.distattention = nn.Sequential(distattention)
             if self.verbose:
                 print('Attention', currdim, currlen)
+        
+        elif self.n_hyenaconv >0:
+            distattention = OrderedDict()
+            if self.dim_embattention is None:
+                self.dim_embattention = currdim
+            if self.n_distattention == 0:
+                self.n_distattention = 5
+            for na in range(self.n_hyenaconv):
+                distattention['Hyena'+str(na)] = Hyena_Conv(currlen, currdim, n_iter = self.n_distattention, out_channels = self.dim_embattention, kernel_size = 3, dim_posemb = 256, n_ffn = 3, weight_function = 'exp', multiplier = None, offset = 0.1)
+                
+                currdim = self.dim_embattention
+                if self.attentionmax_pooling > 0:
+                    if int(np.floor(1. + (currlen + 2*int(np.ceil((attentionmax_pooling-currlen%attentionmax_pooling)/2))*int(currlen%attentionmax_pooling>0) - (attentionmax_pooling-1)-1)/attentionmax_pooling)) > 0:
+                        distattention['Maxpoolattention'+str(na)]= pooling_layer(True, False, False, pooling_size= attentionmax_pooling, stride=attentionmax_pooling,padding = int(np.ceil((attentionmax_pooling-currlen%attentionmax_pooling)/2))*int(currlen%attentionmax_pooling>0))
+                        currlen = int(np.floor(1. + (currlen + 2*int(np.ceil((attentionmax_pooling-currlen%attentionmax_pooling)/2))*int(currlen%attentionmax_pooling>0) - (attentionmax_pooling-1)-1)/attentionmax_pooling))
+                        
+                if self.attentionweighted_pooling > 0:
+                    if int(np.floor(1. + (currlen +2*int(np.ceil((attentionweighted_pooling-currlen%attentionweighted_pooling)/2))*int(currlen%attentionweighted_pooling>0) - (attentionweighted_pooling-1)-1)/attentionweighted_pooling)) > 0:
+                        distattention['weightedpoolattention'+str(na)]= pooling_layer(False, False, True, pooling_size= attentionweighted_pooling, stride=attentionweighted_pooling, padding = int(np.ceil((attentionweighted_pooling-currlen%attentionweighted_pooling)/2))*int(currlen%attentionweighted_pooling>0))
+                        currlen = int(np.floor(1. + (currlen +2*int(np.ceil((attentionweighted_pooling-currlen%attentionweighted_pooling)/2))*int(currlen%attentionweighted_pooling>0) - (attentionweighted_pooling-1)-1)/attentionweighted_pooling))
+            
+            self.distattention = nn.Sequential(distattention)
+            if self.verbose:
+                print('Hyena', currdim, currlen)
             
         
         
@@ -425,7 +459,7 @@ class cnn(nn.Module):
             if self.trconv_dim is None:
                 self.trconv_dim = currdim
             
-            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmax_pooling, mean_pooling=trmean_pooling, weighted_pooling = trweighted_pooling, residual_after = self.trpooling_residual, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = self.conv_dropout, batch_norm = self.conv_batch_norm, residual_entire = self.trresidual_entire)
+            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmax_pooling, mean_pooling=trmean_pooling, weighted_pooling = trweighted_pooling, residual_after = self.trpooling_residual, pooling_after = self.trpooling_steps, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = self.conv_dropout, batch_norm = self.conv_batch_norm, residual_entire = self.trresidual_entire)
             currdim, currlen = self.trconvolution_layers.currdim, self.trconvolution_layers.currlen
             if self.verbose:
                 print('Convolution after attention', currdim, currlen)
@@ -479,6 +513,11 @@ class cnn(nn.Module):
         
         if self.verbose:
             print('Before FCL', currdim)
+        
+        # Reduces size on input to fully connected layers
+        if self.fclayer_size is not None:
+            self.fcemb = nn.Sequential(nn.Linear(currdim, self.fclayer_size), func_dict[self.fc_function])
+            currdim = self.fclayer_size
         
         # Initialize fully connected layers
         if isinstance(nfc_layers, list): # you can split network earlier by using list as nfc_layers, so only layers before that are shared and each modularity gets its own fully connected layers for combining data embeddings. 
@@ -580,6 +619,12 @@ class cnn(nn.Module):
         if location == '5':
             return pred
         
+        if self.fclayer_size is not None:
+            pred = self.fcemb(pred)
+       
+        if location == '6':
+            return pred
+       
         if isinstance(self.nfc_layers, list):
             multipred = []
             for n, nfclayer in enumerate(self.nfcs):
@@ -588,7 +633,7 @@ class cnn(nn.Module):
         elif self.nfc_layers > 0:
             pred = self.nfcs(pred)
         
-        if location == '-1' or location == '6':
+        if location == '-1' or location == '7':
             if isinstance(self.nfc_layers, nn.ModuleList):
                 return multipred
             else:
@@ -690,13 +735,13 @@ if __name__ == '__main__':
         inputfiles = inputfile.split(',')
         inputfile = inputfiles[0]
         for inp in inputfiles[1:]:
-            inputfile = create_outname(inp, inputfile, lword = 'and')
+            inputfile = create_outname(inp, inputfile, lword = '')
     
     if ',' in outputfile:
         outputfiles = outputfile.split(',')
         outputfile = outputfiles[0]
         for inp in outputfiles[1:]:
-            outputfile = create_outname(inp, outputfile, lword = 'and')
+            outputfile = create_outname(inp, outputfile, lword = '')
     
     outname = create_outname(inputfile, outputfile) 
     if '--regionless' in sys.argv:
@@ -711,6 +756,18 @@ if __name__ == '__main__':
     
     if '--outdir' in sys.argv:
         outname = sys.argv[sys.argv.index('--outdir')+1] + os.path.split(outname)[1]
+    
+    # Add class names if Y is a list and has the same names in different files
+    fileclass = None
+    if '--add_fileclasses' in sys.argv:
+        addclasses = sys.argv[sys.argv.index('--add_fileclasses')+1].split(',')
+    elif isinstance(Y, list):
+        addclasses = [str(i) for i in range(len(experiments))]
+    if isinstance(Y, list):
+        fileclass = []
+        for e, exps in enumerate(experiments):
+            fileclass.append([addclasses[e] for i in range(len(exps))])
+        fileclass = np.concatenate(fileclass)
     
     if '--addname' in sys.argv:
         outname += '_'+sys.argv[sys.argv.index('--addname')+1]
@@ -897,12 +954,14 @@ if __name__ == '__main__':
     allow_reduction = False
     include = False
     if '--load_parameters' in sys.argv:
-        parameterfile = sys.argv[sys.argv.index('--load_parameters')+1]
-        translate_params = sys.argv[sys.argv.index('--load_parameters')+2] # dictionary with names from current and alternatie models
-        exclude_params = sys.argv[sys.argv.index('--load_parameters')+3] # list with names from loaded model that should be ignored when loading
+        # loads model parameters into state_dict, but only if the names of the parameters in the loaded path are the same as in the current model
+        parameterfile = separate_sys(sys.argv[sys.argv.index('--load_parameters')+1])
+        translate_params = sys.argv[sys.argv.index('--load_parameters')+2] # potential dictionary with names from current model : to names in loaded models
+        exclude_params = sys.argv[sys.argv.index('--load_parameters')+3] # if include False (default), list with names from current model that should not be replaced even if they are found in parameterfile.
+        # if include True: then this is the exclusive list of model parameters that should be replaced
         include = sys.argv[sys.argv.index('--load_parameters')+4] == 'True' # if include then exclude list is list of parameters that will be included
-        allow_reduction = sys.argv[sys.argv.index('--load_parameters')+5] == 'True' # if include then exclude list is list of parameters that will be included
-        model.outname += sys.argv[sys.argv.index('--load_parameters')+6]
+        allow_reduction = sys.argv[sys.argv.index('--load_parameters')+5] == 'True' # Reduction can be used if number of kernels in current model differs from number of kernels in loaded models. 
+        outname += sys.argv[sys.argv.index('--load_parameters')+6]
         if ":" in translate_params:
             if ',' in tranlate_params:
                 translate_params = translate_params.split(',')
@@ -918,7 +977,8 @@ if __name__ == '__main__':
             else:
                 exclude_dict = [exclude_params]
         
-        
+    if '--loadifexist' in sys.argv and os.path.isfile(model.outname+'_parameter.pth'):
+        parameterfile = model.outname+'_parameter.pth'
         
     # parameterfile is loaded into the model
     if parameterfile:
@@ -992,6 +1052,13 @@ if __name__ == '__main__':
         else:
             testclasses = np.zeros(len(Y[0]), dtype = np.int8).astype(str)
         
+        if fileclass is not None:
+            for tclass in np.unique(testclasses):
+                mask = np.where(testclasses == tclass)[0]
+                if len(np.unique(fileclass[mask])) > 1:
+                    for m in mask:
+                        testclasses[m] = testclasses[m] + fileclass[m]
+        
         # Sometimes we're not interested in the reconstruction for all genes in the training set and we can define a set of genes that we're most interested in
         if '--significant_genes' in sys.argv:
             siggenes = np.genfromtxt(sys.argv[sys.argv.index('--significant_genes')+1], dtype = str)
@@ -1008,8 +1075,9 @@ if __name__ == '__main__':
         save_performance(Y_pred, Y[testset], testclasses, experiments, names[testset], outname, sys.argv, compare_random = True)
         
     if '--save_predictions' in sys.argv:
-        print('SAVED', outname+'_pred.txt')
-        np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
+        print('SAVED', outname+'_pred.npz')
+        #np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
+        np.savez_compressed(outname+'_pred.npz', names = names[testset], values = Y_pred, columns = experiments)
     
     # Generate PPMs for kernels
     if '--convertedkernel_ppms' in sys.argv:

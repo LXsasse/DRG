@@ -21,25 +21,14 @@ from functions import mse, correlation, dist_measures
 from output import print_averages, save_performance, plot_scatter, add_params_to_outname
 from functions import dist_measures
 from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance, pwms_from_seqs, genseq
-from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters
+from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters, separate_sys
 from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, simple_multi_output, PredictionHead
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
 from cnn_model import cnn
 
-def separate_sys(sysin, delimiter = ',', delimiter_1 = None):
-    if delimiter in sysin:
-        sysin = sysin.split(delimiter)
-    else:
-        sysin = [sysin]
-    if delimiter_1 is not None:
-        for s, sin in enumerate(sysin):
-            if delimiter_1 in sin:
-                sysin[s] = sin.split(delimiter_1)
-            else:
-                sysin[s] = [sin]
-    return sysin
+
         
 
 
@@ -61,7 +50,8 @@ class combined_network(nn.Module):
         self.shared_cnns = shared_cnns # if shared_cnns then the cnns are shared between inputs, Otherwise a different CNN is used for each input, can only be used if inputs have same sequence length
         self.cnn_embedding = cnn_embedding # dimension of final output of each CNN that is then concatented and given to n_combine_layers for final prediction from all inputs
         self.n_combine_layers = n_combine_layers
-        self.combine_function = combine_function
+        self.combine_function = combine_function # activation function of the combining network. (For network set to GELU)
+        #if output is direct or difference, combine_function is the outclass of the subnetwork. Therefore, if a value can be positive and negativbe, the GELU function will not be correct. (For direct or difference set to Linear)
         self.combine_widening = combine_widening
         self.combine_residual = combine_residual
         self.shift_sequence = shift_sequence # shift the sequence by +- a random integer 
@@ -151,10 +141,10 @@ class combined_network(nn.Module):
                             self.n_combine_layers.append(n_combine_layers[co])
                         else:
                             self.n_combine_layers.append(n_combine_layers)
-            
+
+                    
             elif not isinstance(self.n_combine_layers, list): # if n_combine_layers is integer but n_classes is list then generate list 
                 self.n_combine_layers = [n_combine_layers for i in range(len(self.n_classes))]
-                    
                     
                     
         elif (('FRACTION' in outclass.upper()) or ('DIFFERENCE' in outclass.upper())or ('DIRECT' in cout.upper())) and len(l_seqs) == 2:
@@ -190,7 +180,7 @@ class combined_network(nn.Module):
             if l > 0 and lseq == l_seqs[0] and self.shared_cnns:
                 self.cnns['CNN'+str(l)] = self.cnns['CNN0']
             else:
-                self.cnns['CNN'+str(l)] = cnn(n_features = n_features, n_classes = self.cnn_embedding, l_seqs = lseq, seed = self.seed +l, dropout = dropout, batch_norm = batch_norm, add_outname = False, generate_paramfile = False, keepmodel = False, verbose = verbose, outclass = combine_function, reverse_complement = reverse_complement[l], shift_sequence = shift_sequence, **kwargs)
+                self.cnns['CNN'+str(l)] = cnn(n_features = n_features, n_classes = self.cnn_embedding, l_seqs = lseq, seed = self.seed +l, dropout = dropout, batch_norm = batch_norm, add_outname = False, generate_paramfile = False, keepmodel = False, verbose = verbose, outclass = self.combine_function, reverse_complement = reverse_complement[l], shift_sequence = shift_sequence, **kwargs)
         
         if isinstance(n_classes, list):
             self.nclayers = nn.ModuleList()
@@ -213,7 +203,7 @@ class combined_network(nn.Module):
                     currdim = len(self.input_to_combinefunc[co]) * cnn_embedding # count the size of the input to the combining network from the concatenated outputs, is only used if no specific function was chosen as outclass
                     # Even if a specific function is chosen, then each individual CNN returns one array for the function and one with size cnn_embedding            for the NN predicted modularity. The sum of there is the currdim 
                     if self.n_combine_layers[co] > 0:
-                        self.nclayers.append(Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.n_combine_layers[co], layer_widening = combine_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = combine_function, residual_after = combine_residual, bias = True))
+                        self.nclayers.append(Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.n_combine_layers[co], layer_widening = combine_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = self.combine_function, residual_after = combine_residual, bias = True))
                     else:
                         self.nclayers.append(nn.Identity())
                     self.classifier.append(PredictionHead(currdim, n_classes[co], cout, dropout = self.dropout, batch_norm = self.batch_norm))
@@ -231,7 +221,7 @@ class combined_network(nn.Module):
             currdim = len(self.input_to_combinefunc[0]) * cnn_embedding
             ## add option to have list of n_combine_layers and then split the classifier as before
             if self.n_combine_layers > 0:
-                self.nclayers = Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.n_combine_layers, layer_widening = combine_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = combine_function, residual_after = combine_residual, bias = True)
+                self.nclayers = Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.n_combine_layers, layer_widening = combine_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = self.combine_function, residual_after = combine_residual, bias = True)
             self.classifier = PredictionHead(currdim, n_classes, self.outclass, dropout = self.dropout, batch_norm = self.batch_norm)
             
             self.kwargs = kwargs
@@ -409,6 +399,18 @@ if __name__ == '__main__':
     if '--outdir' in sys.argv:
         outname = sys.argv[sys.argv.index('--outdir')+1] + os.path.split(outname)[1]
     
+    # Add class names if Y is a list and has the same names in different files
+    fileclass = None
+    if '--add_fileclasses' in sys.argv:
+        addclasses = sys.argv[sys.argv.index('--add_fileclasses')+1].split(',')
+    elif isinstance(Y, list):
+        addclasses = [str(i) for i in range(len(experiments))]
+    if isinstance(Y, list):
+        fileclass = []
+        for e, exps in enumerate(experiments):
+            fileclass.append([addclasses[e] for i in range(len(exps))])
+        fileclass = np.concatenate(fileclass)
+        
     if '--addname' in sys.argv:
         outname += '_'+sys.argv[sys.argv.index('--addname')+1]
     
@@ -519,6 +521,7 @@ if __name__ == '__main__':
         train_model = True
         parameters = sys.argv[sys.argv.index('--cnn')+1]
         params['device'] = get_device()
+        
         if '+' in parameters:
             parameters = parameters.split('+')
             if isinstance(Y, list):
@@ -565,26 +568,37 @@ if __name__ == '__main__':
         params['n_features'], params['l_seqs'], params['reverse_complement'] = np.shape(X[0])[-2], [np.shape(x)[-1] for x in X], reverse_complement
         model = combined_network(**params)
     
+    # Defaults
     translate_dict = None
     exclude_dict = None
     allow_reduction = False
     include = False
     if '--load_parameters' in sys.argv:
-        parameterfile = separate_sys(sys.argv[sys.argv.index('--load_parameters')+1])
-        translate_params = sys.argv[sys.argv.index('--load_parameters')+2] # dictionary with names from current and alternatie models
-        exclude_params = sys.argv[sys.argv.index('--load_parameters')+3] # list with names from loaded model that should be ignored when loading
-        include = sys.argv[sys.argv.index('--load_parameters')+4] == 'True' # if include then exclude list is list of parameters that will be included
-        allow_reduction = sys.argv[sys.argv.index('--load_parameters')+5] == 'True' # if include then exclude list is list of parameters that will be included
-        outname += sys.argv[sys.argv.index('--load_parameters')+6]
+        # More than one parameter file can be loaded, f.e for two sequence CNNs.
+        # loads model parameters into state_dict, but only if the names of the parameters in the loaded path are the same as in the current model
+        parameterfile = separate_sys(sys.argv[sys.argv.index('--load_parameters')+1], delimiter = ',')
+        translate_params = sys.argv[sys.argv.index('--load_parameters')+2] # potential dictionary with names from current model : to names in loaded models
+        exclude_params = sys.argv[sys.argv.index('--load_parameters')+3] # if include False (default), list with names from current model that should not be replaced even if they are found in parameterfile.
+        # if include True: then this is the exclusive list of model parameters that should be replaced
+        # keep in mind: only parameters that match the name of the parameters in the loaded model will be replaced.
+        include = list(np.array(separate_sys(sys.argv[sys.argv.index('--load_parameters')+4])) == 'True') # if include then exclude list is list of parameters that will be included
+        allow_reduction = list(np.array(separate_sys(sys.argv[sys.argv.index('--load_parameters')+5])) == 'True') # Reduction can be used if number of kernels in current model differs from number of kernels in loaded models. 
+        
         if ":" in translate_params:
-            translate_params = separate_sys(translate_params, delimiter_1 = '-')
+            # for example: cnndna.cnn0.weight:cnn1.weight-cnndna.cnn1.weight:cnn5.weight,cnnrna.cnn2.weight:cnn1.weight-cnnrna.cnn5.weight:cnn5.weight
+            # , splits between parameterfile, and - separates for different parameter weights.
+            translate_params = separate_sys(translate_params, delimiter = ',', delimiter_1 = '-')
             translate_dict = [{} for t in range(len(translate_params))]
             for t, tp in enumerate(translate_params):
                 for tle in tp:
                     translate_dict[t][tle.split(":")[0]] = tle.split(":")[1]
         if '.' in exclude_params:
+            exclude_params = separate_sys(exclude_params, delimiter = ',', delimiter_1 = '-')
             exclude_dict = separate_sys(exclude_params)
-        
+    
+    
+    if '--loadifexist' in sys.argv and os.path.isfile(model.outname+'_parameter.pth'):
+        parameterfile = [model.outname+'_parameter.pth']
             
     # parameterfile is loaded into the model
     if parameterfile:
@@ -592,11 +606,16 @@ if __name__ == '__main__':
             translate_dict = [None for i in range(len(parameterfile))]
         if exclude_dict is None:
             exclude_dict = [[] for i in range(len(parameterfile))]
+        if not isinstance(include, list):
+            include = [include for i in range(len(parameterfile))]
+        if not isinstance(allow_reduction, list):
+            allow_reduction = [allow_reduction for i in range(len(parameterfile))]
+            
             
         writeparm = ''
         for p, paramfile in enumerate(parameterfile):
             if os.path.isfile(paramfile):
-                load_parameters(model, paramfile, translate_dict = translate_dict[p], exclude = exclude_dict[p], include = include, allow_reduction = allow_reduction)
+                load_parameters(model, paramfile, translate_dict = translate_dict[p], exclude = exclude_dict[p], include = include[p], allow_reduction = allow_reduction[p])
             writeparm += os.path.splitext(paramfile)[1]+','
         if model.generate_paramfile:
             obj = open(model.outname+'_model_params.dat', 'a')
@@ -606,12 +625,15 @@ if __name__ == '__main__':
     if select_track is not None:
         if select_track[0] in list(experiments):
             select_track = [list(experiments).index(st) for st in select_track]
+        elif not isintance(check(select_track[0]), int):
+            print(select_track, 'not valid tracks')
+            sys.exit()
         model.classifier.classifier.Linear.weight = nn.Parameter(model.classifier.classifier.Linear.weight[select_track])
         model.classifier.classifier.Linear.bias = nn.Parameter(model.classifier.classifier.Linear.bias[select_track])
         model.n_classes = len(select_track)
         Y = Y[:,select_track]
         experiments = experiments[select_track]
-        print(len(select_track), '('+','.join(experiments)+')', 'tracks selected')
+        print(len(select_track), '('+','.join(experiments)+')', 'tracks selected', select_track)
         
     # pre-loaded pwms are loaded into the model as convolutional weights
     if pwms is not None:
@@ -637,6 +659,7 @@ if __name__ == '__main__':
         # Y_pred returns concatenated list
         Y = np.concatenate(Y, axis = 1)
         experiments = np.concatenate(experiments)
+        
     
     if '--norm2output' in sys.argv:
         Y *= outnorm
@@ -662,6 +685,16 @@ if __name__ == '__main__':
         else:
             testclasses = np.zeros(len(Y[0]), dtype = np.int8).astype(str)
         
+        if fileclass is not None:
+            experiments = experiments.astype('<U100')
+            for tclass in np.unique(testclasses):
+                mask = np.where(testclasses == tclass)[0]
+                if len(np.unique(fileclass[mask])) > 1:
+                    for m in mask:
+                        testclasses[m] = testclasses[m] + fileclass[m]
+                        experiments[m] = experiments[m] + '_' + fileclass[m]
+            
+        
         # Sometimes we're not interested in the reconstruction for all genes in the training set and we can define a set of genes that we're most interested in
         if '--significant_genes' in sys.argv:
             siggenes = np.genfromtxt(sys.argv[sys.argv.index('--significant_genes')+1], dtype = str)
@@ -678,21 +711,30 @@ if __name__ == '__main__':
         save_performance(Y_pred, Y[testset], testclasses, experiments, names[testset], outname, sys.argv, compare_random = True)
         
     if '--save_predictions' in sys.argv:
-        print('SAVED', outname+'_pred.txt')
-        np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), header = ' '.join(experiments), fmt = '%s')
+        print('SAVED', outname+'_pred.npz')
+        #np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
+        np.savez_compressed(outname+'_pred.npz', names = names[testset], values = Y_pred, columns = experiments)
     
+    # Only makes sense if not 'REAL connection'
     if '--test_individual_network' in sys.argv:
         # pick a random set of input sequences to compute mean output of individual networks
         randomseqs = np.random.permutation(len(names))[:7000]
         # predict original predictions to compare losses to 
         Ypredtrain = model.predict(X)
         Ymask = []
+        netbsize = 10 # batchsize for computing the mean
         for i in range(len(X)):
             # get mean representations for individual networks
             mean_rep = []
-            for r in range(0,len(randomseqs), 10):
-                rand = randomseqs[r:r+10]
-                mean_rep.append(model.forward([torch.Tensor(x[rand]).to(model.device) for x in X], location = '0', cnn = i).detach().cpu().numpy())
+            for r in range(0,len(randomseqs), netbsize):
+                rand = randomseqs[r:r+netbsize]
+                mrep = model.forward([torch.Tensor(x[rand]).to(model.device) for x in X], location = '0', cnn = i)
+                if isinstance(mrep,list):
+                    print(mrep[0].size(), len(mrep))
+                    print('--test_individual_network : Does not work with direct, difference or any analytic connection')
+                    sys.exit()
+                mrep = mrep.detatch().cpu().numpy()
+                mean_rep.append(mrep)
             mean_rep = np.concatenate(mean_rep, axis = 0)
             #print(mean_rep[0], mean_rep[1], mean_rep[2])
             #print(np.std(mean_rep,axis = 0))
@@ -705,22 +747,22 @@ if __name__ == '__main__':
             # go through all the different classes, for example cell types
             consider = np.where(testclasses == tclass)[0]
             genecont = []
-            header= ['MSE', 'Corr']
+            header= ['MSEtoReal', 'CorrtoReal']
             # compute the performance for this class for the full predictions
             trainmse = mse(Ypredtrain[:,consider],Y[:,consider] ,axis =1)
             traincorr = correlation(Ypredtrain[:,consider],Y[:,consider] ,axis =1)
             #print(tclass)
             #print(traincorr)
             for i in range(len(X)):
-                header.append('CNN'+str(i)+'MSE')
-                header.append('CNN'+str(i)+'Corr')
+                header.append('CNN'+str(i)+'DeltaMSE')
+                header.append('CNN'+str(i)+'DeltaCorr')
+                header.append('CNN'+str(i)+'DeltaAvgYpred')
                 # compare the performance of the masked predictions with the full predicdtions
                 MSEdif = mse(Ymask[i][:,consider],Y[:,consider],axis = 1) - trainmse
                 genecont.append(MSEdif)
                 Corrdif = correlation(Ymask[i][:,consider],Y[:,consider],axis = 1) - traincorr
-                #print(i, Ymask[i][:,consider][0], Ypredtrain[0,consider])
-                #print(Corrdif)
                 genecont.append(Corrdif)
+                DYdiff = np.mean(Ymask[i][:,consider] - Ypredtrain[:,consider], axis - 1)
             np.savetxt(outname+'_netatt'+tclass+'.dat', np.concatenate([[names],np.around([trainmse,traincorr],4), np.around(np.array(genecont),6)],axis = 0).T, header = 'Gene '+' '.join(np.array(header)), fmt = '%s')
             
             
@@ -731,6 +773,18 @@ if __name__ == '__main__':
     # Generate mean direction of effect from kernel
     # Generate global importance of kernel for each gene and testclasses
     if '--convertedkernel_ppms' in sys.argv:
+        # if given, then only compute the correlation for the stppm pwms up to stppm + Nppm
+        ppmparal = False
+        addppmname = ''
+        if len(sys.argv) > sys.argv.index('--convertedkernel_ppms')+2:
+            stppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+1])
+            Nppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+2])
+            if isinstance(stppm, int) and isinstance(Nppm, int):
+                ppmparal = True
+                addppmname = str(stppm)+'-'+str(Nppm + stppm)
+        print(ppmparal, Nppm, stppm, addppmname)
+        
+        import time
         ppms = []
         pwms = []
         biases = []
@@ -738,81 +792,106 @@ if __name__ == '__main__':
         motifmeans = []
         seqactivations = []
         importance = []
-        geneimportance = []
         effect = []
+        abseffect = []
 
-        seq_seq = genseq(model.l_kernels, 100000) # generate 100000 random sequences
+        if '--genewise_kernel_impact' in sys.argv:
+            geneimportance = [[] for t in range(len(np.unique(testclasses)))]
+            
+        seq_seq = genseq(model.l_kernels, 200000) # generate 200000 random sequences
         i =0
         # predict original training predictions
         Ypredtrain = model.predict([x for x in X])
         # compute the correlation of between data points for each output track
         traincorr = correlation(Ypredtrain,Y, axis = 0)
+        # compute correlation for each training gene
         genetraincorr = []
         for t, testclass in enumerate(np.unique(testclasses)):
             consider = np.where(testclasses == testclass)[0]
-            geneimportance.append([])
             if len(consider) > 1:
                 genetraincorr.append(correlation(Ypredtrain[:,consider],Y[:,consider], axis = 1))
+        
         for namep, parms in model.named_parameters():
             if namep.split('.')[0] == 'cnns' and namep.split('.')[2] == 'convolutions' and namep.rsplit('.')[-1] == 'weight':
+                print(i, namep, parms.size())
                 # collect the first layer convolution kernels
-                ppms.append(parms.detach().cpu().numpy())
+                kernelweight = parms.detach().cpu().numpy()
+                if ppmparal: 
+                    kernelweight = kernelweight[stppm : stppm+Nppm]
+                else:
+                    stppm, Nppm = 0, len(kernelweight)
+                ppms.append(kernelweight)
                 # collect the biases if bias is not None
                 if model.kernel_bias:
-                    bias = model.state_dict()[namep.replace('weight', 'bias')].detach().cpu().numpy()
+                    bias = model.state_dict()[namep.replace('weight', 'bias')].detach().cpu().numpy()[stppm : Nppm + stppm]
                 else:
                     bias = np.zeros(len(ppms[-1]))
                 biases.append(bias)
                 # Generate names for all kernels
-                motifnames.append(np.array(['filter'+str(i)+'_'+namep.split('.')[1] for i in range(len(ppms[-1]))]))
+                motifnames.append(np.array(['filter'+str(j+stppm)+'_'+namep.split('.')[1] for j in range(len(ppms[-1]))]))
                 # compute motif means from the activation of kernels with the random sequences.
                 seqactivations = np.sum(ppms[-1][:,None]*seq_seq[None,...],axis = (2,3))
                 # generate motifs from aligned sequences with activation over 0.9 of the maximum activation
                 pwms.append(pwms_from_seqs(seq_seq, seqactivations, 0.9))
                 # take the mean of these activations from all 100000 sequences as a mean actiavation value for each filter.
                 motifmeans.append(np.mean(seqactivations + bias[:,None] , axis = 1))
+                t0 = time.time()
                 for m in range(len(ppms[-1])):
                     # make predictions from models with meaned activations from kernels
-                    Ymask = model.predict([x for x in X], mask = [i,m], mask_value = motifmeans[-1][m])
+                    if m%10==0:
+                        print(m+stppm, '/' , stppm+Nppm, round(time.time()-t0,2))
+                        t0 = time.time()
+                    Ymask = model.predict([x for x in X], mask = [i,m+stppm], mask_value = motifmeans[-1][m])
                     # importance as difference in correlation between full model to train data and masked model to train data
                     importance.append(np.around(correlation(Ymask,Y, axis = 0) - traincorr,3))
                     # compute the importance of the kernel for every gene
-                    for t, testclass in enumerate(np.unique(testclasses)):
-                        consider = np.where(testclasses == testclass)[0]
-                        if len(consider) > 1:
-                            geneimportance[t].append(np.around(correlation(Ymask[:,consider],Y[:,consider], axis = 1) - genetraincorr[t],3))
+                    if '--genewise_kernel_impact' in sys.argv:
+                        for t, testclass in enumerate(np.unique(testclasses)):
+                            consider = np.where(testclasses == testclass)[0]
+                            if len(consider) > 1:
+                                geneimportance[t].append(np.around(correlation(Ymask[:,consider],Y[:,consider], axis = 1) - genetraincorr[t],3))
                     # effect for a track shows the direction that the kernel causes on average over all genes
                     # it is weighted by how much it changes the mse of each gene
                     effect.append(np.around(np.sum((Ypredtrain-Ymask)**3/np.sum((Ypredtrain-Ymask)**2,axis = 1)[:,None],axis = 0),6))
+                    abseffect.append(np.around(np.sum(Ypredtrain-Ymask,axis = 0),6))
                 i += 1
-        
         
         motifnames = np.concatenate(motifnames)
         importance = np.array(importance)
-        geneimportance = np.array(geneimportance)
         effect = np.array(effect)
         
         ppms = np.concatenate(ppms, axis = 0)
         biases = np.concatenate(biases, axis = 0)
         # create ppms directly from kernel matrix
-        ppms = kernel_to_ppm(ppms[:,:,:], kernel_bias = biases)
-        
+        ppms = np.around(kernel_to_ppm(ppms[:,:,:], kernel_bias =biases),3)
         
         # generate pwms from most activated sequences
-        pwms = np.concatenate(pwms, axis = 0)
-        iupacmotifs = pfm2iupac(pwms, bk_freq = 0.3)
+        pwms = np.around(np.concatenate(pwms, axis = 0),3)
+        min_nonrand_freq = 0.3
+        iupacmotifs = pfm2iupac(pwms, bk_freq = min_nonrand_freq)
         
-        write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms.meme')
-        write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms.meme')
+        write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms'+addppmname+'.meme')
+        write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms'+addppmname+'.meme')
         
-        np.savetxt(outname+'_kernattrack.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), importance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-        for t, testclass in enumerate(np.unique(testclasses)):
-            consider = np.where(testclasses == testclass)[0]
-            if len(consider) > 1:
-                np.savetxt(outname+'_kernatgene'+testclass+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), geneimportance[t]], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(names))
-        np.savetxt(outname+'_kernimpact.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), effect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+        np.savetxt(outname+'_kernattrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), importance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+        np.savetxt(outname+'_kernimpact'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), effect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+        np.savetxt(outname+'_kerneffct'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), abseffect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
         
+        if '--genewise_kernel_impact' in sys.argv:
+            corrcut = 1.-float(sys.argv[sys.argv.index('--genewise_kernel_impact')+1])
+            geneimportance = np.array(geneimportance)
+            uclasses, nclasses = np.unique(testclasses, return_counts = True)
+            np.savez_compressed(outname+'_kernatgene'+addppmname+'.npz', motifnames = motifnames, importance = geneimportance, base_correlation=genetraincorr, classes = uclasses, nclasses=nclasses, names = names)
+            meangeneimp = []
+            for t, testclass in enumerate(np.unique(testclasses)):
+                consider = np.where(testclasses == testclass)[0]
+                if len(consider) > 1:
+                    meangeneimp.append(np.mean(geneimportance[t][:,genetraincorr[t] <= corrcut], axis = 1))
+            meangeneimp = np.around(np.array(meangeneimp).T,4)
+            np.savetxt(outname+'_kernattmeantestclass'+str(corrcut)+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), meangeneimp], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(np.unique(testclasses)))
         
+    
+    
             
 
 

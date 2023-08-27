@@ -5,26 +5,47 @@ import torch
 import torch.nn as nn
 from modules import cosine_loss, cosine_both, correlation_loss, correlation_both
 
+def separate_sys(sysin, delimiter = ',', delimiter_1 = None):
+    if delimiter in sysin:
+        sysin = sysin.split(delimiter)
+    else:
+        sysin = [sysin]
+    if delimiter_1 is not None:
+        for s, sin in enumerate(sysin):
+            if delimiter_1 in sin:
+                sysin[s] = sin.split(delimiter_1)
+            else:
+                sysin[s] = [sin]
+    return sysin
 
 
 def load_parameters(model, PATH, translate_dict = None, allow_reduction = False, exclude = [], include = False):
+    # if path is a string, then load this path, otherwise if it is the model.state_dict then use it directley 
     if isinstance(PATH, str):
         state_dict = torch.load(PATH, map_location = 'cpu')
     else:
         state_dict = PATH
+    # this is the state_dict() of the current model 
     cstate_dict = model.state_dict()
+    # iterate over the parameters of the current model
     for n, name0 in enumerate(cstate_dict):
+        # name is the key that one is looking for in the loaded state_dict
+        # intially this is the same as the current model
         name = name0
-        #print(name)
+        # if translate_dict is not None, then change the name from the name in the current model to the given name.
         if translate_dict is not None:
             if name in translate_dict:
                 name = translate_dict[name]
-        #print(name, state_dict.keys())
+        # Generally only replace parameters that can be found in the loaded model's state_dict
+            # Either with the name from the current model or with the translated name.
+        # If include is False (default): if the name0 of the current model is not given specifically in exclude, it will be considered for replacement.
+        # if include is True: only perform this if name0 is specifically in exclude, exclude is the list of layers in the current model that are considered for replacement.
         if name in state_dict and ((name0 in exclude) == include):
             print("Loaded", name0 ,'with', name)
             ntens = None
             if cstate_dict[name0].size() == state_dict[name].size():
                 cstate_dict[name0] = state_dict[name]
+            # Reduction can be used if number of kernels in current model differs from number of kernels in loaded models. 
             elif allow_reduction:
                 if (cstate_dict[name0].size(dim = 0) > state_dict[name].size(dim = 0)) and ((cstate_dict[name0].size(dim = -1) == state_dict[name].size(dim = -1)) or ((len(cstate_dict[name0].size()) ==1) and (len(state_dict[name].size())==1))):
                     ntens = cstate_dict[name0]

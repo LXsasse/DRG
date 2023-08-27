@@ -38,10 +38,10 @@ def print_averages(Y_pred, Ytest, testclasses, sysargv):
     if '--correlationaverage' in sysargv:
         for tclass in np.unique(testclasses):
             consider = np.where(testclasses == tclass)[0]
-            print(tclass, 'Correlation classes', np.mean(correlation(Ytest[:,consider], Y_pred[:,consider], axis = 0)))
-            print("Mean between classes", np.mean(cdist(Ytest[:,consider].T, Ytest[:,consider].T, 'correlation')[np.triu_indices(len(consider) ,1)]))
-            print("Correlation to Mean", np.mean(correlation(Ytest[:,consider].T, np.array(len(consider)*[np.mean(Ytest[:,consider],axis =1)]), axis = 0)))
-            print(tclass, 'Correlation genes', np.mean(correlation(Ytest[:,consider], Y_pred[:,consider], axis = 1)))
+            print(tclass, '1-Correlation classes', np.mean(correlation(Ytest[:,consider], Y_pred[:,consider], axis = 0)))
+            print("1-Correlation Mean between classes", np.mean(cdist(Ytest[:,consider].T, Ytest[:,consider].T, 'correlation')[np.triu_indices(len(consider) ,1)]))
+            print("1-Correlation to Mean for classes", np.mean(correlation(Ytest[:,consider].T, np.array(len(consider)*[np.mean(Ytest[:,consider],axis =1)]), axis = 1)))
+            print(tclass, '1-Correlation genes', np.mean(correlation(Ytest[:,consider], Y_pred[:,consider], axis = 1)))
     if '--msemeanaverage' in sysargv:
         for tclass in np.unique(testclasses):
             consider = np.where(testclasses == tclass)[0]
@@ -222,48 +222,68 @@ def save_performance(Y_pred, Ytest, testclasses, experiments, names, outname, sy
             Wilcoxon = np.mean(-np.log10(ranksums(Ytest[:,consider], Y_pred[:,consider], axis = -1)[1]), axis = 1)
             np.savetxt(outname+'_gene_wlcxp_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), Wilcoxon.reshape(-1,1),axis = 1), fmt = '%s')
 
-def plot_scatter(Ytest, Ypred, titles = None, xlabel = None, ylabel = None, outname = None, include_lr = True, include_mainvar = True):
-    n = len(Ytest[0])
+
+
+
+
+def plot_scatter(Ytest, Ypred, titles = None, xlabel = None, ylabel = None, indsize = 3.5, dpi = 300, outname = None, include_lr = False, include_mainvar = False, dotlabel = None):
+    n = len(Ytest)
     if n > 100:
         print('Number of examples is too large', n)
         return
-    x_col = int(np.sqrt(n))
-    y_row = int(n/x_col) + int(n%x_col!= 0)
-    fig = plt.figure(figsize = (x_col*1.5,y_row*1.5), dpi = 100)
+    y_row = int(np.sqrt(n))
+    x_col = int(n/y_row) + int(n%y_row!= 0)
+    fig = plt.figure(figsize = ((x_col+0.3)*indsize,y_row*indsize), dpi = 100)
     for e in range(n):
         ax = fig.add_subplot(y_row, x_col, e+1)
-        pcorr = pearsonr(Ytest[:,e], Ypred[:,e])[0]
+        
+        pcorr = pearsonr(Ytest[e], Ypred[e])[0]
         if titles is not None:
-            ax.set_title(titles[e]+' R='+str(np.around(pcorr,2)), fontsize = 6)
+            ax.set_title(titles[e], fontsize = int(indsize*3))
+        
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-        ax.scatter(Ytest[:,e], Ypred[:,e], c = 'slategrey', alpha = 0.7, s = 6)
+        
+        
+        ax.scatter(Ytest[e], Ypred[e], c = 'slategrey', alpha = 0.7, s = int(indsize*10), label = ' R='+str(np.around(pcorr,2)))
+        
         limx, limy = ax.get_xlim(), ax.get_ylim()
         lim = [max(limx[0], limy[0]), min(limx[1], limy[1])]
         ax.plot(lim, lim, color = 'maroon', ls = '--')
+        
         if include_lr:
-            lr = linear_model.LinearRegression().fit(Ytest[:, [e]], Ypred[:,e])
+            lr = linear_model.LinearRegression().fit(Ytest[e], Ypred[e])
             ax.plot(np.array(limx), lr.predict(np.array(limx).reshape(-1,1)), color = 'k')
         if include_mainvar:
-            centerx, centery = np.mean(Ytest[:,e]), np.mean(Ypred[:,e])
-            maindir, u, v = np.linalg.svd(np.array([Ytest[:,e]-centerx, Ypred[:,e]-centery]), full_matrices=False)
+            centerx, centery = np.mean(Ytest[e]), np.mean(Ypred[e])
+            maindir, u, v = np.linalg.svd(np.array([Ytest[e]-centerx, Ypred[e]-centery]), full_matrices=False)
             maindir = maindir[:,0]
             slope = maindir[1]/maindir[0]
             bias = centery-slope*centerx
             ax.plot(np.array(limx), np.array(limx)*slope + bias, color = 'k')
-        
     
+        ax.legend(fontsize = int(indsize*3))
+        if dotlabel is not None:
+            for d, dl in enumerate(dotlabel):
+                ax.text(Ytest[e][d], Ypred[e][d], dl, ha = 'left', va = 'bottom', fontsize = int(indsize*3))
+        
     if xlabel is not None:
-        fig.text(0.5, 0.05-0.25/y_row, xlabel, ha='center')
+        fig.text(0.5, 0.07/y_row, xlabel, ha='center')
     if ylabel is not None:
-        fig.text(0.05-0.2/x_col, 0.5, ylabel, va='center', rotation='vertical')
+        fig.text(0.07, 0.5, ylabel, va='center', rotation='vertical')
+    fig.subplots_adjust(wspace=0.5,hspace=0.5)
     if outname is not None:
         print('SAVED as', outname)
-        fig.savefig(outname, dpi = 200, bbox_inches = 'tight')
+        fig.savefig(outname, dpi = dpi, bbox_inches = 'tight')
     else:
         fig.tight_layout()
         plt.show()
-       
+ 
+ 
+ 
+ 
+ 
+ 
 def unique_ordered(alist):
     a = []
     for l in alist:
@@ -281,6 +301,15 @@ def add_params_to_outname(outname, ndict):
         lssf = ndict['loss_function'][:3]+ndict['loss_function'][max(3,len(ndict['loss_function'])-3):]
     
     outname += '_'+lssf+'k'+str(ndict['num_kernels'])+'l'+str(ndict['l_kernels'])+str(ndict['kernel_bias'])[0]+'f'+ndict['kernel_function']
+    
+    if 'nlconv' in ndict:
+        if ndict['nlconv']:
+            outname+='NL'+str(ndict['nlconv_nfc'])
+            if ndict['nlconv_position_wise']:
+                outname += 'P'
+            if ndict['nlconv_explicit']:
+                outname += 'E'
+    
     if ndict['net_function'] != ndict['kernel_function']:
         outname += ndict['net_function']
     
@@ -382,10 +411,16 @@ def add_params_to_outname(outname, ndict):
         outname += '_dc'+str(ndict['dilated_convolutions'])+'i'+str(ndict['conv_increase']).strip('0').strip('.')+'d'+str(ndict['dilations']).replace(' ', '').replace(',', '-').replace('[','').replace(']','').replace('(','').replace(')','')+'s'+str(ndict['strides']).replace(' ', '').replace(',', '-').replace('[','').replace(']','').replace('(','').replace(')','') +'l'+str(ndict['l_dilkernels'])
         if ndict['dilmax_pooling'] > 0:
             outname += 'da'+str(ndict['dilmax_pooling'])
+            if ndict['dilpooling_steps'] != 1:
+                outname += 'st'+str(ndict['dilpooling_steps'])                
         if ndict['dilmean_pooling'] > 0:
             outname += 'de'+str(ndict['dilmean_pooling'])
+            if ndict['dilpooling_steps'] != 1:
+                outname += 'st'+str(ndict['dilpooling_steps'])
         if ndict['dilweighted_pooling'] > 0:
             outname += 'dw'+str(ndict['dilweighted_pooling'])
+            if ndict['dilpooling_steps'] != 1:
+                outname += 'st'+str(ndict['dilpooling_steps'])
         if ndict['dilpooling_residual'] > 0:
             outname += 'r'+str(ndict['dilpooling_residual'])
         if ndict['dilresidual_entire'] > 0:
@@ -400,7 +435,7 @@ def add_params_to_outname(outname, ndict):
         outname += 'trf'+str(ndict['sum_attention'])[0]+str(ndict['n_transformer'])+'h'+str(ndict['n_distattention'])+'-'+str(ndict['dim_distattention'])
     
     elif ndict['n_interpolated_conv'] > 0:
-        outname += 'iplcv'+str(ndict['n_interpolated_conv'])+'-'+str(ndict['dim_embattention'])+'-'+str(ndict['dim_distattention'])+'-'+str(ndict['attention_multiplier'])
+        outname += 'iplcv'+str(ndict['n_interpolated_conv'])+'-'+str(ndict['dim_embattention'])+'-'+str(ndict['dim_distattention'])
         if ndict['n_distattention'] is not None:
             outname+='-'+str(ndict['n_distattention'])
         if ndict['sum_attention']:
@@ -410,7 +445,7 @@ def add_params_to_outname(outname, ndict):
         if ndict['attentionmax_pooling'] > 0:
             outname += 'ma'+str(ndict['attentionmax_pooling'])
         if ndict['attentionweighted_pooling'] > 0:
-            outname += 'ma'+str(ndict['attentionweighted_pooling']) 
+            outname += 'mw'+str(ndict['attentionweighted_pooling']) 
     
     elif ndict['n_attention'] > 0:
         outname += 'at'+str(ndict['n_attention'])+'h'+str(ndict['n_distattention'])+'-'+str(ndict['dim_distattention'])
@@ -420,7 +455,18 @@ def add_params_to_outname(outname, ndict):
         if ndict['attentionmax_pooling'] > 0:
             outname += 'ma'+str(ndict['attentionmax_pooling'])
         if ndict['attentionweighted_pooling'] > 0:
-            outname += 'ma'+str(ndict['attentionweighted_pooling'])            
+            outname += 'mw'+str(ndict['attentionweighted_pooling'])            
+    
+    elif ndict['n_hyenaconv'] > 0:
+        outname += 'hyna'+str(ndict['n_hyenaconv'])+str(ndict['n_distattention'])
+        
+        if ndict['dim_embattention'] is not None:
+            outname += 'v'+str(ndict['dim_embattention'])
+        if ndict['attentionmax_pooling'] > 0:
+            outname += 'ma'+str(ndict['attentionmax_pooling'])
+        if ndict['attentionweighted_pooling'] > 0:
+            outname += 'mw'+str(ndict['attentionweighted_pooling']) 
+    
     
     if ndict['transformer_convolutions'] > 0:
         outname += '_tc'+str(ndict['transformer_convolutions'])+'d'+str(ndict['trconv_dim'])+'d'+str(ndict['trdilations']).replace(' ', '').replace(',', '-').replace('[','').replace(']','').replace('(','').replace(')','')+'s'+str(ndict['trstrides']).replace(' ', '').replace(',', '-').replace('[','').replace(']','').replace('(','').replace(')','')
@@ -433,10 +479,16 @@ def add_params_to_outname(outname, ndict):
         outname+='l'+str(ndict['l_trkernels'])
         if ndict['trmax_pooling']>0:
             outname += 'ma'+str(ndict['trmax_pooling'])
+            if ndict['trpooling_steps'] != 1:
+                outname += 'st'+str(ndict['trpooling_steps'])
         if ndict['trmean_pooling']>0:
             outname += 'me'+str(ndict['trmean_pooling'])
+            if ndict['trpooling_steps'] != 1:
+                outname += 'st'+str(ndict['trpooling_steps'])
         if ndict['trweighted_pooling']>0:
             outname += 'mw'+str(ndict['trweighted_pooling'])
+            if ndict['trpooling_steps'] != 1:
+                outname += 'st'+str(ndict['trpooling_steps'])
         
     nfcgiven = False
     if 'nfc_layers' in ndict:
@@ -452,6 +504,10 @@ def add_params_to_outname(outname, ndict):
             nfcgiven = True
     if ndict['fc_function'] != ndict['net_function'] and nfcgiven:
         outname += ndict['fc_function']
+    if ndict['fclayer_size'] is not None and nfcgiven:
+        outname += 's'+str(ndict['fclayer_size'])
+        
+        
     if nfcgiven and ndict['nfc_residuals'] > 0:
         outname += 'r'+str(ndict['nfc_residuals'])
         

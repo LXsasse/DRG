@@ -99,7 +99,7 @@ class hook_grads():
             self.grads[name] = grad
         return hook
 
-def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', validation_loss = None, loss_weights = 1, val_loss_weights = 1, batchsize = None, device = 'cpu', optimizer = 'Adam', optim_params = None, optim_weight_decay = None , verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', patience = 25, init_adjust = True, reduce_lr_after = 1, keepmodel = False, load_previous = True, write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss= None, aug_loss_mix = None, aug_lr = None, warmup_function = 'Linear', warm_up_lr_factor = 5., warm_up_epochs = 10, trainvariability_cut = 0.3, trainvariability_cutn = 25, valtrain_ratio = 0., finetuning = True, finetuning_patience = 3, finetuning_rounds = 5, finetuning_rate = 0.2, **kwargs):
+def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 'MSE', validation_loss = None, loss_weights = 1, val_loss_weights = 1, batchsize = None, device = 'cpu', optimizer = 'Adam', optim_params = None, optim_weight_decay = None , verbose = True, lr = 0.001, kernel_lr = None, hot_start = False, hot_alpha = 0.01, warm_start = False, outname = 'Fitmodel', adjust_lr = 'F', patience = 25, init_adjust = True, reduce_lr_after = 1, keepmodel = False, load_previous = True, write_steps = 10, checkval = True, writeloss = True, init_epochs = 250, epochs = 1000, l1reg_last = 0, l2reg_last = 0, l1_kernel= 0, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss= None, aug_loss_mix = None, aug_lr = None, warmup_function = 'Exp', warm_up_lr_factor = 4., warm_up_epochs = 7, sequence_warmup = False, min_sequence_warmup=200, sequence_warmup_start = 1, sequence_warmup_factor = 2., sequence_warmup_location='c', trainvariability_cut = 0.3, trainvariability_cutn = 25, valtrain_ratio = 0., finetuning = True, finetuning_patience = 3, finetuning_rounds = 5, finetuning_rate = 0.2, **kwargs):
     
     
     # Default parameters for each optimizer
@@ -174,7 +174,9 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
         for v, valloss in enumerate(val_loss):
             if valloss is None:
                 val_loss_weights[v] = 0
-        
+    
+    seq_size = np.shape(X)[-1]
+    
     aug_convolution = aug_kernel_size
     seqmaskcut = None
     if augment_representation is not None:
@@ -260,6 +262,9 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     else:
         valsize = float(len(Xval))
     
+    if multiple_input and not isinstance(sequence_warmup_location,list):
+        sequence_warmup_location = [sequence_warmup_location for sq in range(len(X))]
+    
     if multiple_input:
         X = [torch.Tensor(x) for x in X] # transform to torch tensor
         Xval = [torch.Tensor(xval) for xval in Xval] # transform to torch tensor
@@ -305,6 +310,7 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
         print(validation_loss, 'NOT RECOMMENDED WITH BATCHSIZE <', mindata)
     
     if warm_start:
+        ### Implement training on shortenend/zero-flanked sequence
         print('Warm start')
         tmodel = torch_Regression(alpha = 0., fit_intercept = False, loss_function = 'MSE', logistic = 'Linear', penalty = 'none', kernel_length = model.l_kernels, n_kernels = model.num_kernels, kernel_function = model.kernel_function, pooling = 'Max', pooling_length = None, alpha_kernels = 0., is_zero = 0, epochs = 100, lr = 0.1, optimizer = 'SGD', optim_params = None, batchsize = batchsize, device = device, seed = model.seed, verbose = verbose, patience = 5, adjust_lr = 0.3, outname = None, write_model_params = False, norm = False)
         tmodel.fit(X, Y,XYval = [Xval, Yval], sample_weights = sample_weights)
@@ -400,7 +406,7 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     elif optimizer == 'Amsgrad':
         optimizer = optim.AdamW(a_dict, lr=lr, weight_decay= optim_weight_decay, betas=optim_params, amsgrad = True)
     else:
-        print(optimizer, 'not allowed')
+        print(optimizer, ' optimizer not allowed')
     
     if warmup_function == 'Linear':
         linwarm_scale = []
@@ -412,9 +418,11 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     print('Warm up from', a_dict[a]['lr'])
     
     # Compute losses at the beginning with randomly initialized model
-    lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = shift_back, random_shift = random_shift,smooth_onehot = 0,multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
+    lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, shift_back = shift_back, random_shift = random_shift,smooth_onehot = 0,multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut, zero_flanks = 0, zero_flank_loc = sequence_warmup_location)
+    # sequence warm up with: zero_flanks = max(int(sequence_warmup)*int((seq_size-min_sequence_warmup*sequence_warmup_factor**max(0,e-sequence_warmup_start))/2),0)
     
-    beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back,random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
+    
+    beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back,random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut, zero_flanks = int(sequence_warmup)*int((seq_size-min_sequence_warmup)/2), zero_flank_loc = sequence_warmup_location)
     
     saveloss = [lossval, loss2, lossorigval, beginning_loss, 0]
     best_lrs = np.copy(a_lrs0)
@@ -440,7 +448,7 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
     been_larger = 1
     time0 = time.time()
     while True:
-        trainloss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, True, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = optimizer, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, augment_representation = augment_representation, aug_layer = aug_convolution, aug_loss_masked = aug_loss_masked, aug_loss = aug_loss, aug_loss_mix = aug_loss_mix, seqmaskcut = seqmaskcut)
+        trainloss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, True, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = optimizer, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, augment_representation = augment_representation, aug_layer = aug_convolution, aug_loss_masked = aug_loss_masked, aug_loss = aug_loss, aug_loss_mix = aug_loss_mix, seqmaskcut = seqmaskcut, zero_flanks = max(int(sequence_warmup)*int((seq_size-min_sequence_warmup*sequence_warmup_factor**max(0,e-sequence_warmup_start))/2),0), zero_flank_loc = sequence_warmup_location)
         
         model.eval() # Sets model to evaluation mode which is important for batch normalization over all training mean and for dropout to be zero
         e += 1
@@ -496,10 +504,11 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
             else:
                 been_larger = 1
         
-        elif e > warm_up_epochs and ((trainloss - trainlossbefore)/(1e-8+beginning_loss-trainloss) > trainvariability_cut or trainlossincreased > trainvariability_cutn):
+        elif (e > warm_up_epochs) and (trainvariability_cutn != 0) and ((trainloss - trainlossbefore)/(1e-8+beginning_loss-trainloss) > trainvariability_cut or trainlossincreased > trainvariability_cutn):
             for a, adict in enumerate(a_dict):
                 a_dict[a]['lr'] = adict['lr'] *0.5
-            print('Learning rate reduced because train increase', round((trainloss - trainlossbefore)/(beginning_loss-trainloss),3), a_dict[-1]['lr'], trainlossincreased)
+            print('Learning rate reduced because train increased over fraction of distance to beginning', round((trainloss - trainlossbefore)/(beginning_loss-trainloss),3), a_dict[-1]['lr'], trainlossincreased)
+            print('Parameters NOT reloaded', 'increase "trainlossincreased" or "trainvariability_cut" to avoid')
             trainlossincreased = 0
             trainlossbefore = np.copy(trainloss)
         
@@ -525,7 +534,7 @@ def fit_model(model, X, Y, XYval = None, sample_weights = None, loss_function = 
                         if verbose:
                             print('Reseted', mname)
                 save_model(model, outname+'_params0.pth')
-                beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
+                beginning_loss, loss2 = excute_epoch(model, dataloader, loss_func, pwm_out, trainsize, False, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = None, l1reg_last = l1reg_last, l2reg_last = l2reg_last, l1_kernel = l1_kernel, last_layertensor = last_layertensor, kernel_layertensor = kernel_layertensor, sample_weights = sample_weights, val_all = Y, reverse_sign = reverse_sign, shift_back = shift_back, random_shift = random_shift, smooth_onehot = smooth_onehot, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut, zero_flanks = max(int(sequence_warmup)*int((seq_size-min_sequence_warmup*sequence_warmup_factor**max(0,e-sequence_warmup_start))/2),0), zero_flank_loc = sequence_warmup_location)
                 lossorigval, lossval = excute_epoch(model, val_dataloader, loss_func, pwm_outval, valsize, False, device, loss_weights = loss_weights, val_loss = val_loss, val_loss_weights = val_loss_weights, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = Yval, reverse_sign = False, smooth_onehot = 0, shift_back = shift_back, random_shift = random_shift, multiple_input = multiple_input, masks = masks, nmasks = nmasks, seqmaskcut = seqmaskcut)
                 
                 for a, lr0 in enumerate(a_lrs0):
@@ -668,6 +677,12 @@ def reverse_inoutsign(x):
     x = torch.cat([x, -x], dim = 0)
     return x
 
+def zero_sequence_flanks(x, flanks = 0, flankloc = 'c'):
+    if flankloc == 'c' or flankloc == 'l':
+        x[...,:flanks*(1+int(flankloc == 'l'))] = 0
+    if flankloc == 'c' or flankloc == 'r':
+        x[...,-1-flanks*(1+int(flankloc == 'r')):] = 0
+    return x
 
 # make version so that nothing gets lost and so that array with shifts can be given    
 def shift_sequences(sample_x, shift_back, maxshift = None, just_pad = False, mode = 'constant', value = 0.25, random_shift = False): # 'constant', 'reflect', 'replicate' or 'circular'
@@ -701,7 +716,7 @@ def mask_sequence(sample_x, masks, nmasks, mask_val = 0.25):
 
 
 # execute one epoch with training or validation set. Training set takes gradient but validation set computes loss without gradient
-def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, device, loss_weights = 1, val_loss = None, val_loss_weights = 1, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = None, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, masks = None, nmasks = None, augment_representation = None, aug_layer = None, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, seqmaskcut = None):
+def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, device, loss_weights = 1, val_loss = None, val_loss_weights = 1, optimizer = None, l1reg_last = 0, l2reg_last = 0, l1_kernel = 0, last_layertensor = None, kernel_layertensor = None, sample_weights = None, val_all = None, reverse_sign = False, shift_back = None, random_shift = False, smooth_onehot = 0, multiple_input = False, masks = None, nmasks = None, augment_representation = None, aug_layer = None, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, seqmaskcut = None, zero_flanks =0, zero_flank_loc = 'c'):
     
     if val_loss is None:
         val_loss = loss_func
@@ -709,7 +724,7 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
     trainloss = 0.
     validatloss = 0.
     
-    
+        
     multiple_output = False
     yclassestrain = model.n_classes
     yclassesval = model.n_classes
@@ -776,6 +791,15 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
             saddx = None
         else:
             saddx = pwm_out[index]
+        
+        
+        if zero_flanks > 0:
+            if multiple_input:
+                sample_x = [zero_sequence_flanks(sam_x, flanks = zero_flanks, flankloc = zero_flank_loc[s]) for s, sam_x in enumerate(sample_x)]
+            else:
+                sample_x = zero_sequence_flanks(sample_x, flanks = zero_flanks, flankloc = zero_flank_loc)
+        
+        
         # Add samples that are shifted by 1 to 'shift_back' positions
         if shift_back is not None:
             if multiple_input:
