@@ -6,7 +6,7 @@ import glob
 import seaborn as sns
 from matrix_plot import plot_heatmap, plot_distribution
 from matplotlib import cm
-from scipy.stats import skew
+from scipy.stats import skew, wilcoxon, ranksums
 
 from data_processing import check
 
@@ -178,11 +178,32 @@ if __name__ == '__main__':
             means[cond*j:cond*(j+1)] = means[cond*j:cond*(j+1)][sortmean]
         classvalue = [classvalue[s+j*cond] for j in range(join) for s in sortmean]
 
+    if '--sort' in sys.argv:
+        sorting = np.array( sys.argv[sys.argv.index('--sort')+1].split(',') ,dtype = int)
+        classvalue = [classvalue[s+j*cond] for j in range(join) for s in sorting]
+        modnames = np.array(modnames)[sorting]
+
     if '--print_mean' in sys.argv:
         for m in range(cond):
             for j in range(join):
                 print(means[m+j*cond,0], means[m+j*cond, 3], means[m+j*cond, 1], '+-', means[m+j*cond, 2])
-            
+         
+    if '--print_statsdiff' in sys.argv:
+        for m in range(cond):
+            if join > 1:
+                for j in range(join):
+                    for i in range(j+1, join):
+                        jcval = classvalue[m+j*cond]
+                        icval = classvalue[m+i*cond]
+                        if len(icval) == len(jcval):
+                            pst = wilcoxon(jcval, icval)
+                            print(means[m+j*cond,0], means[m+i*cond,0], len(icval), 'wilcoxon', pst[1])
+            else:
+                for n in range(m+1,cond):
+                    pst = wilcoxon(classvalue[m], classvalue[n])
+                    print(means[m,0], means[n,0], len(classvalue[m]), 'wilcoxon', pst[1])
+        
+        
     outname = None
     if '--savefig' in sys.argv:
         outname = sys.argv[sys.argv.index('--savefig')+1]
@@ -211,7 +232,7 @@ if __name__ == '__main__':
     elif '--scatter_color' in sys.argv:
         col_features = sys.argv[sys.argv.index( '--scatter_color')+1]
     else:
-        col_features = None
+        col_features = 'grey'
         
     if '--scatter_sizes' in sys.argv:
         size_features = np.genfromtxt(sys.argv[sys.argv.index('--scatter_sizes')+1], dtype = str)

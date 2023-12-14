@@ -20,8 +20,8 @@ from data_processing import readin, read_mutationfile, create_sets, create_outna
 from functions import mse, correlation, dist_measures
 from output import print_averages, save_performance, plot_scatter
 from functions import dist_measures
-from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance 
-from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters
+from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance, ism, takegrad, deeplift, kernel_assessment
+from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters, separate_sys
 from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, Padded_Conv1d, RC_Conv1d, PredictionHead, Hyena_Conv
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
@@ -381,8 +381,10 @@ class cnn(nn.Module):
         # pytorch enformer module: Some things don't seem accoriding to paper
         if self.n_transformer > 0:
             self.layer_norm = nn.LayerNorm(currdim*self.n_distattention)
-            self.encoder_layer = nn.TransformerEncoderLayer(d_model=currdim*self.n_distattention, nhead=self.n_distattention, dim_feedforward = int(self.dim_distattention *currdim), batch_first=True)                               
-            self.transformer = nn.Sequential(nn.TransformerEncoder(self.encoder_layer, self.n_transformer, norm=self.layer_norm), nn.Dropout(p=self.attention_dropout))
+            
+            self.encoder_layer = nn.TransformerEncoderLayer(d_model=int(currdim*self.n_distattention), nhead=self.n_distattention, dim_feedforward = int(self.n_distattention *self.dim_distattention *currdim), batch_first=True, dropout = self.attention_dropout, activation = func_dict[net_function])                               
+            
+            self.transformer = nn.TransformerEncoder(self.encoder_layer, self.n_transformer, norm=self.layer_norm)
             currdim = currdim*self.n_distattention
             if self.verbose:
                 print('Transformer', currdim, currlen)
@@ -514,19 +516,14 @@ class cnn(nn.Module):
         if self.verbose:
             print('Before FCL', currdim)
         
-        # Reduces size on input to fully connected layers
-        if self.fclayer_size is not None:
-            self.fcemb = nn.Sequential(nn.Linear(currdim, self.fclayer_size), func_dict[self.fc_function])
-            currdim = self.fclayer_size
-        
         # Initialize fully connected layers
         if isinstance(nfc_layers, list): # you can split network earlier by using list as nfc_layers, so only layers before that are shared and each modularity gets its own fully connected layers for combining data embeddings. 
             self.nfcs = nn.ModuleList()
             for nfcl in nfc_layers:
-                self.nfcs.append(Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = nfcl, layer_widening = layer_widening, batch_norm = self.fc_batch_norm, dropout = self.fc_dropout, activation_function = self.fc_function, residual_after = self.nfc_residuals, bias = True))
+                self.nfcs.append(Res_FullyConnect(currdim, outdim = currdim, embdim = self.fclayer_size, n_classes = None, n_layers = nfcl, layer_widening = layer_widening, batch_norm = self.fc_batch_norm, dropout = self.fc_dropout, activation_function = self.fc_function, residual_after = self.nfc_residuals, bias = True))
                 
         elif self.nfc_layers > 0:
-            self.nfcs = Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.nfc_layers, layer_widening = layer_widening, batch_norm = self.fc_batch_norm, dropout = self.fc_dropout, activation_function = self.fc_function, residual_after = self.nfc_residuals, bias = True)
+            self.nfcs = Res_FullyConnect(currdim, outdim = currdim, embdim = self.fclayer_size, n_classes = None, n_layers = self.nfc_layers, layer_widening = layer_widening, batch_norm = self.fc_batch_norm, dropout = self.fc_dropout, activation_function = self.fc_function, residual_after = self.nfc_residuals, bias = True)
             
         # Interaction layer multiplies every features with each other and accounts for non-linearities explicitly, often dimension gets to big to use. Parameters are of dimension d + d*(d-1)/2
         
@@ -546,7 +543,7 @@ class cnn(nn.Module):
         
    
     # The prediction after training are performed on the cpu
-    def predict(self, X, pwm_out = None, mask = None, device = None):
+    def predict(self, X, pwm_out = None, mask = None, mask_value = 0, device = None, enable_grad = False):
         if device is None:
             device = self.device
         if self.fixed_kernels is not None:
@@ -554,7 +551,7 @@ class cnn(nn.Module):
                 pwm_out = pwm_scan(X, self.fixed_kernels, targetlen = self.l_kernels, motif_cutoff = self.motif_cutoff)
             pwm_out = torch.Tensor(pwm_out)
             
-        predout = batched_predict(self, X, pwm_out =pwm_out, mask = mask, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence, random_shift = self.random_shift)
+        predout = batched_predict(self, X, pwm_out =pwm_out, mask = mask, mask_value = mask_value, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence, random_shift = self.random_shift, enable_grad = enable_grad)
         return predout
     
     def forward(self, x, xadd = None, mask = None, mask_value = 0, location = 'None'):
@@ -619,12 +616,6 @@ class cnn(nn.Module):
         if location == '5':
             return pred
         
-        if self.fclayer_size is not None:
-            pred = self.fcemb(pred)
-       
-        if location == '6':
-            return pred
-       
         if isinstance(self.nfc_layers, list):
             multipred = []
             for n, nfclayer in enumerate(self.nfcs):
@@ -633,7 +624,7 @@ class cnn(nn.Module):
         elif self.nfc_layers > 0:
             pred = self.nfcs(pred)
         
-        if location == '-1' or location == '7':
+        if location == '-1' or location == '6':
             if isinstance(self.nfc_layers, nn.ModuleList):
                 return multipred
             else:
@@ -720,10 +711,17 @@ if __name__ == '__main__':
     
     # Don't use with multiple Y
     if '--remove_allzero' in sys.argv and Y is not None:
-        mask = np.sum(Y, axis = 1) != 0
+        mask = np.sum(Y==0, axis = 1) != np.shape(Y)[1]
         Y = Y[mask]
         X, names = X[mask], names[mask]
+        print('removed zeros', np.shape(X), np.shape(Y))
     
+    if '--remove_allones' in sys.argv and Y is not None:
+        mask = np.sum(Y==1, axis = 1) != np.shape(Y)[1]
+        Y = Y[mask]
+        X, names = X[mask], names[mask]
+        print('removed ones', np.shape(X), np.shape(Y))
+        
     # Dont use with multiple Y
     if '--adjust_allzerovar' in sys.argv and Y is not None:
         mask = np.std(Y, axis = 1) == 0
@@ -921,7 +919,7 @@ if __name__ == '__main__':
             if ':' in sys.argv[sys.argv.index('--cnn')+2] or '=' in sys.argv[sys.argv.index('--cnn')+2]:
                 if '+' in sys.argv[sys.argv.index('--cnn')+2]:
                     for a in sys.argv[sys.argv.index('--cnn')+2].split('+'):
-                        parameter.append(a)
+                        parameters.append(a)
                 else:
                     parameters.append(sys.argv[sys.argv.index('--cnn')+2])
         else:
@@ -955,20 +953,20 @@ if __name__ == '__main__':
     include = False
     if '--load_parameters' in sys.argv:
         # loads model parameters into state_dict, but only if the names of the parameters in the loaded path are the same as in the current model
-        parameterfile = separate_sys(sys.argv[sys.argv.index('--load_parameters')+1])
+        parameterfile = separate_sys(sys.argv[sys.argv.index('--load_parameters')+1])[0]
         translate_params = sys.argv[sys.argv.index('--load_parameters')+2] # potential dictionary with names from current model : to names in loaded models
         exclude_params = sys.argv[sys.argv.index('--load_parameters')+3] # if include False (default), list with names from current model that should not be replaced even if they are found in parameterfile.
         # if include True: then this is the exclusive list of model parameters that should be replaced
         include = sys.argv[sys.argv.index('--load_parameters')+4] == 'True' # if include then exclude list is list of parameters that will be included
         allow_reduction = sys.argv[sys.argv.index('--load_parameters')+5] == 'True' # Reduction can be used if number of kernels in current model differs from number of kernels in loaded models. 
-        outname += sys.argv[sys.argv.index('--load_parameters')+6]
+
         if ":" in translate_params:
-            if ',' in tranlate_params:
+            if ',' in translate_params:
                 translate_params = translate_params.split(',')
             else:
                 translate_params = [translate_params]
             translate_dict = {}
-            for tp in tranlate_params:
+            for tp in translate_params:
                 translate_dict[tp.split(":")[0]] = tp.split(":")[1]
         
         if '.' in exclude_params:
@@ -976,9 +974,22 @@ if __name__ == '__main__':
                 exclude_dict = exclude_params.split(',')
             else:
                 exclude_dict = [exclude_params]
-        
+    
+    # Can be used if training might interrupted and training should be restarted automatically. 
     if '--loadifexist' in sys.argv and os.path.isfile(model.outname+'_parameter.pth'):
         parameterfile = model.outname+'_parameter.pth'
+        if len(sys.argv) > sys.argv.index('--loadifexit')+1:
+            if '=' in sys.argv[sys.argv.index('--loadifexit')+1]:
+                if '+' in sys.argv[sys.argv.index('--loadifexit')+1]:
+                    adjpar = sys.argv[sys.argv.index('--loadifexit')+1].split('+')
+                else:
+                    adjpar = [sys.argv[sys.argv.index('--loadifexit')+1]]
+            for p in adjpar:
+                p = p.split('=',1)
+            model.__dict__[p[0]] = check(p[1])
+                    
+            
+            
         
     # parameterfile is loaded into the model
     if parameterfile:
@@ -1053,6 +1064,7 @@ if __name__ == '__main__':
             testclasses = np.zeros(len(Y[0]), dtype = np.int8).astype(str)
         
         if fileclass is not None:
+            testclasses = testclasses.astype('<U20')
             for tclass in np.unique(testclasses):
                 mask = np.where(testclasses == tclass)[0]
                 if len(np.unique(fileclass[mask])) > 1:
@@ -1079,56 +1091,113 @@ if __name__ == '__main__':
         #np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
         np.savez_compressed(outname+'_pred.npz', names = names[testset], values = Y_pred, columns = experiments)
     
-    # Generate PPMs for kernels
-    if '--convertedkernel_ppms' in sys.argv:
-        lpwms = 4
-        if len(sys.argv) > sys.argv.index('--convertedkernel_ppms')+1:
-            if '--' not in sys.argv[sys.argv.index('--convertedkernel_ppms')+1]:
-                activation_measure = sys.argv[sys.argv.index('--convertedkernel_ppms')+1]
-            else:
-                activation_measure = 'euclidean'
+    if '--ism' in sys.argv:
+        ismtrack = sys.argv[sys.argv.index('--ism')+1]
+        if ',' in ismtrack:
+            itrack = np.array(ismtrack.split(','), dtype = int)
+        elif ismtrack == 'all' or ismtrack == 'complete':
+            itrack = np.arange(len(Y[0]), dtype = int)
         else:
-            activation_measure = 'euclidean'
-        ppms = model.convolutions.weight.detach().cpu().numpy()
+            itrack = [int(ismtrack)]
+        ismarray = ism(X[testset], model, itrack)
+        print('Saved ism with', np.shape(ismarray))
+        np.savez_compressed(outname + '_ism'+ismtrack.replace(',', '-') + '.npz', names = names[testset], values = ismarray, experiments = experiments[itrack])
+    
+    if '--grad' in sys.argv:
+        gradtrack = sys.argv[sys.argv.index('--grad')+1]
+        if ',' in gradtrack:
+            itrack = np.array(gradtrack.split(','), dtype = int)
+        elif gradtrack == 'all' or gradtrack == 'complete':
+            itrack = np.arange(len(Y[0]), dtype = int)
+        else:
+            itrack = [int(gradtrack)]
+        gradarray = takegrad(X[testset], model, itrack)
+        print('Saved grad with', np.shape(gradarray))
+        np.savez_compressed(outname + '_grad'+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = experiments[itrack])
+    
+    # implement also integrated gradients and others
+    # Does not work yet, potentially because it dislikes some programming choices. 
+    if '--deeplift' in sys.argv:
+        gradtrack = sys.argv[sys.argv.index('--deeplift')+1]
+        deepshap = False
+        add = '_deeplift'
+        if len(sys.argv) > sys.argv.index('--deeplift')+2:
+            if sys.argv[sys.argv.index('--deeplift')+2] in ['DeepShap', 'deepshap', 'Deepshap', 'DEEPSHAP']:
+                deepshap = True
+                add = '_deepshap'
+        if ',' in gradtrack:
+            itrack = np.array(gradtrack.split(','), dtype = int)
+        elif gradtrack == 'all' or gradtrack == 'complete':
+            itrack = np.arange(len(Y[0]), dtype = int)
+        else:
+            itrack = [int(gradtrack)]
+        gradarray = deeplift(X[testset], model, itrack, deepshap = deepshap)
+        print('Saved deeplift with', np.shape(gradarray), deepshap)
+        np.savez_compressed(outname + add+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = experiments[itrack])
+    
+    if '--ismgrad' in sys.argv:
+        todo=1
+        # compute ISMs and take grad for every variant
+        # then basically approximate ism of ism with grad after ism.
+        # Either save the lxl x 4x4 tensor, or summarize to lxl x 4x3x2, or to lxl x 1, or only keep significant interactions between positions (define significant based on fraction of linear effects)
+        # come up with new way to visualize, f.e. positive and negative effect arches between locations. 
         
-        motifnames = np.array(['filter'+str(i) for i in range(len(ppms))])
+    
+   # Generate PPMs for kernels
+    # Generate PWMs from activation of sequences
+    # Generate global importance for every output track
+    # Generate mean direction of effect from kernel
+    # Generate global importance of kernel for each gene and testclasses
+    if '--convertedkernel_ppms' in sys.argv:
+        # stppm determines the start index of the ppms that should be looked at and Nppm determines the number of ppms for which the operations is performed. only compute the correlation for the pwms from stppm up to stppm + Nppm
+        ppmparal = False
+        stppm = Nppm = None
+        addppmname = ''
+        if len(sys.argv) > sys.argv.index('--convertedkernel_ppms')+2:
+            stppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+1])
+            Nppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+2])
+            if isinstance(stppm, int) and isinstance(Nppm, int):
+                ppmparal = True
+                addppmname = str(stppm)+'-'+str(Nppm + stppm)
+        onlyppms = False
+        if '--onlyppms' in sys.argv:
+            onlyppms = True
+        genewise = False
+        if '--genewise_kernel_impact' in sys.argv:
+            genewise = True
+            
+        ppms, pwms, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, onlyppms = onlyppms, genewise = genewise, ppmparal = ppmparal, stppm= stppm, Nppm = Nppm)
         
-        # maybe don't add  biasses? But makes mathematically sense
-        biases = None
-        if model.kernel_bias:
-            biases = model.convolutions.bias.detach().cpu().numpy()
+        write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms'+addppmname+'.meme')
+        write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms'+addppmname+'.meme')
         
-        if np.shape(ppms)[1] > lpwms:
-            ppmscontext = ppms[:,lpwms:,:]
-            ppmscontext = kernel_to_ppm(ppmscontext, kernel_bias = biases)
-            write_meme_file(ppmscontext, motifnames, ''.join(np.array([f[0] for f in features[lpwms:]])), outname+'_kernelcontext_ppms.meme')
+        if not onlyppms:
+            importance = np.array(importance)
+            mseimportance = np.array(mseimportance)
+            effect = np.array(effect)
+            abseffect = np.array(abseffect)
+            
+            np.savetxt(outname+'_kernattrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), importance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            np.savetxt(outname+'_kernmsetrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), mseimportance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            np.savetxt(outname+'_kernimpact'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), effect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            np.savetxt(outname+'_kerneffct'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), abseffect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            
+            if '--genewise_kernel_impact' in sys.argv:
+                # summarize the correlation change of all genes that are predicted better than corrcut
+                corrcut = 1.-float(sys.argv[sys.argv.index('--genewise_kernel_impact')+1])
+                geneimportance = np.array(geneimportance)
+                uclasses, nclasses = np.unique(testclasses, return_counts = True)
+                # save all the impacts of all kernels on all genes in all testclasses
+                np.savez_compressed(outname+'_kernatgene'+addppmname+'.npz', motifnames = motifnames, importance = geneimportance, base_correlation=genetraincorr, classes = uclasses, nclasses=nclasses, names = names)
+                # shape(geneimportance) = (testclasses, kernels, genes)
+                meangeneimp = []
+                for t, testclass in enumerate(np.unique(testclasses)):
+                    consider = np.where(testclasses == testclass)[0]
+                    if len(consider) > 1:
+                        meangeneimp.append(np.mean(geneimportance[t][:,genetraincorr[t] <= corrcut], axis = 1))
+                meangeneimp = np.around(np.array(meangeneimp).T,4)
+                np.savetxt(outname+'_kernattmeantestclass'+str(corrcut)+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), meangeneimp], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(np.unique(testclasses)))
         
-        ppms = kernel_to_ppm(ppms[:,:lpwms,:], kernel_bias = biases)
-        
-        iupacmotifs = pfm2iupac(ppms, bk_freq = 0.3)
-        pwm_in = None
-        if pfms is not None:
-            iupacmotifs = np.append(iupacmotifs, pfm2iupac(pfms, bk_freq = 0.3))
-            motifnames = np.append(motifnames, rbpnames)
-            pwm_in = pwm_scan(X[testset], pwms, targetlen = model.l_kernels, activation = 'max', motif_cutoff = model.motif_cutoff, set_to = 0., verbose = False)
-            ppms = list(ppms) + list(pfms)
-        
-        write_meme_file(ppms, motifnames, ''.join(np.array([f[0] for f in features[:lpwms]])), outname+'_kernel_ppms.meme')
-        
-        #### enable this to generate values per cell type and per gene when different activation_measure given
-        
-        motifimpact, impact_direction = compute_importance(model, X[trainset], Y[trainset], activation_measure = activation_measure, pwm_in = pwm_in, normalize = False)
-        
-        np.savetxt(outname+'_kernel_importance.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), motifimpact], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-        np.savetxt(outname+'_kernel_impact.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), impact_direction], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-        
-        # Due to early stopping the importance scores from training and testing should be the same
-        # However training importance provide impacts of patterns from overfitting
-        # Test set on the other hand could lack the statistical power
-        if '--testset_importance' in sys.argv:
-            motifimpact, impact_direction = compute_importance(model, X[testset], Y[testset], activation_measure = activation_measure, pwm_in = model.pwm_out, normalize = False)
-            np.savetxt(outname+'_kernel_importance_test.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), motifimpact], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-            np.savetxt(outname+'_kernel_impact_test.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), impact_direction], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
             
             
 

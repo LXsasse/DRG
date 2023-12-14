@@ -8,8 +8,49 @@ from scipy.spatial.distance import pdist, cdist
 from scipy.cluster.hierarchy import dendrogram, linkage
 import seaborn as sns
 import matplotlib as mpl
+import logomaker
+import pandas as pd
 
-def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty = None, x_attributes = None, y_attributes = None, xattr_name = None, yattr_name = None, heatmapcolor = cm.BrBG_r, xatt_color = None, yatt_color = None, pwms = None, combine_cutx = 0., combine_cuty = 0., color_cutx = 0., color_cuty = 0., plot_value = False, vmin = None, vmax = None, grid = False, xdenline = None, ydenline = None, xlabel = None, ylabel = None, xticklabels = None, yticklabels  = None, dpi = 100, figname = None, maxsize = 20):
+def plot_heatmap(heatmat, # matrix that is plotted with imshow
+                 measurex = None, # if matrix is not a symmetric distance matrix then measurex define distannce metric for linkage clustering 
+                 measurey = None, # same as measurex just for y axic
+                 sortx = None, # agglomerative clustering algorith used in likage, f.e average, or single
+                 sorty = None, # same as above but for y axis
+                 x_attributes = None, # additional heatmap with attributes of columns
+                 y_attributes = None, # same as above for y axis
+                 xattr_name = None, # names of attributes for columns
+                 yattr_name = None, # names of attributes for rows
+                 heatmapcolor = cm.BrBG_r, # color map of main matrix
+                 xatt_color = None, # color map or list of colormaps for attributes
+                 yatt_color = None, 
+                 xatt_vlim = None, # vmin and vmas for xattributes, or list of vmin and vmax
+                 yatt_vlim = None,
+                 pwms = None, # pwms that are plotted with logomaker next to rows of matrix
+                 combine_cutx = 0., # NOT implemented yet, can be used to cut off linkage tree at certain distance if linkage tree too full
+                 combine_cuty = 0., 
+                 color_cutx = 0., # cut off for coloring in linkage tree. 
+                 color_cuty = 0., 
+                 xdenline = None, # line drawn into linkage tree on x-axis
+                 ydenline = None, 
+                 plot_value = False, # if true the values are written into the cells of the matrix
+                 vmin = None, # min color value 
+                 vmax = None, 
+                 grid = False, # if True, grey grid drawn around heatmap cells
+                 xlabel = None, # label on x-axis
+                 ylabel = None, # ylabel
+                 xticklabels = None,
+                 yticklabels  = None,
+                 showdpi = None,
+                 dpi = None,
+                 figname = None,
+                 fmt = '.jpg',
+                 maxsize = 150, 
+                 cellsize = 0.3,
+                 noheatmap = False,
+                 row_distributions = None,
+                 row_distribution_kwargs = {}):
+    
+    
     
     # either provide similarity matrix as heatmap (measurex = None) or provide a similarity function from scipy.spatial.distance.pdist
     # If no measure is provided heatmap entries will be rescaled between 0,1 and a transformation function can retransform for xticklabels
@@ -28,7 +69,7 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
             # checks if similarity matrix or distance matrix
             issimilarity = np.all(np.amax(heatmat) == np.diag(heatmat))
             heatmax, heatmin = np.amax(heatmat), np.amin(heatmat)
-            simatrixX = 1.-heatmat.T #int(issimilarity) - (2.*int(issimilarity)-1.) * (heatmat - heatmin)/(heatmax - heatmin)
+            simatrixX = int(issimilarity) - (2.*int(issimilarity)-1.) * (heatmat - heatmin)/(heatmax - heatmin)
             simatrixX = simatrixX[np.triu_indices(len(simatrixX),1)]
             
     if measurey is not None:
@@ -45,7 +86,7 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
             # checks if similarity matrix or distance matrix
             issimilarity = np.all(np.amax(heatmat) == np.diag(heatmat))
             heatmax, heatmin = np.amax(heatmat), np.amin(heatmat)
-            simatrixY = 1.-heatmat #int(issimilarity) - (2.*int(issimilarity)-1.) * (heatmat - heatmin)/(heatmax - heatmin)
+            simatrixY = int(issimilarity) - (2.*int(issimilarity)-1.) * (heatmat - heatmin)/(heatmax - heatmin)
             simatrixY = simatrixY[np.triu_indices(len(simatrixY),1)]
             
             
@@ -53,51 +94,62 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
     
     # Generate dendrogram for x and y
     #### NJ not yet included
-    if sortx is not None:
+    if sortx is not None and not noheatmap:
         Zx = linkage(simatrixX, sortx)
         #if combine_cutx > 0:
             #Zx = reduce_z(Zx, combine_cutx)
-    if sorty == 'maxdist':
-        sortsize = np.argsort(heatmat[:,0] -heatmat[:,1] + np.amax(heatmat, axis = 1)*0.1)
-        
-    elif sorty is not None:
+    
+    if sorty is not None:
         Zy = linkage(simatrixY, sorty) 
         #if combine_cuty > 0:
             #Zy = reduce_z(Zy, combine_cuty)
-    xextra = 0.
-    if y_attributes is not None:
-        xextra = np.shape(y_attributes)[1]*0.8
-    yextra = 0.
-    if x_attributes is not None:
-        yextra = np.shape(x_attributes)[0]*0.8
     
-
-    fig = plt.figure(figsize = (min(maxsize,0.3*np.shape(heatmat)[1])+xextra, min(maxsize, 0.3*np.shape(heatmat)[0])+yextra), dpi = dpi)
-    
-    if 0.3*np.shape(heatmat)[1] > maxsize:
+    if cellsize*np.shape(heatmat)[1] > maxsize:
         xticklabels = None
         plot_value = False
-    if 0.3*np.shape(heatmat)[0] > maxsize:
+        yattr_name = None
+        cellsize = min(maxsize/np.shape(heatmat)[0], maxsize/np.shape(heatmat)[1])
+    
+    if cellsize*np.shape(heatmat)[0] > maxsize:
         yticklabels = None
         plot_value = False
+        x_attr_name = None
+        cellsize = min(maxsize/np.shape(heatmat)[0], maxsize/np.shape(heatmat)[1])
     
+    xextra = 0.
+    if y_attributes is not None:
+        xextra = np.shape(y_attributes)[1]*cellsize
+    yextra = 0.
+    if x_attributes is not None:
+        yextra = np.shape(x_attributes)[0]*cellsize
     
-    ax = fig.add_subplot(111)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.spines['left'].set_visible(False)
-    ax.set_position([0.15,0.15,0.7,0.75])
-    ax.tick_params(which = 'both', bottom = False, labelbottom = False, left = False, labelleft = False)
+    wfig = min(maxsize,cellsize*np.shape(heatmat)[1])
+    hfig = min(maxsize, cellsize*np.shape(heatmat)[0])    
     
+    fig = plt.figure(figsize = (wfig, hfig), dpi = showdpi)
     
-    if sortx is not None:
+    wfac = 0.6
+    mfac = 0.6
+    if noheatmap:
+        wfac = 0.
+    
+    if not noheatmap:
+        ax = fig.add_subplot(111)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.set_position([0.2,0.2,mfac, mfac])
+        ax.tick_params(which = 'both', bottom = False, labelbottom = False, left = False, labelleft = False)
+    
+    # plot dendrogram for x axis
+    if sortx is not None and not noheatmap:
         axdenx = fig.add_subplot(711)
         axdenx.spines['top'].set_visible(False)
         axdenx.spines['right'].set_visible(False)
         axdenx.spines['bottom'].set_visible(False)
         axdenx.tick_params(which = 'both', bottom = False, labelbottom = False)
-        axdenx.set_position([0.15,0.91,0.7,0.04])
+        axdenx.set_position([0.2,0.8 + (cellsize/4/hfig)*mfac,mfac, mfac*10*cellsize/hfig])
         dnx = dendrogram(Zx, ax = axdenx, no_labels = True, above_threshold_color = 'k', color_threshold = color_cutx, orientation = 'top')
         
         sortx = dnx['leaves']
@@ -115,15 +167,14 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
     
     sys.setrecursionlimit(100000)    
     
-    if sorty =='maxdist':
-        sorty = sortsize
-    elif sorty is not None:
+    
+    if sorty is not None:
         axdeny = fig.add_subplot(171)
         axdeny.spines['top'].set_visible(False)
         axdeny.spines['right'].set_visible(False)
         axdeny.spines['left'].set_visible(False)
         axdeny.tick_params(which = 'both', left = False, labelleft = False)
-        axdeny.set_position([0.05,0.15,0.09,0.75])
+        axdeny.set_position([0.2-mfac*(10.25+3*int(pwms is not None))*cellsize/wfig,0.2,mfac*10*cellsize/wfig,0.6])
         dny = dendrogram(Zy, ax = axdeny, no_labels = True, color_threshold = color_cuty, above_threshold_color = 'k', orientation = 'left', get_leaves = True)
         sorty = dny['leaves']
         heatmat = heatmat[sorty]
@@ -139,96 +190,156 @@ def plot_heatmap(heatmat, measurex = None, measurey = None, sortx = None, sorty 
     else:
         sorty = np.arange(len(heatmat), dtype = int)
     
+    if pwms is not None:
+        pwm_min, pwm_max = 0,2
+        for s, si in enumerate(sorty[::-1]):
+            axpwm = fig.add_subplot(len(sorty),1,s+1)
+            axpwm.set_position([0.2-mfac*3.125*cellsize/wfig, 0.2+mfac-mfac*(s+.9)/len(sorty),mfac*3*cellsize/wfig, mfac*0.8*cellsize/hfig])
+            pwm = pwms[si]
+            pwm = np.log2((pwms[si]+1e-16)/0.25)
+            pwm[pwm<0] = 0
+            logomaker.Logo(pd.DataFrame(pwm, columns = list('ACGT')), ax = axpwm, color_scheme = 'classic')
+            axpwm.set_ylim([pwm_min, pwm_max])
+            axpwm.spines['top'].set_visible(False)
+            axpwm.spines['right'].set_visible(False)
+            axpwm.spines['left'].set_visible(False)
+            axpwm.tick_params(labelleft = False, labelbottom = False, bottom = False)
+
     
-    if vmin is None:
-        vmin = np.amin(heatmat)
-    if vmax is None:
-        vmax = np.amax(heatmat)
-    
-    ax.imshow(heatmat, aspect = 'auto', cmap = heatmapcolor, vmin = vmin, vmax = vmax, origin = 'lower')
-    ax.set_yticks(np.arange(len(heatmat)))
-    ax.set_xticks(np.arange(len(heatmat[0])))
-    
-    if plot_value:
-        if np.amax(np.absolute(heatmat)) >= 10:
-            heattext = np.array(heatmat, dtype = int)
+    if not noheatmap:
+        if vmin is None:
+            vmin = np.amin(heatmat)
+        if vmax is None:
+            vmax = np.amax(heatmat)
+        
+        ax.imshow(heatmat, aspect = 'auto', cmap = heatmapcolor, vmin = vmin, vmax = vmax, origin = 'lower')
+        ax.set_yticks(np.arange(len(heatmat)))
+        ax.set_xticks(np.arange(len(heatmat[0])))
+        
+        if plot_value:
+            if np.amax(np.absolute(heatmat)) > 10:
+                heattext = np.array(heatmat, dtype = int)
+            elif np.amax(np.absolute(heatmat)) > 1:
+                heattext = np.around(heatmat, 1)
+            else:
+                heattext = np.around(heatmat, 2)
+            for c in range(len(heattext[0])):
+                for d in range(len(heattext)):
+                    ax.text(c,d,str(heattext[d,c]), color = 'k', ha = 'center', fontsize = 6)
+        
+        
+        if grid:
+            ax.set_yticks(np.arange(len(heatmat)+1)-0.5, minor = True)
+            ax.set_xticks(np.arange(len(heatmat[0])+1)-0.5, minor = True)
+            ax.grid(color = 'k', which = 'minor')
+
+
+        if x_attributes is not None and not noheatmap:
+            for x, xunique in enumerate(x_attributes):
+                xunique = np.unique(xunique)
+                for s, xuni in enumerate(xunique):
+                    x_attributes[x, x_attributes[x] == xuni] = s
+            x_attributes = x_attributes.astype(int)
+            axatx = fig.add_subplot(717)
+            axatx.spines['top'].set_visible(False)
+            axatx.spines['bottom'].set_visible(False)
+            axatx.spines['right'].set_visible(False)
+            axatx.spines['left'].set_visible(False)
+            axatx.tick_params(which = 'both', bottom = False, labelbottom = False, left = False, labelleft = False, labelright = False)
+            axatx.set_position([0.2, 0.2-mfac*(np.shape(x_attributes)[0]+0.25)*cellsize/hfig,mfac, mfac*np.shape(x_attributes)[0]*cellsize/hfig])
+            if isinstance(xatt_color,list):
+                for xai, xac in enumerate(xatt_color):
+                    mask = np.ones(np.shape(x_attributes))
+                    mask[xai] = 0
+                    mask = mask == 1
+                    axatx.imshow(np.ma.masked_array(x_attributes,mask), aspect = 'auto', cmap = xac, vmin = np.amin(x_attributes[xai]), vmax = np.amax(x_attributes[xai]))
+            else:
+                axatx.imshow(x_attributes, aspect = 'auto', cmap = xatt_color)
+            axatx.set_xticks(np.arange(len(heatmat[0])))        
+            if xattr_name is not None:
+                axatx.tick_params(labelright = True)
+                axatx.set_yticks(np.arange(np.shape(x_attributes)[0]))
+                axatx.set_yticklabels(xattr_name)
+            
+            if xlabel is not None:
+                axatx.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False)
+                axatx.set_xlabel(xlabel)
+            if xticklabels is not None:
+                axatx.tick_params(which = 'both', bottom = True, labelbottom = True, left = False, labelleft = False)
+                axatx.set_xticklabels(xticklabels, rotation  = 90)
+        
+        elif xlabel is not None and not noheatmap:
+            ax.set_xlabel(xlabel)
+        elif xticklabels is not None and not noheatmap:
+            ax.tick_params(which = 'both', bottom = True, labelbottom = True, left = False, labelleft = False)
+            ax.set_xticklabels(xticklabels, rotation = 90)
+                
+        
+        if y_attributes is not None:
+            for y, yunique in enumerate(y_attributes.T):
+                if not (isinstance(yunique[0],int) or isinstance(yunique[0], float)):
+                    yunique = np.unique(yunique)
+                    for s, yuni in enumerate(yunique):
+                        y_attributes[y_attributes[:,y] == yuni,y] = s
+            #y_attributes = y_attributes.astype(int)
+            axaty = fig.add_subplot(177)
+            axaty.spines['top'].set_visible(False)
+            axaty.spines['bottom'].set_visible(False)
+            axaty.spines['right'].set_visible(False)
+            axaty.spines['left'].set_visible(False)
+            axaty.tick_params(which = 'both', bottom = False, labelbottom = False, left = False, labelleft = False)
+            axaty.set_position([0.2+wfac+mfac*0.25*cellsize/wfig,0.2,mfac*np.shape(y_attributes)[1]*cellsize/wfig,mfac])
+            if isinstance(yatt_color,list):
+                if not (isinstance(yatt_vlim, list) and len(yatt_vlim) == len(yatt_color)):
+                    yatt_vlim = [[None, None] for i in range(len(yatt_color))]
+                for yai, yac in enumerate(yatt_color):
+                    mask = np.ones(np.shape(y_attributes))
+                    mask[:,yai] = 0
+                    mask = mask == 1
+                    axaty.imshow(np.ma.masked_array(y_attributes,mask), aspect = 'auto', cmap = yac, vmin = yatt_vlim[yai][0], vmax =yatt_vlim[yai][1] )
+            else:
+                axaty.imshow(y_attributes, aspect = 'auto', cmap = yatt_color)
+            if yattr_name is not None:
+                axaty.tick_params(labeltop = True)
+                axaty.set_xticks(np.arange(np.shape(y_attributes)[1]))
+                axaty.set_xticklabels(yattr_name, rotation = 270)
+            
+            axaty.set_yticks(np.arange(len(heatmat)))
+            if ylabel is not None:
+                axaty.tick_params(labelright = True)
+                axaty.set_ylabel(ylabel)
+            if yticklabels is not None:
+                axaty.tick_params(labelright = True, right = True)
+                axaty.set_yticklabels(yticklabels)
+        
+        elif ylabel is not None and not noheatmap:
+            ax.set_ylabel(ylabel)
+        elif yticklabels is not None and not noheatmap:
+            ax.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False, labelright = True)
+            ax.set_yticklabels(yticklabels)
+        
+    if row_distributions is not None:
+        if not isinstance(row_distributions, list) and not isinstance(row_distributions, np.ndarray):
+            row_distributions = list(matrix)
+        axdy = fig.add_subplot(188)
+        axdy.spines['top'].set_visible(False)
+        axdy.spines['right'].set_visible(False)
+        axdy.tick_params(which = 'both', left = False, labelleft = False, labelright = True, right = True)
+        
+        if y_attributes is not None:
+            dwidth = mfac*np.shape(y_attributes)[1]*cellsize/wfig++mfac*0.25*cellsize/wfig
         else:
-            heattext = np.around(heatmat, 2)
-        for c in range(len(heattext[0])):
-            for d in range(len(heattext)):
-                ax.text(c,d,str(heattext[d,c]), color = 'k', ha = 'center', fontsize = 6)
-    
-    
-    if grid:
-        ax.set_yticks(np.arange(len(heatmat)+1)-0.5, minor = True)
-        ax.set_xticks(np.arange(len(heatmat[0])+1)-0.5, minor = True)
-        ax.grid(color = 'k', which = 'minor')
-
-
-    if x_attributes is not None:
-        for x, xunique in enumerate(x_attributes):
-            xunique = np.unique(xunique)
-            for s, xuni in enumerate(xunique):
-                x_attributes[x, x_attributes[x] == xuni] = s
-        x_attributes = x_attributes.astype(int)
-        axatx = fig.add_subplot(717)
-        axatx.spines['top'].set_visible(False)
-        axatx.spines['bottom'].set_visible(False)
-        axatx.spines['right'].set_visible(False)
-        axatx.spines['left'].set_visible(False)
-        axatx.tick_params(which = 'both', bottom = False, labelbottom = False, left = False, labelleft = False, labelright = True)
-        axatx.set_position([0.15,0.11,0.7,0.04])
-        axatx.imshow(x_attributes, aspect = 'auto', cmap = xatt_color)
-        axatx.set_xticks(np.arange(len(heatmat[0])))        
-        if xlabel is not None:
-            axatx.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False)
-            axatx.set_xlabel(xlabel)
-        if xticklabels is not None:
-            axatx.tick_params(which = 'both', bottom = True, labelbottom = True, left = False, labelleft = False)
-            axatx.set_xticklabels(xticklabels, rotation  = 90)
-    
-    elif xlabel is not None:
-        ax.set_xlabel(xlabel)
-    elif xticklabels is not None:
-        ax.tick_params(which = 'both', bottom = True, labelbottom = True, left = False, labelleft = False)
-        ax.set_xticklabels(xticklabels, rotation = 90)
+            dwidth = 0
+        axdy.set_position([0.2+wfac+mfac*0.25*cellsize/wfig + dwidth,0.2, mfac*8*cellsize/wfig, mfac])
         
-    
-    if y_attributes is not None:
-        for y, yunique in enumerate(y_attributes.T):
-            yunique = np.unique(yunique)
-            for s, yuni in enumerate(yunique):
-                y_attributes[y_attributes[:,y] == yuni,y] = s
-        y_attributes = y_attributes.astype(int)
-        axaty = fig.add_subplot(177)
-        axaty.spines['top'].set_visible(False)
-        axaty.spines['bottom'].set_visible(False)
-        axaty.spines['right'].set_visible(False)
-        axaty.spines['left'].set_visible(False)
-        axaty.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False)
-        axaty.set_position([0.85,0.15,0.03,0.75])
-        axaty.imshow(y_attributes, aspect = 'auto', cmap = yatt_color)
-        axaty.set_yticks(np.arange(len(heatmat)))
-        if ylabel is not None:
-            axaty.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False, labelright = True)
-            axaty.set_ylabel(ylabel)
-        if yticklabels is not None:
-            axaty.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False, labelright = True, right = True)
-            axaty.set_yticklabels(yticklabels)
-    elif ylabel is not None:
-        ax.set_ylabel(ylabel)
-    elif yticklabels is not None:
-        ax.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False, labelright = True)
-        ax.set_yticklabels(yticklabels)
-    else:
-        ax.set_yticks(np.arange(0, len(heatmat),200))
-        ax.tick_params(which = 'both', bottom = False, labelbottom = True, left = False, labelleft = False, labelright = True)
-        
+        if sorty is not None:
+            yticklabels = yticklabels[np.argsort(sorty)]
+        plot_distribution(row_distributions, yticklabels, vert = False, labelside = 'opposite', ax = axdy, sort = sorty, outname = None, **row_distribution_kwargs)
     
 
     if figname is not None:
-        fig.savefig(figname+'_heatmap.jpg', bbox_inches = 'tight')
-        print( 'SAVED', figname)
+        fig.savefig(figname+'_heatmap'+fmt, dpi = dpi, bbox_inches = 'tight')
+        print( 'SAVED', figname+'_heatmap'+fmt, dpi)
     else:
         plt.show()
     plt.close()
@@ -301,10 +412,18 @@ def approximate_density(set1, bins = 20, moves = 4, miny=None, maxy = None):
         dens = dens/dcount
     return dens
 
-def plot_distribution(matrix, modnames, split = 1, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = False, showfliers = False, showcaps = True, facecolor = None, grid = True, swarm = False, plotnames = 0, datanames = None, scatter_color = 'grey', scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, connect_swarm = True, sort = 'top', sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size', ylabel = None, fmt = 'jpg'):
+def plot_distribution(matrix, modnames, vert = True, labelside = 'default', ax = None, sort = None, split = 1, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = False, showfliers = False, showcaps = True, facecolor = None, mediancolor = None, grid = True, swarm = False, plotnames = 0, datanames = None, scatter_color = 'grey', scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, connect_swarm = True, scattersort = 'top', ylim = None, sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size', ylabel = None, fmt = 'jpg'):
     
-    positions = np.arange(len(matrix))
-    print(positions)
+    if sort is not None:
+        positions = np.argsort(sort)
+        modnames = np.array(modnames)[sort]
+        for m, mn in enumerate(modnames):
+            print(mn)
+            print(np.mean(matrix[sort[m]]))
+            print(sort[m], np.where(positions == m)[0], np.mean(matrix[np.where(positions == m)[0][0]]))
+    else:
+        positions = np.arange(len(matrix))
+    
     fcolor = None
     if split > 1:
         if len(matrix) == split:
@@ -315,7 +434,10 @@ def plot_distribution(matrix, modnames, split = 1, outname = None, xwidth = 0.6,
         
         positions = []
         for s in range(split):
-            positions.append(np.arange(int(len(matrix)/split)) + width*s - (split*width/2) + width/2)
+            if sort is not None:
+                positions.append(np.arange(int(len(matrix)/split)) + width*s - (split*width/2) + width/2)
+            else:
+                positions.append(np.argsort(sort) + width*s - (split*width/2) + width/2)
         positions = np.concatenate(positions)
         
         if isinstance(facecolor, list):
@@ -324,15 +446,34 @@ def plot_distribution(matrix, modnames, split = 1, outname = None, xwidth = 0.6,
             else:
                 fcolor = [facecolor[c] for c in range(len(matrix))]
             facecolor = None
+        
+        if mediancolor is not None:
+            if isinstance(mediancolor, list):
+                if len(mediancolor) == split:
+                    mediancolor = [mediancolor[c] for c in range(split) for j in range(int(len(matrix)/split))]
+                else:
+                    mediancolor = [mediancolor[c] for c in range(len(matrix))]
+            else:
+                mediancolor = [mediancolor for c in range(len(matrix))]
             
     
     if facecolor is None:
         facecolor = (0,0,0,0)
-
+    if mediancolor is not None:
+        if not isinstance(mediancolor, list):
+            mediancolor = [mediancolor for mc in range(len(matrix))]
     
-    fig = plt.figure(figsize = (len(modnames)*xwidth, height), dpi = dpi)
-    ax = fig.add_subplot(111)
-    ax.set_position([0.1,0.1,0.8,0.8])
+    return_ax = False
+    if ax is None:
+        if vert:
+            fig = plt.figure(figsize = (len(modnames)*xwidth, height), dpi = dpi)
+        else:
+            fig = plt.figure(figsize = (height, len(modnames)*xwidth), dpi = dpi)
+        ax = fig.add_subplot(111)
+        ax.set_position([0.1,0.1,0.8,0.8])
+    else: 
+        return_ax = True
+    
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     if ylabel is not None:
@@ -355,7 +496,7 @@ def plot_distribution(matrix, modnames, split = 1, outname = None, xwidth = 0.6,
         
         for i, set1 in enumerate(matrix):
             set1 = np.array(set1)
-            if sort == 'top':
+            if scattersort == 'top':
                 setsort = np.argsort(set1)
             else:
                 setsort = np.argsort(-set1)
@@ -385,15 +526,21 @@ def plot_distribution(matrix, modnames, split = 1, outname = None, xwidth = 0.6,
                     randx = positions[i] + dens *width/2 * (randomshift-0.5)
                 else:
                     randx = positions[i] + dens * width * (np.random.random(len(setsort))-0.5) # + width/2 * simple_beeswarm(set1, nbins = 40) #
-            
-            ax.scatter(randx[setsort], set1[setsort], cmap= scatter_colormap, s = scsize[setsort], c = sccolor[setsort], alpha = scatter_alpha, vmin = 0, vmax = 1, lw = 0, zorder = 5)
+            if vert: 
+                ax.scatter(randx[setsort], set1[setsort], cmap= scatter_colormap, s = scsize[setsort], c = sccolor[setsort], alpha = scatter_alpha, vmin = 0, vmax = 1, lw = 0, zorder = 5)
+            else:
+                ax.scatter(set1[setsort], randx[setsort], cmap= scatter_colormap, s = scsize[setsort], c = sccolor[setsort], alpha = scatter_alpha, vmin = 0, vmax = 1, lw = 0, zorder = 5)
             if connect_swarm and len(np.shape(matrix)) > 1:
                 xposses.append(randx)
         
         if connect_swarm and len(np.shape(matrix)) > 1:
             xposses=np.array(xposses)
             for j, setj in enumerate(np.array(matrix).T):
-                ax.plot(xposses[:,j], setj, color  = 'grey', alpha = 0.5, lw = 0.5)
+                if vert:
+                    ax.plot(xposses[:,j], setj, color  = 'grey', alpha = 0.5, lw = 0.5)
+                else:
+                    ax.plot(setj, xposses[:,j], color  = 'grey', alpha = 0.5, lw = 0.5)
+            
             
         # Determine which scatters should get a name written next to them
         if plotnames> 0 and datanames is not None:
@@ -408,22 +555,48 @@ def plot_distribution(matrix, modnames, split = 1, outname = None, xwidth = 0.6,
         axcol.set_xticks([0,50,101])
         axcol.set_xticklabels([round(colormin,1), round((colormin+colormax)/2,1), round(colormax,1)], rotation = 90)
     
-    bplot = ax.boxplot(matrix, positions = positions, showcaps=showcaps, patch_artist = True, boxprops={'facecolor':facecolor}, showfliers=showfliers, whiskerprops={'linewidth':1}, widths = width,zorder = 4)
+    bplot = ax.boxplot(matrix, positions = positions, vert = vert, showcaps=showcaps, patch_artist = True, boxprops={'facecolor':facecolor}, showfliers=showfliers, whiskerprops={'linewidth':1}, widths = width,zorder = 4)
     
     if fcolor is not None:
         for patch, color in zip(bplot['boxes'], fcolor):
             patch.set_facecolor(color)
             fc = patch.get_facecolor()
             patch.set_facecolor(mpl.colors.to_rgba(fc, 0.7))
-            
+    
+    if mediancolor is not None:
+        for mx, median in enumerate(bplot['medians']):
+            median.set_color(mediancolor[mx])
+    
+    if ylim is not None:
+        if vert:
+            ax.set_ylim(ylim)
+        else:
+            ax.set_xlim(ylim)
     
     if show_mean:
-        ax.plot(np.sort(positions), [np.mean(matrix[s]) for s in np.argsort(positions)], color = 'r', marker = 's', zorder = 6, markersize = 3, ls = '--', lw = 0.5)
+        if vert:
+            ax.plot(np.sort(positions), [np.mean(matrix[s]) for s in np.argsort(positions)], color = 'r', marker = 's', zorder = 6, markersize = 3, ls = '--', lw = 0.5)
+        else:
+            ax.plot([np.mean(matrix[s]) for s in np.argsort(positions)],np.sort(positions), color = 'r', marker = 's', zorder = 6, markersize = 3, ls = '--', lw = 0.5)
     
-    ax.set_xticks(np.arange(len(modnames)))
-    ax.set_xticklabels(modnames, rotation = 90)
-    if grid:
-        ax.grid(axis = 'y')
+    if vert:
+        if labelside =='opposite':
+            ax.tick_params(bottom = False, labelbottom = False, labeltop = True)
+        ax.set_xticks(np.arange(len(modnames)))
+        ax.set_xticklabels(modnames, rotation = 90)
+        if grid:
+            ax.grid(axis = 'y')
+    else:
+        if labelside =='opposite':
+            ax.tick_params(left = False, labelleft = False, labelright = True)
+        ax.set_yticks(np.arange(len(modnames)))
+        ax.set_yticklabels(modnames)
+        if grid:
+            ax.grid(axis = 'x')
+    
+    if return_ax:
+        return ax
+    
     if outname is None:
         #fig.tight_layout()
         plt.show()

@@ -10,21 +10,27 @@ from scatter_comparison_plot import readfiles
 
 
 
-def scatter3D(x,y,z, axis = True, color = None, cmap = None, xlabel = None, ylabel = None, zlabel=None):
+def scatter3D(x,y,z, axis = True, color = None, cmap = None, xlabel = None, ylabel = None, zlabel=None, alpha = 0.9, diag = False):
     fig = plt.figure(figsize = (4,4), dpi = 150)
     ax = fig.add_subplot(111, projection='3d') #plt.axes(projection='3d')
     xlim = np.array([np.amin(x), np.amax(x)])
     ylim = np.array([np.amin(y), np.amax(y)])
     zlim = np.array([np.amin(z), np.amax(z)])
+    lrat = 0.5
     if axis:
         # plot axis in there
-        lrat = 0.5
         xlim0, ylim0, zlim0 = xlim * lrat, ylim * lrat, zlim * lrat
         ax.plot3D(xlim0,[0,0],[0,0], color = 'k', lw = 1)
         ax.plot3D([0,0],ylim0,[0,0], color = 'k', lw = 1)
         ax.plot3D([0,0],[0,0],zlim0, color = 'k', lw = 1)
+    if diag:
+        maxlim = np.array([xlim, ylim,zlim])*lrat
+        print(maxlim)
+        maxlim = [np.amax(maxlim[:,0]), np.amin(maxlim[:,1])]
+        print(maxlim)
+        ax.plot3D(maxlim, maxlim, maxlim, color = 'maroon', lw = 1)
     # plot a scatterplot in 3d
-    ax.scatter3D(x, y, z, c=color, cmap=cmap, lw=0, alpha = 0.9, s = 3)
+    ax.scatter3D(x, y, z, c=color, cmap=cmap, lw=0, alpha = alpha, s = 3)
     if xlabel is not None:
         ax.set_xlabel(xlabel)
         
@@ -49,7 +55,7 @@ if __name__ == '__main__':
     namey = sys.argv[5]
     namez = sys.argv[6]
     
-    delimiter = '\t'
+    delimiter = None
     if '--delimiter' in sys.argv:
         delimiter = sys.argv[sys.argv.index('--delimiter')+1]
     
@@ -132,8 +138,16 @@ if __name__ == '__main__':
     cmap = 'Dark2_r'
     if '--cmap' in sys.argv:
         cmap = sys.argv[sys.argv.index('--cmap')+1]
+    
+    alpha = 0.9
+    if '--alpha' in sys.argv:
+        alpha = float(sys.argv[sys.argv.index('--alpha')+1])
+        
+    diag = False
+    if '--plotdiagonal' in sys.argv:
+        diag = True
 
-    fig = scatter3D(vals1,vals2,vals3, axis = True, color = colors, cmap = cmap, xlabel = namex, ylabel = namey, zlabel = namez)
+    fig = scatter3D(vals1,vals2,vals3, axis = True, color = colors, cmap = cmap, xlabel = namex, ylabel = namey, zlabel = namez, alpha = alpha, diag = diag)
     
     if '--savefig' in sys.argv:
         outname = sys.argv[sys.argv.index('--savefig')+1]

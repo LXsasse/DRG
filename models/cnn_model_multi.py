@@ -20,15 +20,14 @@ from data_processing import readin, read_mutationfile, create_sets, create_outna
 from functions import mse, correlation, dist_measures
 from output import print_averages, save_performance, plot_scatter, add_params_to_outname
 from functions import dist_measures
-from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance, pwms_from_seqs, genseq
+from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance, pwms_from_seqs, genseq, takegrad, ism, indiv_network_contribution, kernel_assessment
 from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters, separate_sys
 from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, simple_multi_output, PredictionHead
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
 from cnn_model import cnn
-
-
+import time
         
 
 
@@ -287,10 +286,10 @@ class combined_network(nn.Module):
             
         return pred
     
-    def predict(self, X, mask = None, mask_value = 0, device = None):
+    def predict(self, X, mask = None, mask_value = 0, device = None, enable_grad = False):
         if device is None:
             device = self.device
-        predout = batched_predict(self, X, mask = mask, mask_value = mask_value, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence, random_shift = self.random_shift)
+        predout = batched_predict(self, X, mask = mask, mask_value = mask_value, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence, random_shift = self.random_shift, enable_grad = enable_grad)
         return predout
 
     def fit(self, X, Y, XYval = None, sample_weights = None):
@@ -715,66 +714,45 @@ if __name__ == '__main__':
         #np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
         np.savez_compressed(outname+'_pred.npz', names = names[testset], values = Y_pred, columns = experiments)
     
+    if '--ism' in sys.argv:
+        ismtrack = sys.argv[sys.argv.index('--ism')+1]
+        if ',' in ismtrack:
+            itrack = np.array(ismtrack.split(','), dtype = int)
+        elif ismtrack == 'all' or ismtrack == 'complete':
+            itrack = np.arange(len(Y[0]), dtype = int)
+        else:
+            itrack = [int(ismtrack)]
+        ismarray = ism([x[testset] for x in X], model, itrack)
+        print('Saved ism with', np.shape(ismarray))
+        np.savez_compressed(outname + '_ism'+ismtrack.replace(',', '-') + '.npz', names = names[testset], values = ismarray, experiments = experiments[itrack])
+    
+    if '--grad' in sys.argv:
+        gradtrack = sys.argv[sys.argv.index('--grad')+1]
+        if ',' in gradtrack:
+            itrack = np.array(gradtrack.split(','), dtype = int)
+        elif gradtrack == 'all' or gradtrack == 'complete':
+            itrack = np.arange(len(Y[0]), dtype = int)
+        else:
+            itrack = [int(gradtrack)]
+        gradarray = takegrad([x[testset] for x in X], model, itrack)
+        print('Saved grad with', np.shape(gradarray))
+        np.savez_compressed(outname + '_grad'+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = experiments[itrack])
+    
+
     # Only makes sense if not 'REAL connection'
     if '--test_individual_network' in sys.argv:
-        # pick a random set of input sequences to compute mean output of individual networks
-        randomseqs = np.random.permutation(len(names))[:7000]
-        # predict original predictions to compare losses to 
-        Ypredtrain = model.predict(X)
-        Ymask = []
-        netbsize = 10 # batchsize for computing the mean
-        for i in range(len(X)):
-            # get mean representations for individual networks
-            mean_rep = []
-            for r in range(0,len(randomseqs), netbsize):
-                rand = randomseqs[r:r+netbsize]
-                mrep = model.forward([torch.Tensor(x[rand]).to(model.device) for x in X], location = '0', cnn = i)
-                if isinstance(mrep,list):
-                    print(mrep[0].size(), len(mrep))
-                    print('--test_individual_network : Does not work with direct, difference or any analytic connection')
-                    sys.exit()
-                mrep = mrep.detatch().cpu().numpy()
-                mean_rep.append(mrep)
-            mean_rep = np.concatenate(mean_rep, axis = 0)
-            #print(mean_rep[0], mean_rep[1], mean_rep[2])
-            #print(np.std(mean_rep,axis = 0))
-            mean_rep = np.mean(mean_rep,axis = 0)
-            # predict values with masked networks
-            Ymask.append(model.predict(X, mask = i, mask_value = torch.Tensor(mean_rep).to(model.device)))
-            #print(i, mean_rep)
+        indiv_network_contribution(model, X, Y, testclasses, outname, names) 
         
-        for tclass in np.unique(testclasses):
-            # go through all the different classes, for example cell types
-            consider = np.where(testclasses == tclass)[0]
-            genecont = []
-            header= ['MSEtoReal', 'CorrtoReal']
-            # compute the performance for this class for the full predictions
-            trainmse = mse(Ypredtrain[:,consider],Y[:,consider] ,axis =1)
-            traincorr = correlation(Ypredtrain[:,consider],Y[:,consider] ,axis =1)
-            #print(tclass)
-            #print(traincorr)
-            for i in range(len(X)):
-                header.append('CNN'+str(i)+'DeltaMSE')
-                header.append('CNN'+str(i)+'DeltaCorr')
-                header.append('CNN'+str(i)+'DeltaAvgYpred')
-                # compare the performance of the masked predictions with the full predicdtions
-                MSEdif = mse(Ymask[i][:,consider],Y[:,consider],axis = 1) - trainmse
-                genecont.append(MSEdif)
-                Corrdif = correlation(Ymask[i][:,consider],Y[:,consider],axis = 1) - traincorr
-                genecont.append(Corrdif)
-                DYdiff = np.mean(Ymask[i][:,consider] - Ypredtrain[:,consider], axis - 1)
-            np.savetxt(outname+'_netatt'+tclass+'.dat', np.concatenate([[names],np.around([trainmse,traincorr],4), np.around(np.array(genecont),6)],axis = 0).T, header = 'Gene '+' '.join(np.array(header)), fmt = '%s')
-            
-            
-            
+    
     # Generate PPMs for kernels
     # Generate PWMs from activation of sequences
     # Generate global importance for every output track
     # Generate mean direction of effect from kernel
     # Generate global importance of kernel for each gene and testclasses
     if '--convertedkernel_ppms' in sys.argv:
-        # if given, then only compute the correlation for the stppm pwms up to stppm + Nppm
+        # stppm determines the start index of the ppms that should be looked at and Nppm determines the number of ppms for which the operations is performed. only compute the correlation for the pwms from stppm up to stppm + Nppm
         ppmparal = False
+        stppm = Nppm = None
         addppmname = ''
         if len(sys.argv) > sys.argv.index('--convertedkernel_ppms')+2:
             stppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+1])
@@ -782,113 +760,44 @@ if __name__ == '__main__':
             if isinstance(stppm, int) and isinstance(Nppm, int):
                 ppmparal = True
                 addppmname = str(stppm)+'-'+str(Nppm + stppm)
-        print(ppmparal, Nppm, stppm, addppmname)
-        
-        import time
-        ppms = []
-        pwms = []
-        biases = []
-        motifnames = []
-        motifmeans = []
-        seqactivations = []
-        importance = []
-        effect = []
-        abseffect = []
-
+        onlyppms = False
+        if '--onlyppms' in sys.argv:
+            onlyppms = True
+        genewise = False
         if '--genewise_kernel_impact' in sys.argv:
-            geneimportance = [[] for t in range(len(np.unique(testclasses)))]
+            genewise = True
             
-        seq_seq = genseq(model.l_kernels, 200000) # generate 200000 random sequences
-        i =0
-        # predict original training predictions
-        Ypredtrain = model.predict([x for x in X])
-        # compute the correlation of between data points for each output track
-        traincorr = correlation(Ypredtrain,Y, axis = 0)
-        # compute correlation for each training gene
-        genetraincorr = []
-        for t, testclass in enumerate(np.unique(testclasses)):
-            consider = np.where(testclasses == testclass)[0]
-            if len(consider) > 1:
-                genetraincorr.append(correlation(Ypredtrain[:,consider],Y[:,consider], axis = 1))
-        
-        for namep, parms in model.named_parameters():
-            if namep.split('.')[0] == 'cnns' and namep.split('.')[2] == 'convolutions' and namep.rsplit('.')[-1] == 'weight':
-                print(i, namep, parms.size())
-                # collect the first layer convolution kernels
-                kernelweight = parms.detach().cpu().numpy()
-                if ppmparal: 
-                    kernelweight = kernelweight[stppm : stppm+Nppm]
-                else:
-                    stppm, Nppm = 0, len(kernelweight)
-                ppms.append(kernelweight)
-                # collect the biases if bias is not None
-                if model.kernel_bias:
-                    bias = model.state_dict()[namep.replace('weight', 'bias')].detach().cpu().numpy()[stppm : Nppm + stppm]
-                else:
-                    bias = np.zeros(len(ppms[-1]))
-                biases.append(bias)
-                # Generate names for all kernels
-                motifnames.append(np.array(['filter'+str(j+stppm)+'_'+namep.split('.')[1] for j in range(len(ppms[-1]))]))
-                # compute motif means from the activation of kernels with the random sequences.
-                seqactivations = np.sum(ppms[-1][:,None]*seq_seq[None,...],axis = (2,3))
-                # generate motifs from aligned sequences with activation over 0.9 of the maximum activation
-                pwms.append(pwms_from_seqs(seq_seq, seqactivations, 0.9))
-                # take the mean of these activations from all 100000 sequences as a mean actiavation value for each filter.
-                motifmeans.append(np.mean(seqactivations + bias[:,None] , axis = 1))
-                t0 = time.time()
-                for m in range(len(ppms[-1])):
-                    # make predictions from models with meaned activations from kernels
-                    if m%10==0:
-                        print(m+stppm, '/' , stppm+Nppm, round(time.time()-t0,2))
-                        t0 = time.time()
-                    Ymask = model.predict([x for x in X], mask = [i,m+stppm], mask_value = motifmeans[-1][m])
-                    # importance as difference in correlation between full model to train data and masked model to train data
-                    importance.append(np.around(correlation(Ymask,Y, axis = 0) - traincorr,3))
-                    # compute the importance of the kernel for every gene
-                    if '--genewise_kernel_impact' in sys.argv:
-                        for t, testclass in enumerate(np.unique(testclasses)):
-                            consider = np.where(testclasses == testclass)[0]
-                            if len(consider) > 1:
-                                geneimportance[t].append(np.around(correlation(Ymask[:,consider],Y[:,consider], axis = 1) - genetraincorr[t],3))
-                    # effect for a track shows the direction that the kernel causes on average over all genes
-                    # it is weighted by how much it changes the mse of each gene
-                    effect.append(np.around(np.sum((Ypredtrain-Ymask)**3/np.sum((Ypredtrain-Ymask)**2,axis = 1)[:,None],axis = 0),6))
-                    abseffect.append(np.around(np.sum(Ypredtrain-Ymask,axis = 0),6))
-                i += 1
-        
-        motifnames = np.concatenate(motifnames)
-        importance = np.array(importance)
-        effect = np.array(effect)
-        
-        ppms = np.concatenate(ppms, axis = 0)
-        biases = np.concatenate(biases, axis = 0)
-        # create ppms directly from kernel matrix
-        ppms = np.around(kernel_to_ppm(ppms[:,:,:], kernel_bias =biases),3)
-        
-        # generate pwms from most activated sequences
-        pwms = np.around(np.concatenate(pwms, axis = 0),3)
-        min_nonrand_freq = 0.3
-        iupacmotifs = pfm2iupac(pwms, bk_freq = min_nonrand_freq)
+        ppms, pwms, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, onlyppms = onlyppms, genewise = genewise, ppmparal = ppmparal, stppm= stppm, Nppm = Nppm)
         
         write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms'+addppmname+'.meme')
         write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms'+addppmname+'.meme')
         
-        np.savetxt(outname+'_kernattrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), importance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-        np.savetxt(outname+'_kernimpact'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), effect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-        np.savetxt(outname+'_kerneffct'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), abseffect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-        
-        if '--genewise_kernel_impact' in sys.argv:
-            corrcut = 1.-float(sys.argv[sys.argv.index('--genewise_kernel_impact')+1])
-            geneimportance = np.array(geneimportance)
-            uclasses, nclasses = np.unique(testclasses, return_counts = True)
-            np.savez_compressed(outname+'_kernatgene'+addppmname+'.npz', motifnames = motifnames, importance = geneimportance, base_correlation=genetraincorr, classes = uclasses, nclasses=nclasses, names = names)
-            meangeneimp = []
-            for t, testclass in enumerate(np.unique(testclasses)):
-                consider = np.where(testclasses == testclass)[0]
-                if len(consider) > 1:
-                    meangeneimp.append(np.mean(geneimportance[t][:,genetraincorr[t] <= corrcut], axis = 1))
-            meangeneimp = np.around(np.array(meangeneimp).T,4)
-            np.savetxt(outname+'_kernattmeantestclass'+str(corrcut)+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), meangeneimp], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(np.unique(testclasses)))
+        if not onlyppms:
+            importance = np.array(importance)
+            mseimportance = np.array(mseimportance)
+            effect = np.array(effect)
+            abseffect = np.array(abseffect)
+            
+            np.savetxt(outname+'_kernattrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), importance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            np.savetxt(outname+'_kernmsetrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), mseimportance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            np.savetxt(outname+'_kernimpact'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), effect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            np.savetxt(outname+'_kerneffct'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), abseffect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            
+            if '--genewise_kernel_impact' in sys.argv:
+                # summarize the correlation change of all genes that are predicted better than corrcut
+                corrcut = 1.-float(sys.argv[sys.argv.index('--genewise_kernel_impact')+1])
+                geneimportance = np.array(geneimportance)
+                uclasses, nclasses = np.unique(testclasses, return_counts = True)
+                # save all the impacts of all kernels on all genes in all testclasses
+                np.savez_compressed(outname+'_kernatgene'+addppmname+'.npz', motifnames = motifnames, importance = geneimportance, base_correlation=genetraincorr, classes = uclasses, nclasses=nclasses, names = names)
+                # shape(geneimportance) = (testclasses, kernels, genes)
+                meangeneimp = []
+                for t, testclass in enumerate(np.unique(testclasses)):
+                    consider = np.where(testclasses == testclass)[0]
+                    if len(consider) > 1:
+                        meangeneimp.append(np.mean(geneimportance[t][:,genetraincorr[t] <= corrcut], axis = 1))
+                meangeneimp = np.around(np.array(meangeneimp).T,4)
+                np.savetxt(outname+'_kernattmeantestclass'+str(corrcut)+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), meangeneimp], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(np.unique(testclasses)))
         
     
     

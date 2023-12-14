@@ -154,19 +154,19 @@ def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_
     if return_header and hasoutput:
         if isinstance(Y, list):
             header = []
-            for putfile in outputfile.split(','):
+            for p, putfile in enumerate(outputfile.split(',')):
                 if os.path.splitext(putfile)[1] == '.npz':
                     Yin = np.load(putfile, allow_pickle = True)
                     if 'celltypes' in Yin.files:
                         head = Yin['celltypes']
                     else:
-                        head = ['C'+str(i) for i in range(np.shape(Y)[1])]
+                        head = ['C'+str(i) for i in range(np.shape(Y[p])[1])]
                 else:
                     head = open(putfile, 'r').readline()
                     if '#' in head:
                         head = head.strip('#').strip().split(delimiter)
                     else:
-                        head = ['C'+str(i) for i in range(np.shape(Y)[1])]
+                        head = ['C'+str(i) for i in range(np.shape(Y[p])[1])]
                 header.append(np.array(head))
                     
         else:

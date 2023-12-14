@@ -957,7 +957,7 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
 
 
 # The prediction after training are performed on the cpu
-def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, device = 'cpu', batchsize = None, shift_sequence = None, random_shift = True):
+def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, device = 'cpu', batchsize = None, shift_sequence = None, random_shift = True, enable_grad = False):
     if shift_sequence is not None:
         if isinstance(shift_sequence, int):
             if shift_sequence > 0:
@@ -970,7 +970,12 @@ def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, devic
         device = model.device
     model.to(device)
     # Use no_grad to avoid computation of gradient and graph
-    with torch.no_grad():
+    if enable_grad:
+        _grad = torch.enable_grad()
+    else:
+        _grad = torch.no_grad()
+    
+    with _grad:
         islist = False
         if isinstance(X, list):
             islist = True
@@ -1005,11 +1010,16 @@ def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, devic
                 fpred = model.forward(xin, xadd = pwm_outin, mask = mask,mask_value = mask_value)
                 if isinstance(fpred, list):
                     fpred = torch.cat(fpred, axis = 1)
-                fpred = fpred.detach().cpu().numpy()
+                if not enable_grad:
+                    fpred = fpred.detach().cpu().numpy()
                 if shift_sequence is not None:
                     fpred = fpred.reshape(-1,xsize,np.shape(fpred)[-1]).mean(axis =0)
                 predout.append(fpred)
-            predout = np.concatenate(predout, axis = 0)
+            if enable_grad:
+                predout = torch.cat(predout, axis = 0)
+            else:   
+                predout = np.concatenate(predout, axis = 0)
+            
         else:
             if islist:
                 X = [x.to(device) for x in X]
@@ -1018,7 +1028,8 @@ def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, devic
             predout = model.forward(X, xadd = pwm_out, mask = mask, mask_value = mask_value)
             if isinstance(predout, list):
                 predout = torch.cat(predout, axis = 1)
-            predout = predout.detach().cpu().numpy()
+            if not enable_grad:
+                predout = predout.detach().cpu().numpy()
             if shift_sequence is not None:
                 # combine predictions for each gene across different shifts
                 predout = predout.reshape(-1,dsize,fpred.size(dim=-1)).mean(dim =0)

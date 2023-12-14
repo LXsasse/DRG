@@ -368,8 +368,13 @@ def add_params_to_outname(outname, ndict):
             outname += 'sft'+str(np.amax(ndict['shift_sequence']))
         if ndict['random_shift']:
             outname+=str(int(ndict['random_shift']))
+    if ndict['smooth_onehot']:
+        outname += 'smo'
+    
     if ndict['reverse_sign']:
         outname += 'rs'
+    
+    
     if ndict['restart']:
         outname += 're'
    
@@ -545,6 +550,19 @@ def add_params_to_outname(outname, ndict):
         outname += 'do'+str(ndict['dropout'])
     if ndict['batch_norm']:
         outname += 'bno'+str(ndict['batch_norm'])[0]
+    
+    if ndict['conv_dropout'] > 0.:
+        outname += 'cdo'+str(ndict['conv_dropout'])
+    if ndict['conv_batch_norm']:
+        outname += 'cbno'+str(ndict['conv_batch_norm'])[0]
+    if ndict['attention_dropout'] > 0.:
+        outname += 'ado'+str(ndict['attention_dropout'])
+    if ndict['attention_batch_norm']:
+        outname += 'abno'+str(ndict['attention_batch_norm'])[0]
+    if ndict['fc_dropout'] > 0.:
+        outname += 'fdo'+str(ndict['fc_dropout'])
+    if ndict['fc_batch_norm']:
+        outname += 'fbno'+str(ndict['fc_batch_norm'])[0]
     
     outname += 'tr'+str(ndict['lr'])+ndict['optimizer']
     

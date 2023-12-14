@@ -637,7 +637,7 @@ class Expanding_linear(nn.Module):
 # add: if size does not change between layers then don't perform extra linear layer for residual
 # special case of residuals between layers that have the same number of features (U-net? )
 class Res_FullyConnect(nn.Module):
-    def __init__(self, indim, outdim = None, n_classes = None, n_layers = 1, layer_widening = 1., batch_norm = False, dropout = 0., activation_function = 'GELU', residual_after = 1, bias = True):
+    def __init__(self, indim, outdim = None, embdim = None, n_classes = None, n_layers = 1, layer_widening = 1., batch_norm = False, dropout = 0., activation_function = 'GELU', residual_after = 1, bias = True):
         super(Res_FullyConnect, self).__init__()
         # Initialize fully connected layers
         self.nfcs = nn.ModuleDict()
@@ -648,6 +648,10 @@ class Res_FullyConnect(nn.Module):
         self.residual_after = residual_after
         if outdim is None:
             outdim = indim
+        
+        if embdim is not None:
+            self.nfcs['EmbeddtoFully'] = nn.Linear(indim, embdim, bias = bias)
+            indim = np.copy(embdim)
         #self.layer_widening = 1.2 # Factor by which number of parameters are increased for each layer
         # Fully connected layers are getting wider and then back smaller to the original size
         # For-loops for getting wider

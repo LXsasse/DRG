@@ -106,6 +106,7 @@ if '--strand' in sys.argv:
     outname += strand
 
 shift = None
+shift = np.array([4,-4])
 if '--shift' in sys.argv:
     shift = np.array(sys.argv[sys.argv.index('--shift')+1].split(','), dtype = int)
     outname += 'sh'.join(shift.astype(str))
@@ -162,7 +163,7 @@ for c, chrom in enumerate(np.unique(bedfile['contigs'])):
                     else:
                         en = st+tl
                     
-                    #check if length of fragment to long
+                    #check if length of fragment too long
                     winlen = True
                     if maxlen is not None:
                         if maxlen < tl:

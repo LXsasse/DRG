@@ -34,6 +34,7 @@ def readfiles(file1, delimiter = None, subtract = False):
             vals1.append(va)
         elif l == 0:
             header = np.array(line.strip('#').strip().split(delimiter))
+    
     if header is None and ((len(vals1[0]) != len(vals1[1])) or ( not checknum(vals1[0][0]))):
         header = [names1[0]] + vals1[0]
         vals1 = vals1[1:]
@@ -80,15 +81,29 @@ if __name__ == '__main__':
     namex = sys.argv[3]
     namey = sys.argv[4]
     
-    delimiter = None
+    delimiter1 = delimiter2 = None
     if '--delimiter' in sys.argv:
-        delimiter = sys.argv[sys.argv.index('--delimiter')+1]
+        delimiter1 = delimiter2 = sys.argv[sys.argv.index('--delimiter')+1]
+    if '--delimiter1' in sys.argv:
+        delimiter1 = sys.argv[sys.argv.index('--delimiter1')+1]
+    if '--delimiter2' in sys.argv:
+        delimiter2 = sys.argv[sys.argv.index('--delimiter2')+1]
     
-    subt = False
+    subtA = False
+    subtB = False
     if '--similarity' in sys.argv:
-        subt = True
-    names1, vals1, header1 = readfiles(file1, subtract = subt, delimiter = delimiter)
-    names2, vals2, header2 = readfiles(file2, subtract = subt, delimiter = delimiter)
+        subtA = subtB = True
+    if '--similarityA' in sys.argv:
+        subtA = True
+    if '--similarityB' in sys.argv:
+        subtB = True
+    
+        
+        
+    names1, vals1, header1 = readfiles(file1, subtract = subtA, delimiter = delimiter1)
+    names2, vals2, header2 = readfiles(file2, subtract = subtB, delimiter = delimiter2)
+    print(names1, names2)
+    
     #print(names1, names2)
     #print(np.shape(vals1), np.shape(vals2))
     #print(header1, header2)
@@ -102,11 +117,30 @@ if __name__ == '__main__':
     
     scol1, scol2 = -1, -1
     if '--column' in sys.argv:
-        scol1 = int(sys.argv[sys.argv.index('--column')+1])
-        scol2 = int(sys.argv[sys.argv.index('--column')+2])
+        scol1 = sys.argv[sys.argv.index('--column')+1]
+        scol2 = sys.argv[sys.argv.index('--column')+2]
+        if checkint(scol1):
+            scol1 = int(scol1)
+        elif header1 is not None:
+            try:
+                scol1 = list(header1).index(scol1)
+            except:
+                print(scol1, 'not a valid column')
+                sys.exit()
+        if checkint(scol2):
+            scol2 = int(scol2)
+        elif header2 is not None:
+            try:
+                scol2 = list(header2).index(scol2)
+            except:
+                print(scol2, 'not a valid column')
+                sys.exit()
+        print(scol1, scol2)
     
-    if header1 is not None and header2 is not None:
-        print(header1[scol1], header2[scol2])
+    if header1 is not None:
+        print(header1[scol1])
+    if header2 is not None:
+        print(header2[scol2])
     
     header = None
     if '--columns_and_row' in sys.argv:
@@ -154,11 +188,27 @@ if __name__ == '__main__':
             sort = np.isin(names, sset)
             names, vals1, vals2 = names[sort], vals1[sort], vals2[sort]
 
-    if '--xlog' in sys.argv:
+    if '--xlog10' in sys.argv:
         vals1 = np.log10(vals1)
-    if '--ylog' in sys.argv:
+    if '--ylog10' in sys.argv:
         vals2 = np.log10(vals2)
+    if '--xlog10plus' in sys.argv:
+        vals1 = np.log10(vals1+1)
+    if '--ylog10plus' in sys.argv:
+        vals2 = np.log10(vals2+1)
     
+    
+    if '--wigglex' in sys.argv:
+        vals1 = vals1 + np.random.random(len(vals1))-0.5
+    if '--wiggley' in sys.argv:
+        vals2 = vals2 + np.random.random(len(vals2))-0.5
+    if '--wigglexy' in sys.argv:
+        rad = np.random.random(len(vals1)) *0.45
+        radratio = 2*np.random.random(len(vals1)) - 1
+        radratio2 = np.sqrt(1.-radratio**2)
+        vals1 = vals1 + rad * radratio
+        vals2 = vals2 + rad * radratio2
+        
     vals1 = np.nan_to_num(vals1)
     vals2 = np.nan_to_num(vals2)
     
@@ -174,13 +224,15 @@ if __name__ == '__main__':
             sizes = sizes[sort]
         else:
             print('Sizes are incomplete. Only present', int(np.sum(np.isin(snames, names))))
+    elif '--size' in sys.argv:
+        sizes = np.ones(len(vals[0]))*float(sys.argv[sys.argv.index('--size')+1])
     else:
         sizes = None
         
     if sizes is not None and '--adjust_size' in sys.argv:
         sizes = sizes * float(sys.argv[sys.argv.index('--adjust_size')+1])
         
-    elif '--colorfile' in sys.argv:
+    if '--colorfile' in sys.argv:
         colorfile = sys.argv[sys.argv.index('--colorfile')+1]
         ccol = sys.argv[sys.argv.index('--colorfile')+2]
         cdelimiter = None
@@ -205,11 +257,16 @@ if __name__ == '__main__':
             for name in names[~np.isin(names, cnames)]:
                 print(name)
             sys.exit()
+        if '--setnancolorto' in sys.argv:
+            colors = np.nan_to_num(colors, float(sys.argv[sys.argv.index('--setnancolorto')+1]))
         maxcolor = round(np.amax(colors), 2)
         mincolor = round(np.amin(colors), 2)
+        if '--center_colors' in sys.argv and mincolor < 0:
+            maxmax = max(np.absolute(mincolor), maxcolor)
+            mincolor, maxcolor = -maxmax, maxmax
         minmaxcolor = round((maxcolor + mincolor)/2, 2)
-        colors -= np.amin(colors)
-        colors /= np.amax(colors)
+        vmin = mincolor
+        vmax = maxcolor
     elif '--density' in sys.argv:
         colors = gaussian_kde(vals[:, np.random.permutation(len(vals[0]))[:3000]])(vals)
         maxcolor = round(np.amax(colors), 2)
@@ -217,6 +274,7 @@ if __name__ == '__main__':
         minmaxcolor = round((maxcolor + mincolor)/2, 2)
         colors -= np.amin(colors)
         colors /= np.amax(colors)
+        vmin, vmax = 0, 1
     elif '--logdensity' in sys.argv:
         colors = np.log(1+gaussian_kde(vals[:, np.random.permutation(len(vals[0]))[:3000]])(vals))
         maxcolor = round(np.amax(colors), 2)
@@ -224,8 +282,10 @@ if __name__ == '__main__':
         minmaxcolor = round((maxcolor + mincolor)/2, 2)
         colors -= np.amin(colors)
         colors /= np.amax(colors)
+        vmin, vmax = 0, 1
     else:
         colors = None
+        vmin = vmax = None
     
     
     fig = plt.figure(figsize = (4.5,4.5), dpi = 200)
@@ -249,16 +309,25 @@ if __name__ == '__main__':
         ncol = len(np.unique(colors))
         cmap = cm.get_cmap(cmap, ncol)
         cmap = ListedColormap(cmap.colors)
-        
+      
+    if '--vlim' in sys.argv:
+        vlim = sys.argv[sys.argv.index('--vlim')+1].split(',')
+        vmin, vmax = float(vlim[0]), float(vlim[1])
+        mincolor, maxcolor, minmaxcolor = vmin, vmax, (vmin+vmax)/2
     
     
     sortd = np.arange(len(vals[0]), dtype = int)
     if colors is not None:
         if len(colors) == len(vals[0]):
-            sortd = np.argsort(colors)
+            if '--sortreverse' in sys.argv:
+                sortd = np.argsort(-np.absolute(colors))    
+            else:
+                sortd = np.argsort(np.absolute(colors))
+        
     
     if colors is not None:
         colors = colors[sortd]
+        print(colors)
     if sizes is not None:
         sizes = sizes[sortd]
     
@@ -272,9 +341,9 @@ if __name__ == '__main__':
         ab = ax.boxplot(boxes, positions = wticks) #, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)))
         ax.set_xticks(wticks)
         ax.set_xticklabels(np.around(wticks,5).astype(str),rotation = 90)
-        a = ax.scatter(vals[0][sortd], vals[1][sortd], s = sizes, cmap = cmap, c=colors, alpha = 0.05, vmin = 0, vmax = 1, edgecolor = 'silver', lw = lw, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)), zorder = -1)
+        a = ax.scatter(vals[0][sortd], vals[1][sortd], s = sizes, cmap = cmap, c=colors, alpha = 0.05, vmin = vmin, vmax = vmax, edgecolor = 'silver', lw = lw, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)), zorder = -1)
     else:
-        a = ax.scatter(vals[0][sortd], vals[1][sortd], s = sizes, cmap = cmap, c=colors, alpha = alpha, vmin = 0, vmax = 1, edgecolor = 'silver', lw = lw, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)))
+        a = ax.scatter(vals[0][sortd], vals[1][sortd], s = sizes, cmap = cmap, c=colors, alpha = alpha, vmin = vmin, vmax = vmax, edgecolor = 'silver', lw = lw, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)))
     
     if '--contour' in sys.argv:
         xlim = ax.get_xlim()
@@ -291,11 +360,40 @@ if __name__ == '__main__':
         #ax.tricontourf(vals[0][sortd], vals[1][sortd], colors, levels=14, cmap=cmap, alpha = 0.2)
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
+        
+    if '--splitcontour' in sys.argv and '--colorfile' in sys.argv:
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        densweight = np.copy(colors)
+        densweightvar = np.mean((densweight-minmaxcolor)**2)
+        weightmask = np.absolute(densweight)<1.3*np.sqrt(densweightvar)
+        densweight = 0. + np.absolute((densweight - minmaxcolor)**2/densweightvar)
+        densweight[weightmask] = 0
+        if 'log' in sys.argv[sys.argv.index('--splitcontour')+1]:
+            posmask = np.random.permutation(np.where(colors >= minmaxcolor)[0])[:3000]
+            posdensity = np.log(1+gaussian_kde(vals[:, posmask], weights = densweight[posmask])(vals))
+            negmask = np.random.permutation(np.where(colors <= minmaxcolor)[0])[:3000]
+            negdensity = np.log(1+gaussian_kde(vals[:, negmask], weights = densweight[negmask])(vals))
+        else:
+            posmask = np.random.permutation(np.where(colors >= minmaxcolor)[0])[:3000]
+            posdensity = gaussian_kde(vals[:, posmask], weights = densweight[posmask])(vals)
+            negmask = np.random.permutation(np.where(colors <= minmaxcolor)[0])[:3000]
+            negdensity = gaussian_kde(vals[:, negmask], weights = densweight[negmask])(vals)
+            
+        posdensity = posdensity[sortd]
+        negdensity = negdensity[sortd]
+        ax.tricontour(vals[0][sortd], vals[1][sortd], posdensity, levels=6, linewidths=0.5, colors = [cm.get_cmap(cmap)(1.)])
+        ax.tricontour(vals[0][sortd], vals[1][sortd], negdensity, levels=6, linewidths=0.5, colors = [cm.get_cmap(cmap)(0.)])
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
     
     lim = [np.amax(np.amin(vals,axis = 1)), np.amin(np.amax(vals,axis = 1))]
     
     if '--plotdiagonal' in sys.argv:
         ax.plot([lim[0], lim[1]], [lim[0], lim[1]], color = 'maroon')
+    if '--plotnegdiagonal' in sys.argv:
+        ax.plot([lim[0], lim[1]], [lim[1], lim[0]], color = 'maroon')
+    
     ax.set_xlabel(namex)
     ax.set_ylabel(namey)
     ax.legend()
@@ -341,6 +439,11 @@ if __name__ == '__main__':
         ax.set_xscale('log')
     if '--symlogx' in sys.argv:
         ax.set_xscale('symlog')
+    if '--logy' in sys.argv:
+        ax.set_yscale('log')
+    if '--symlogy' in sys.argv:
+        ax.set_yscale('symlog')
+    
     
     dpi = 300
     if '--dpi' in sys.argv:
