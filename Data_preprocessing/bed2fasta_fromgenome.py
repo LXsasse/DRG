@@ -57,6 +57,10 @@ for u, uchr in enumerate(uchroms):
     if os.path.isfile(chrfold.rstrip('/')+'/'+uchr+'.fa.gz'):
         print('Read',chrfold.rstrip('/')+'/'+uchr+'.fa.gz') 
         chrfasta = readfasta(chrfold.rstrip('/')+'/'+uchr+'.fa.gz')
+        print(len(chrfasta))
+        chrextra = 'N' * flank
+        chrfasta = chrextra + chrfasta + chrextra
+        print(len(chrfasta))
         chrmask = ifile[:,0] == uchr
         print('Generate seq for '+uchr)
         unames, indx = np.unique(ifile[chrmask,3], return_index = True)
@@ -67,29 +71,31 @@ for u, uchr in enumerate(uchroms):
             if '--generate_transcripts' in sys.argv:
                 extseq = ''
                 for e in chrmask:
-                    ext= chrfasta[int(ifile[e, 1])-offset-flank:int(ifile[e,2])-offset+flank]
+                    ext= chrfasta[int(ifile[e, 1])-offset-flank+flank:int(ifile[e,2])-offset+flank+flank]
                     if ifile[e, 5] == '-':
                         ext = reverse_complement(ext)
-                    extseq += ext
+                        extseq = ext + extseq
+                    else:
+                        extseq = extseq + ext
                 outfasta.write('>'+ifile[e,3]+'\n'+extseq+'\n')
             elif '--from_tss' in sys.argv:
                 e = chrmask[0]
                 
                 if ifile[e, 5] == '-':
-                    extseq = chrfasta[int(ifile[e, 2])-offset-flank:int(ifile[e,2])-offset+flank]
+                    extseq = chrfasta[int(ifile[e, 2])-offset-flank+flank:int(ifile[e,2])-offset+flank+flank]
                     extseq = reverse_complement(extseq)
                     outfasta.write('>'+ifile[e,3]+'\n'+extseq+'\n')
                 elif ifile[e, 5] == '+':
-                    extseq = chrfasta[int(ifile[e, 1])-offset-flank:int(ifile[e,1])-offset+flank]
+                    extseq = chrfasta[int(ifile[e, 1])-offset-flank+flank:int(ifile[e,1])-offset+flank+flank]
                     outfasta.write('>'+ifile[e,3]+'\n'+extseq+'\n')
                 elif ifile[e, 5] == '.':
-                    extseqf = chrfasta[int(ifile[e, 1])-offset-flank:int(ifile[e,1])-offset+flank]
-                    extseqb= chrfasta[int(ifile[e, 2])-offset-flank:int(ifile[e,2])-offset+flank]
+                    extseqf = chrfasta[int(ifile[e, 1])-offset-flank+flank:int(ifile[e,1])-offset+flank+flank]
+                    extseqb= chrfasta[int(ifile[e, 2])-offset-flank+flank:int(ifile[e,2])-offset+flank+flank]
                     extseqb = reverse_complement(extseq)
                     outfasta.write('>'+ifile[e,3]+'\n'+extseqf+'\n'+'>'+ifile[e,3]+'.rev\n'+extseqb+'\n')
             else:
                 e = chrmask[0]
-                extseq = chrfasta[int(ifile[e, 1])-offset-flank:int(ifile[e,2])-offset+flank]
+                extseq = chrfasta[int(ifile[e, 1])-offset-flank+flank:int(ifile[e,2])-offset+flank+flank]
                 if has_strand:
                     if ifile[e, 5] == '-':
                         extseq = reverse_complement(extseq)

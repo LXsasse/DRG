@@ -478,15 +478,15 @@ def rescale_pwm(pfms, infcont = False, psam = False, norm = False):
     for p, pwm in enumerate(pfms):
         if infcont:
             pwm = np.log2((pwm+0.001)*float(len(pwm)))
-            pwm[pwm<0] = 0
+            pwm[pwm<-2] = -2
         if psam:
-            pnorm = np.amax(pwm, axis = 0)
+            pnorm = np.amax(np.absolute(pwm), axis = 0)
             pnorm[pnorm == 0] = 1
             pwm = pwm/pnorm
         pwms.append(pwm)
     if norm:
-        len_pwms = [np.sum(pwm) for pwm in pwms]
-        pwms = [pwm/(2.*np.sqrt(np.amax(len_pwms))) for pwm in pwms]
+        len_pwms = np.array([len(pwm[0]) * np.std(pwm) for pwm in pwms])
+        pwms = [pwm/len_pwms[p] for p, pwm in enumerate(pwms)]
     return pwms
 
 

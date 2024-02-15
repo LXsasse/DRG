@@ -332,6 +332,36 @@ class CEloss(nn.Module):
             loss = torch.mean(loss)
         return loss
         
+
+class multinomial(nn.Module):
+    def __init__(self, reduction = 'none', log_counts = True, eps = 1, mse_ratio = 10., mean_size = None):
+        super(multinomial, self).__init__()
+        self.bce = CEloss(reduction=reduction)
+        self.mse = nn.MSELoss(reduction = reduction)
+        self.mean_size = mean_size
+        self.meanpool = None    
+        self.mse_ratio = mse_ratio
+        self.log_counts = log_counts
+        self.eps = eps
+        
+    def forward(self, p: torch.tensor, q: torch.tensor):
+        # bin the counts data, if mean_size = None then bin is entire length of input
+        if self.mean_size is None:
+            self.mean_size = p.size(dim = -1)
+        if self.meanpool is None:
+            self.meanpool = nn.AvgPool1d(self.mean_size, padding = int((p.size(dim = -1)%self.mean_size)/2), count_include_pad = False)
+        pn = self.meanpool(p).repeat(1,1,self.mean_size)
+        qn = self.meanpool(q).repeat(1,1,self.mean_size)
+        if self.log_counts:
+            pn = (pn+self.eps).log()
+            qn = (qn+self.eps).log()
+        # tranform p into frequency that sum to 1, but keep q as the absolute counts
+        p = p+ (1./p.size(dim = -1)) * 1e-8
+        normp = p.sum(dim = -1)[...,None]
+        p = p/normp
+        #q = q/normq
+        loss = self.bce(p,q) + self.mse_ratio* self.mse(pn, qn)
+        return loss
         
 
 # include possibility to use mse in window size Z, e.g 25 bp windows
@@ -505,6 +535,7 @@ basic_loss_dict = {'MSE':nn.MSELoss(reduction = 'none'),
              'Correlationsumdata': correlation_loss(dim = -1, reduction = 'none', sum_axis = -1),
              'Correlationmse': correlation_mse(reduction = 'none', dimcorr = -1),
              'MSECorrelation': correlation_mse(reduction = 'none', dimcorr = 0),
+             'MultinomialMSE': multinomial(reduction = 'none', log_counts = False),
              'Correlationboth': correlation_both(reduction = 'none')}
 
 class ContrastiveLoss(nn.Module):

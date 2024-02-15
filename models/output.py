@@ -62,165 +62,110 @@ def print_averages(Y_pred, Ytest, testclasses, sysargv):
             consider = np.where(testclasses == tclass)[0]
             print(tclass, 'Wilcoxon', np.mean(-np.log10(ranksums(Ytest[:,consider], Y_pred[:,consider], axis = -1)[1])))
             
-        
-    
-    
-def save_performance(Y_pred, Ytest, testclasses, experiments, names, outname, sysargv, compare_random = True):
-    if '--save_msemean_perclass' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            mses = mse(np.sum(Ytest[:,consider], axis = -1), np.sum(Y_pred[:,consider],axis = -1),axis = 0)
-            np.savetxt(outname+'_exper_msemean_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), mses.reshape(-1,1),axis = 1), fmt = '%s')
-    if '--save_jensenshannon_perclass' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            Y_predc = np.copy(Y_pred)
-            Y_predc[Y_predc < 0] = 1e-8
-            JShannon = np.mean(np.transpose(jensenshannon(np.transpose(Ytest[:,consider]+1e-8), np.transpose(Y_predc[:,consider]))), axis = 0)
-            np.savetxt(outname+'_exper_js_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), JShannon.reshape(-1,1),axis = 1), fmt = '%s')
-    if '--save_wilcoxon_perclass' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            Wilcoxon = np.mean(np.absolute(ranksums(Ytest[:,consider], Y_pred[:,consider], axis = -1)[0]), axis = 0)
-            np.savetxt(outname+'_exper_wlcx_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), Wilcoxon.reshape(-1,1),axis = 1), fmt = '%s')
-    if '--save_wilcoxonp_perclass' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            Wilcoxon = np.mean(-np.log10(ranksums(Ytest[:,consider], Y_pred[:,consider], axis = -1)[1]), axis = 0)
-            np.savetxt(outname+'_exper_wlcxp_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), Wilcoxon.reshape(-1,1),axis = 1), fmt = '%s')
-    
-    if '--save_correlation_perclass' in sysargv:
-        Ytes = np.copy(Ytest)
-        Y_pre = np.copy(Y_pred)
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            if len(np.shape(Ytes))>2:
-                Ytes = np.sum(Ytes, axis = -1)
-                Y_pre = np.sum(Y_pre, axis = -1)
-            correlations = correlation(Ytes[:,consider], Y_pre[:,consider], axis = 0)
-            pvalue = 1.
-            if compare_random:
-                randomcorrelations = correlation(Ytes[np.random.permutation(len(Ytes))][:,consider], Y_pre[:,consider], axis = 0)
-                pvalue = stats.ttest_ind(correlations, randomcorrelations)[1]/2.
-            np.savetxt(outname+'_exper_corr_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), correlations.reshape(-1,1),axis = 1), fmt = '%s', header = 'P-value: '+str(pvalue))
-    if '--save_auroc_perclass' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            auc = metrics.roc_auc_score(Ytest[:,consider], Y_pred[:,consider], average = None)
-            pvalue = 1.
-            if compare_random:
-                randomauc = metrics.roc_auc_score(Ytest[np.random.permutation(len(Ytest))][:,consider], Y_pred[:,consider], average = None)
-                pvalue = stats.ttest_ind(auc, randomauc)[1]/2.
-            np.savetxt(outname+'_exper_auroc_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), auc.reshape(-1,1),axis = 1), fmt = '%s', header = 'P-value: '+str(pvalue))
-    if '--save_auprc_perclass' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            auc = metrics.average_precision_score(Ytest[:,consider], Y_pred[:,consider], average = None)
-            pvalue = 1.
-            if compare_random:
-                randomauc = metrics.average_precision_score(Ytest[np.random.permutation(len(Ytest))][:,consider], Y_pred[:,consider], average = None)
-                pvalue = stats.ttest_ind(auc, randomauc)[1]/2.
-            np.savetxt(outname+'_exper_auprc_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), auc.reshape(-1,1),axis = 1), fmt = '%s', header = 'P-value: '+str(pvalue))
-    if '--save_mse_perclass' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            axis = 0
-            if len(np.shape(Ytest))> 2:
-                axis = (0,-1)
-            mses = mse(Ytest[:,consider], Y_pred[:,consider], axis = axis)
-            pvalue = 1.
-            if compare_random:
-                randommses = mse(Ytest[np.random.permutation(len(Ytest))][:,consider], Y_pred[:,consider], axis = 0)
-                pvalue = stats.ttest_ind(mses, randommses)[1]/2.
-            np.savetxt(outname+'_exper_mse_tcl'+tclass+'.txt', np.append(experiments[consider].reshape(-1,1), mses.reshape(-1,1),axis = 1), fmt = '%s', header = 'P-value: '+str(pvalue))
-    if '--save_topdowncorrelation_perclass' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            topmask, botmask = Ytest >= 0, Ytest <= 0
-            correlationstop = np.array([1.-pearsonr(Ytest[:, i][topmask[:,i]], Y_pred[:,i][topmask[:,i]])[0] for i in consider])
-            correlationsbot = np.array([1.-pearsonr(Ytest[:, i][botmask[:,i]], Y_pred[:,i][botmask[:,i]])[0] for i in consider])
-            print('Saved as', outname+'_exper_corrbottop_tcl'+tclass+'.txt')
-            np.savetxt(outname+'_exper_corrbottop_tcl'+tclass+'.txt', np.concatenate([experiments[consider].reshape(-1,1), correlationstop.reshape(-1,1),correlationsbot.reshape(-1,1)],axis = 1), fmt = '%s')
-    
-    
-    if '--save_correlation_pergene' in sysargv or '--save_correlationmean_pergene' in sysargv:
-        Ytes = np.copy(Ytest)
-        Y_pre = np.copy(Y_pred)
-        for tclass in np.unique(testclasses):
-            if '--save_correlationmean_pergene' in sysargv:
-                Ytes = np.sum(Ytes, axis = -1)
-                Y_pre = np.sum(Y_pre, axis = -1)
-            consider = np.where(testclasses == tclass)[0]
-            correlations = correlation(Ytes[:,consider], Y_pre[:,consider], axis = -1)
-            pvalue = 1.
-            if compare_random:
-                randomcorrelations = correlation(Ytes[np.random.permutation(len(Ytes))][:,consider], Y_pre[:,consider], axis = -1)
-                pvalue = stats.ttest_ind(correlations, randomcorrelations)[1]/2.
-            np.savetxt(outname+'_gene_corr_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), correlations.reshape(-1,1),axis = 1), fmt = '%s', header ='P-value: '+str(pvalue))
-    if '--save_mse_pergene' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            axis = -1
-            if len(np.shape(Ytest))>2:
-                axis = (1,-1)
-            mses = mse(Ytest[:,consider], Y_pred[:,consider], axis = axis)
-            pvalue = 1.
-            if compare_random:
-                randommses = mse(Ytest[np.random.permutation(len(Ytest))][:,consider], Y_pred[:,consider], axis = -1)
-                pvalue = stats.ttest_ind(mses, randommses)[1]/2.
-            np.savetxt(outname+'_gene_mse_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), mses.reshape(-1,1),axis = 1), fmt = '%s', header = 'P-value: '+str(pvalue))
-    if '--save_auroc_pergene' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            auc = metrics.roc_auc_score(Ytest[:,consider].T, Y_pred[:,consider].T, average = None)
-            pvalue = 1.
-            if compare_random:
-                randomauc = metrics.roc_auc_score(Ytest[np.random.permutation(len(Ytest))][:,consider].T, Y_pred[:,consider].T, average = None)
-                pvalue = stats.ttest_ind(auc, randomauc)[1]/2.
-            np.savetxt(outname+'_gene_auroc_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), auc.reshape(-1,1),axis = 1), fmt = '%s', header = 'P-value: '+str(pvalue))
-    if '--save_auprc_pergene' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            auc = metrics.average_precision_score(Ytest[:,consider].T, Y_pred[:,consider].T, average = None)
-            pvalue = 1.
-            if compare_random:
-                randomauc = metrics.average_precision_score(Ytest[np.random.permutation(len(Ytest))][:,consider].T, Y_pred[:,consider].T, average = None)
-                pvalue = stats.ttest_ind(auc, randomauc)[1]/2.
-            np.savetxt(outname+'_gene_auprc_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), auc.reshape(-1,1),axis = 1), fmt = '%s', header = 'P-value: '+str(pvalue))
-    
-    if '--save_msewindow_pergene' in sys.argv:
-        windowsize = 10
-        Ytes = np.copy(Ytest)
-        Y_pre = np.copy(Y_pred)
-        Ytes = avgpool(Ytes, windowsize)
-        Y_pre = avgpool(Y_pre, windowsize)
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            mses = mse(np.sum(Ytes[:,consider], axis = -1), np.sum(Y_pre[:,consider],axis = -1),axis = 1)
-            np.savetxt(outname+'_gene_msewindow_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), mses.reshape(-1,1),axis = 1), fmt = '%s')
+def shuffle_along_axis(array, axis = 0):
+    if axis != 0:
+        axis = int(axis < 0)*len(np.shape(array))+axis
+        axes = [i for i in range(len(np.shape(array)))]
+        del axes[axis]
+        axes = [axis] + axes
+        array = np.transpose(array, axes = axes)
+    rng = np.random.default_rng()
+    shuf = np.arange(len(array))
+    while True:
+        rng.shuffle(shuf)
+        if not np.array_equal(shuf, np.arange(len(array))):
+            break
+    array = array[shuf]
+    if axis != 0:
+        axes = np.argsort(axes)
+        array = np.transpose(array, axes = axes)
+    return array
 
-    if '--save_msemean_pergene' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            mses = mse(np.sum(Ytest[:,consider], axis = -1), np.sum(Y_pred[:,consider],axis = -1),axis = 1)
-            np.savetxt(outname+'_gene_msemean_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), mses.reshape(-1,1),axis = 1), fmt = '%s')
-    if '--save_jensenshannon_pergene' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            Y_predc = np.copy(Y_pred)
-            Y_predc[Y_predc < 1e-8] = 1e-8
-            JShannon = np.mean(np.transpose(jensenshannon(np.transpose(Ytest[:,consider]+1e-8), np.transpose(Y_predc[:,consider]))), axis = 1)
-            np.savetxt(outname+'_gene_js_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), JShannon.reshape(-1,1),axis = 1), fmt = '%s')
-    if '--save_wilcoxon_pergene' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            Wilcoxon = np.mean(np.absolute(ranksums(Ytest[:,consider], Y_pred[:,consider], axis = -1)[0]), axis = 1)
-            np.savetxt(outname+'_gene_wlcx_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), Wilcoxon.reshape(-1,1),axis = 1), fmt = '%s')
-    if '--save_wilcoxonp_pergene' in sysargv:
-        for tclass in np.unique(testclasses):
-            consider = np.where(testclasses == tclass)[0]
-            Wilcoxon = np.mean(-np.log10(ranksums(Ytest[:,consider], Y_pred[:,consider], axis = -1)[1]), axis = 1)
-            np.savetxt(outname+'_gene_wlcxp_tcl'+tclass+'.txt', np.append(names.reshape(-1,1), Wilcoxon.reshape(-1,1),axis = 1), fmt = '%s')
+    
+
+        
+def compute_performance(Ytest, Y_pred, func, axis, testclasses, experiments, meanclasses, compare_random = True):
+    if len(np.shape(Ytest))>2:
+        Ytest = np.sum(Ytest, axis = -1)
+    if len(np.shape(Y_pred))>2:
+        Y_pred = np.sum(Y_pred, axis = -1)
+    out = {}
+    for tclass in np.unique(testclasses):
+        pvalue = None
+        consider = np.where(testclasses == tclass)[0]
+        exp = experiments[consider]
+        yt = Ytest[:,consider]
+        yp = Y_pred[:,consider]
+        if meanclasses is not None:
+            exp = np.unique(meanclasses[consider])
+            yt = np.array([np.mean(yt[:, meanclasses[consider] == mclass], axis = 1) for mclass in np.unique(meanclasses[consider])]).T
+            yp = np.array([np.mean(yp[:, meanclasses[consider] == mclass], axis = 1) for mclass in np.unique(meanclasses[consider])]).T
+        metric = func(yt, yp, axis = axis)
+        if compare_random and len(metric) > 10:
+            axis = int(axis < 0)*len(np.shape(yt))+axis
+            random = func(shuffle_along_axis(yt, axis = 1-axis), yp, axis = axis)
+            pvalue = stats.wilcoxon(metric, random, alternative = 'less')[1] # determines p-value that random is less than metric although H0 rejected
+        out[tclass] = (metric, exp, pvalue)
+    return out
+
+def outfmt(names, experiments, values):
+    if len(names) == len(values):
+        return np.append(names.reshape(-1,1), values.reshape(-1,1), axis = 1)
+    elif len(experiments) == len(values):
+        return np.append(experiments.reshape(-1,1), values.reshape(-1,1), axis = 1)
+
+def RankSum(yp, yt, axis = 0, fmt = 0, log = True):
+    rs = ranksums(yp, yt, axis = axis)[fmt]
+    if log:
+        rs = -np.log10(rs)
+    return rs
+
+def AuROC(x, y, axis=0):
+    if axis != 0:
+        x, y = x.T, y.T
+    rs = -np.ones(np.shape(x)[1])
+    for i in range(np.shape(x)[1]):
+        rs[i] = metrics.roc_auc_score(x[:,i],y[:,i])
+    return rs
+
+def AuPR(x,y, axis = 0):
+    if axis != 0:
+        x, y = x.T, y.T
+    rs = -np.ones(np.shape(x)[1])
+    for i in range(np.shape(x)[1]):
+        rs[i] = metrics.average_precision_score(x[:,i],y[:,i])
+    return rs
+    
+def save_performance(Y_pred, Ytest, testclasses, experiments, names, outname, sysargv, compare_random = True, meanclasses = None, pooling = None):
+    evaldict = {'--save_mse_perclass':(mse, '_clss_mse_tcl', 0, None), 
+                '--save_poolmse_perclass':(mse, '_clss_mse_tcl', 0, 10), 
+                '--save_jensenshannon_perclass':(jensenshannon, '_clss_js_tcl', None), 
+                '--save_wilcoxon_perclass': (RankSum,'_clss_rnksm_tcl', 0, None), 
+                '--save_correlation_perclass':(correlation, '_clss_corr_tcl', 0, None), 
+                '--save_auroc_perclass':(AuROC, '_clss_auroc_tcl',0, None), 
+                '--save_auprc_perclass':(AuPR, '_clss_auprc_tcl',0, None), 
+                '--save_mse_perpoint':(mse, '_pnt_mse_tcl', 1, None), 
+                '--save_poolmse_perpoint':(mse, '_pnt_mse_tcl', 1, 10), 
+                '--save_jensenshannon_perpoint':(jensenshannon, '_pnt_js_tcl',1, None), 
+                '--save_wilcoxon_perpoint': (RankSum,'_pnt_rnksm_tcl', 1, None), 
+                '--save_correlation_perpoint':(correlation, '_pnt_corr_tcl', 1, None), 
+                '--save_auroc_perpoint':(AuROC, '_pnt_auroc_tcl',1, None), 
+                '--save_auprc_perpoint':(AuPR, '_pnt_auprc_tcl', 1, None),
+                }
+    for sarg in sysargv:
+        if sarg in evaldict:
+            func, nameadd, axis, pooling = evaldict[sarg]
+            print(sarg)
+            if pooling is not None:
+                Ytest = avgpool(Ytest, pooling)
+                Y_pred = avgpool(Y_pred, pooling)
+                nameadd = '_pool'+str(pooling)+nameadd
+            
+            result = compute_performance(Ytest, Y_pred, func, axis, testclasses, experiments, meanclasses, compare_random = compare_random)
+            for r in result:
+                res = result[r] 
+                np.savetxt(outname+nameadd+r+'.txt', outfmt(names, res[1], res[0]), fmt = '%s')
+
 
 
 

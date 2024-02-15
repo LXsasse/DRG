@@ -56,21 +56,26 @@ def kernel_to_ppm(kernels, kernel_bias = None, bk_freq = None):
     n_kernel, n_input, l_kernel = np.shape(kernels)
     if kernel_bias is not None:
         kernels += kernel_bias[:,None,None]/(n_input*l_kernel)
+    #kernels *= l_kernel
+    kernels /= np.std(kernels, axis = (-1,-2))[...,None, None]
     if bk_freq is None:
         bk_freq = np.ones(n_input)*np.log2(1./float(n_input))
     elif isinstance(bk_freq, float) or isinstance(bk_freq, int):
         bk_freq = np.ones(n_input)*np.log2(1./float(bk_freq))
     kernels += bk_freq[None,:,None]
     ppms = 2.**kernels
-    ppms = ppms/np.sum(ppms, axis = 1)[:,None, :]
+    ppms = ppms/np.amax(np.sum(ppms, axis = 1),axis = -1)[:,None, None] #[:,None, :]
     return ppms
 
 def pwms_from_seqs(ohseqs, activations, cut, z_score = True):
+    # scale kernel activations between 0 and 1
     minact = np.amin(activations, axis = 1)
     activations = activations - minact[:,None]
     maxact = np.amax(activations, axis = 1)
     activations = activations/maxact[:,None]
+    
     if z_score:
+        # instead of rescaling the activations, rescale the cut parameter
         cut = (np.mean(activations, axis = 1)+cut*np.std(activations,axis =1))[:, None]
     seqs = np.where(activations >= cut)
     pwms = []
@@ -125,7 +130,11 @@ def pfm2iupac(pwms, bk_freq = None):
         motifs.append(m)
     return np.array(motifs)
 
-def ism(x, model, tracks):
+
+def correct_by_mean(grad):
+    return grad - np.mean(grad, axis = -2)[...,None,:]
+
+def ism(x, model, tracks, correct_from_neutral = True):
     baselines = model.predict(x)
     if isinstance(baselines, list):
         baselines = np.concatenate(baselines, axis = 1)
@@ -162,25 +171,39 @@ def ism(x, model, tracks):
                 for j in range(len(isnot[0])):
                     ismout0[i, isnot[0][j], isnot[1][j]] = altpred[j] - baselines[i]
             ismout.append(np.swapaxes(np.swapaxes(ismout0, 1, -1), -1,-2))
+            if correct_from_neutral:
+                ismout[-1] = correct_by_mean(ismout[-1])
     else:
         Nin = 1
         size = list(np.shape(x))
         size += [len(tracks)]
         ismout = np.zeros(size)
+        start = time.time()
         for i, si in enumerate(x):
+            #beginning = time.time()
             isnot = torch.where(si == 0)
             # Needs cloning otherwise no changes can be made to si (don't know why)
             xalt = torch.clone(si.expand([len(isnot[0])] + list(si.size())))
             for j in range(len(isnot[0])):
                 xalt[j,:,isnot[1][j]] = 0
                 xalt[j,isnot[0][j],isnot[1][j]] = 1
+            #before = time.time()
+            #print('making seqs', before - beginning)
             altpred = model.predict(xalt)
+            #after = time.time()
+            #print('forwards', after - before, xalt.size(), model.batchsize)
             if isinstance(altpred,list):
                 altpred = np.concatenate(altpred,axis =1)
             altpred = altpred[...,tracks]
             for j in range(len(isnot[0])):
                 ismout[i, isnot[0][j], isnot[1][j]] = altpred[j] - baselines[i]
+            #afterall = time.time()
+            #print('sorting', after-afterall)
+        end = time.time()
+        print('ISM time for', x.size(dim = 0), len(tracks),  end-start)
         ismout = np.swapaxes(np.swapaxes(ismout, 1, -1), -1,-2)
+        if correct_from_neutral:
+            ismout = correct_by_mean(ismout)
     return ismout
 '''
 # slower because grad is computed for all inputs
@@ -201,7 +224,7 @@ def takegrad(x, model, tracks):
     return grad
 '''                                                        
 
-def takegrad(x, model, tracks):
+def takegrad(x, model, tracks, correct_from_neutral = True):
     grad = []
     if isinstance(x, list):
         x = [torch.Tensor(xi) for xi in x]
@@ -230,7 +253,10 @@ def takegrad(x, model, tracks):
                 grad[n].append(np.concatenate(gra[n],axis = 0))
         for n in range(Nin):
             grad[n] = np.array(grad[n])
+            if correct_from_neutral:
+                grad[n] = correct_by_mean(grad[n])
     else:
+        start = time.time()
         for i in range(x.size(dim = 0)):
             xi = torch.clone(x[[i]])
             xi.requires_grad = True
@@ -245,48 +271,85 @@ def takegrad(x, model, tracks):
                 xi.grad.zero_()
             grad.append(np.concatenate(gra,axis = 0))
         grad = np.array(grad)
+        end = time.time()
+        if correct_from_neutral:
+            grad = correct_by_mean(grad)
+        print('TISM time for', x.size(dim = 0), len(tracks),  end-start)
     return grad
 
 
 
+# "scales" deeplift output to the effective change from baseline to observed sequence
+def correct_deeplift(dlvec, freq):
+    if len(np.shape(freq)) < len(np.shape(dlvec)):
+        freq = np.ones_like(dlvec) * freq[:,None] # for each base, we have to "take step" from the frequency in baseline to 1.
+    # This whole procedure is similar to ISM, where we remove the reference base and set it to zero, so take a step of -1, and then go a step of one in the direction of the alternative base. DeepLift returns the regression coefficients, which need to be scaled to the steps that are taken to arrive at the base we're looking at.
+    negmul = np.sum(dlvec * freq, axis = -2)
+    dlvec = dlvec - negmul[...,None,:]
+    return dlvec
 
+# use a different way to correct_deeplift, and allow for multiple dlvec and mulitple freq
+# use deeplift in a different way, give it list of output tracks and multiple sequences at once. 
+    
                 
-def deeplift(x, model, tracks, deepshap = False):
+def deeplift(x, model, tracks, deepshap = False, basefreq = None, batchsize = None, effective_attributions = True):
     from captum.attr import DeepLift, DeepLiftShap
     #GradientShap,
     #DeepLift,
     #DeepLiftShap,
     #IntegratedGradients)
     if deepshap:
-        dl = DeepLiftShap(model.eval())
+        dl = DeepLiftShap(model.eval(), multiply_by_inputs=False)
     else:
-        dl = DeepLift(model.eval())
+        dl = DeepLift(model.eval(), multiply_by_inputs=False, eps=1e-6)
     
     x = torch.Tensor(x)
+    # when shift_sequence in my model is not None, inputs will be padded
     if model.shift_sequence is not None:
         x = torch.nn.functional.pad(x, (model.shift_sequence, model.shift_sequence), mode = 'constant', value = 0.25)
-    batchsize = model.batchsize
-    baseline = torch.ones_like(x)*0.25
-    baseline = baseline
+    # batch size will be taken from model
+    if batchsize is None:
+        batchsize = model.batchsize
+    fnum = x.size(-2)
+    if basefreq is None:
+        basefreq = 1./x.size(-2)
+    if isinstance(basefreq, float):
+        basefreq = torch.ones(fnum) * basefreq
+    # basefreq needs to be an array of length fnum by now, can also be provided as an array
+    baseline = torch.ones_like(x)*basefreq[:,None]
+    # Version were each sequence is tested against a random set of permutations is not implemented yet and requires way more resources
     grad = []
+    deltas = []
+    # perform deeplift independently for each output track
     for t, tr in enumerate(tracks):
         gr = []
+        delt = []
+        # use batchsize to avoid memory issues
         for b in range(0,x.size(dim = 0), batchsize):
             xb = x[b:b+batchsize].to(model.device)
             bb = baseline[b:b+batchsize].to(model.device)
             attributions, delta = dl.attribute(xb, bb, target=int(tr), return_convergence_delta=True)
+            delt.append(delta.cpu().detach().numpy())
             gr.append(attributions.cpu().detach().numpy())
         grad.append(np.concatenate(gr, axis = 0))
+        delt = np.concatenate(delt)
+        print('Deltas for track', tr, 'min', np.amin(delt), '5%', np.percentile(delt, 5), '10%',np.percentile(delt, 10), 'median',np.median(delt), '90%',np.percentile(delt, 90),'95%',np.percentile(delt, 95),'max', np.amax(delt))
+    # return array if shape = (Ndatapoints, Ntracks, Nbase, Lseq)
     grad = np.transpose(np.array(grad), axes = (1,0,2,3))
     if model.shift_sequence is not None:
-        grad = grad[..., model.shift_sequence:-model.shift_sequence]
+        grad = grad[..., model.shift_sequence: np.shape(grad)[-1]-model.shift_sequence]
+    # correct the deeplift output
+    if effective_attributions:
+        grad = correct_deeplift(grad, basefreq.detach().numpy())
     print(np.shape(grad))
     return grad            
 
 
-def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise = False, ppmparal = False, stppm= None, Nppm = None, respwm = 50000): 
+def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise = False, ppmparal = False, stppm= None, Nppm = None, respwm = 200000): 
         ppms = [] # position frequency matrices from kernel weights, with biases included 
         pwms = [] # position frequency matrices from alignment of highest scoring sequences, zscore > 2.326
+        weights = []
+        
         biases = [] # biases of kernels
         motifmeans = [] # mean activation of kernel
         motifnames = [] # generate list of names
@@ -333,6 +396,7 @@ def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise
                 else:
                     stppm, Nppm = 0, len(kernelweight)
                 # collect kernels to transform weights directly to ppms.
+                weights.append(kernelweight)
                 ppms.append(kernelweight)
                 # collect the biases if bias is not None
                 if model.kernel_bias:
@@ -345,7 +409,7 @@ def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise
                 # compute motif means from the activation of kernels with the random sequences.
                 seqactivations = np.sum(ppms[-1][:,None]*seq_seq[None,...],axis = (2,3))
                 # generate motifs from aligned sequences with activation over 0.9 of the maximum activation
-                pwms.append(pwms_from_seqs(seq_seq, seqactivations, 2.326))
+                pwms.append(pwms_from_seqs(seq_seq, seqactivations, 1.64))
                 # take the mean of these activations from all 100000 sequences as a mean actiavation value for each filter.
                 if not onlyppms:
                     motifmeans.append(np.mean(seqactivations + bias[:,None] , axis = 1))
@@ -380,13 +444,13 @@ def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise
         biases = np.concatenate(biases, axis = 0)
         # create ppms directly from kernel matrix
         ppms = np.around(kernel_to_ppm(ppms[:,:,:], kernel_bias =biases),3)
-        
+        weights = np.around(kernelweight, 6)
         # generate pwms from most activated sequences
         pwms = np.around(np.concatenate(pwms, axis = 0),3)
         min_nonrand_freq = 0.3
         iupacmotifs = pfm2iupac(pwms, bk_freq = min_nonrand_freq)
     
-        return ppms, pwms, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr
+        return ppms, pwms, weights, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr
 
 
 def indiv_network_contribution(model, X, Y, testclasses, outname, names):
@@ -456,7 +520,7 @@ def write_meme_file(pwm, pwmname, alphabet, output_file_path):
     print("Saved PWM File as : {}".format(output_file_path))
 
     for i in range(0, n_filters):
-        if np.sum(pwm[i]) > 0:
+        if np.sum(np.absolute(pwm[i])) > 0:
             meme_file.write("\n")
             meme_file.write("MOTIF %s \n" % pwmname[i])
             meme_file.write(
@@ -465,7 +529,7 @@ def write_meme_file(pwm, pwmname, alphabet, output_file_path):
             )
         
         for j in range(0, np.shape(pwm[i])[-1]):
-            if np.sum(pwm[i][:, j]) > 0:
+            #if np.sum(pwm[i][:, j]) > 0:
                 for a in range(len(alphabet)):
                     if a < len(alphabet)-1:
                         meme_file.write(str(pwm[i][ a, j])+ "\t")

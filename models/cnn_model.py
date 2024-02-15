@@ -703,6 +703,7 @@ if __name__ == '__main__':
             print('Selected list names do not match the names in the data')
             sys.exit()
         X, names = X[mask], names[mask]
+        print('List selected', np.shape(X))
         if Y is not None:
             if isinstance(Y, list):
                 Y = [y[mask] for y in Y]
@@ -978,15 +979,15 @@ if __name__ == '__main__':
     # Can be used if training might interrupted and training should be restarted automatically. 
     if '--loadifexist' in sys.argv and os.path.isfile(model.outname+'_parameter.pth'):
         parameterfile = model.outname+'_parameter.pth'
-        if len(sys.argv) > sys.argv.index('--loadifexit')+1:
-            if '=' in sys.argv[sys.argv.index('--loadifexit')+1]:
-                if '+' in sys.argv[sys.argv.index('--loadifexit')+1]:
-                    adjpar = sys.argv[sys.argv.index('--loadifexit')+1].split('+')
+        if len(sys.argv) > sys.argv.index('--loadifexist')+1:
+            if '=' in sys.argv[sys.argv.index('--loadifexist')+1]:
+                if '+' in sys.argv[sys.argv.index('--loadifexist')+1]:
+                    adjpar = sys.argv[sys.argv.index('--loadifexist')+1].split('+')
                 else:
-                    adjpar = [sys.argv[sys.argv.index('--loadifexit')+1]]
+                    adjpar = [sys.argv[sys.argv.index('--loadifexist')+1]]
             for p in adjpar:
                 p = p.split('=',1)
-            model.__dict__[p[0]] = check(p[1])
+                model.__dict__[p[0]] = check(p[1])
                     
             
             
@@ -1020,7 +1021,9 @@ if __name__ == '__main__':
             obj = open(model.outname+'_model_params.dat', 'a')
             obj.write('param_file : '+ os.path.split(list_of_pwms)[1] +'\n')
             obj.close()
-        init_kernels = OrderedDict({ 'convolutions.weight': torch.Tensor(init_kernels[np.argsort(-np.sum(init_kernels, axis = (1,2)))])})
+        init_kernels = OrderedDict({ 'convolutions.conv1d.weight': torch.Tensor(init_kernels[np.argsort(-np.sum(init_kernels, axis = (1,2)))])})
+        if model.kernel_bias is not None:
+            init_kernels['convolutions.conv1d.bias'] = torch.zeros(model.num_kernels)
         load_parameters(model, init_kernels, allow_reduction = True)
     
     
@@ -1071,6 +1074,15 @@ if __name__ == '__main__':
                     for m in mask:
                         testclasses[m] = testclasses[m] + fileclass[m]
         
+        meanclasses = None
+        if '--average_outclasses' in sys.argv:
+            meanclasses = np.genfromtxt(sys.argv[sys.argv.index('--average_outclasses')+1], dtype = str)
+            tsort = []
+            for exp in experiments:
+                tsort.append(list(meanclasses[:,0]).index(exp))
+            meanclasses = meanclasses[tsort][:,1]
+            
+        
         # Sometimes we're not interested in the reconstruction for all genes in the training set and we can define a set of genes that we're most interested in
         if '--significant_genes' in sys.argv:
             siggenes = np.genfromtxt(sys.argv[sys.argv.index('--significant_genes')+1], dtype = str)
@@ -1084,7 +1096,7 @@ if __name__ == '__main__':
         print_averages(Y_pred, Y[testset], testclasses, sys.argv)
         
         # USE: --save_correlation_perclass --save_auroc_perclass --save_auprc_perclass --save_mse_perclass --save_correlation_pergene '--save_mse_pergene --save_auroc_pergene --save_auprc_pergene --save_topdowncorrelation_perclass
-        save_performance(Y_pred, Y[testset], testclasses, experiments, names[testset], outname, sys.argv, compare_random = True)
+        save_performance(Y_pred, Y[testset], testclasses, experiments, names[testset], outname, sys.argv, compare_random = True, meanclasses = meanclasses)
         
     if '--save_predictions' in sys.argv:
         print('SAVED', outname+'_pred.npz')
@@ -1096,24 +1108,32 @@ if __name__ == '__main__':
         if ',' in ismtrack:
             itrack = np.array(ismtrack.split(','), dtype = int)
         elif ismtrack == 'all' or ismtrack == 'complete':
-            itrack = np.arange(len(Y[0]), dtype = int)
+            itrack = np.arange(len(Y_pred[0]), dtype = int)
+        elif 'to' in gradtrack:
+            itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
         else:
             itrack = [int(ismtrack)]
         ismarray = ism(X[testset], model, itrack)
         print('Saved ism with', np.shape(ismarray))
-        np.savez_compressed(outname + '_ism'+ismtrack.replace(',', '-') + '.npz', names = names[testset], values = ismarray, experiments = experiments[itrack])
+        if experiments is not None:
+            itrack = experiments[itrack]
+        np.savez_compressed(outname + '_ism'+ismtrack.replace(',', '-') + '.npz', names = names[testset], values = ismarray, experiments = itrack)
     
     if '--grad' in sys.argv:
         gradtrack = sys.argv[sys.argv.index('--grad')+1]
         if ',' in gradtrack:
             itrack = np.array(gradtrack.split(','), dtype = int)
         elif gradtrack == 'all' or gradtrack == 'complete':
-            itrack = np.arange(len(Y[0]), dtype = int)
+            itrack = np.arange(len(Y_pred[0]), dtype = int)
+        elif 'to' in gradtrack:
+            itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
         else:
             itrack = [int(gradtrack)]
         gradarray = takegrad(X[testset], model, itrack)
         print('Saved grad with', np.shape(gradarray))
-        np.savez_compressed(outname + '_grad'+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = experiments[itrack])
+        if experiments is not None:
+            itrack = experiments[itrack]
+        np.savez_compressed(outname + '_grad'+gradtrack.replace(',', '_') + '.npz', names = names[testset], values = gradarray, experiments = itrack)
     
     # implement also integrated gradients and others
     # Does not work yet, potentially because it dislikes some programming choices. 
@@ -1128,12 +1148,16 @@ if __name__ == '__main__':
         if ',' in gradtrack:
             itrack = np.array(gradtrack.split(','), dtype = int)
         elif gradtrack == 'all' or gradtrack == 'complete':
-            itrack = np.arange(len(Y[0]), dtype = int)
+            itrack = np.arange(len(Y_pred[0]), dtype = int)
+        elif 'to' in gradtrack:
+            itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
         else:
             itrack = [int(gradtrack)]
         gradarray = deeplift(X[testset], model, itrack, deepshap = deepshap)
         print('Saved deeplift with', np.shape(gradarray), deepshap)
-        np.savez_compressed(outname + add+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = experiments[itrack])
+        if experiments is not None:
+            itrack = experiments[itrack]
+        np.savez_compressed(outname + add+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = itrack)
     
     if '--ismgrad' in sys.argv:
         todo=1
@@ -1166,10 +1190,11 @@ if __name__ == '__main__':
         if '--genewise_kernel_impact' in sys.argv:
             genewise = True
             
-        ppms, pwms, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, onlyppms = onlyppms, genewise = genewise, ppmparal = ppmparal, stppm= stppm, Nppm = Nppm)
+        ppms, pwms, weights, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, onlyppms = onlyppms, genewise = genewise, ppmparal = ppmparal, stppm= stppm, Nppm = Nppm)
         
         write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms'+addppmname+'.meme')
         write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms'+addppmname+'.meme')
+        write_meme_file(weights, motifnames, 'ACGT', outname+'_kernelweights'+addppmname+'.meme')
         
         if not onlyppms:
             importance = np.array(importance)
@@ -1177,10 +1202,10 @@ if __name__ == '__main__':
             effect = np.array(effect)
             abseffect = np.array(abseffect)
             
-            np.savetxt(outname+'_kernattrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), importance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-            np.savetxt(outname+'_kernmsetrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), mseimportance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-            np.savetxt(outname+'_kernimpact'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), effect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
-            np.savetxt(outname+'_kerneffct'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), abseffect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
+            np.savetxt(outname+'_kernattrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), importance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments)) # change in correlation for each class
+            np.savetxt(outname+'_kernmsetrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), mseimportance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments)) # change in mse for each class
+            np.savetxt(outname+'_kernimpact'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), effect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments)) # weighted effect by the change in mse for each gene
+            np.savetxt(outname+'_kerneffct'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), abseffect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments)) # directly computed effect for each cell type
             
             if '--genewise_kernel_impact' in sys.argv:
                 # summarize the correlation change of all genes that are predicted better than corrcut

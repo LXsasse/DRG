@@ -30,9 +30,9 @@ def correlation(y1, y2, axis = 1, ctype = 'pearson', distance = True):
     if isinstance(y12, float):
         if n12/max(n1,n2) < 1e-16:
             n12, y12 = 1., -1.
-        else:
-            y12[n12/np.amax(np.array([n1,n2]),axis = 0) < 1e-16] = -1.
-            n12[n12/np.amax(np.array([n1,n2]),axis = 0) < 1e-16] = 1
+    else:
+        y12[n12/np.amax(np.array([n1,n2]),axis = 0) < 1e-16] = -1.
+        n12[n12/np.amax(np.array([n1,n2]),axis = 0) < 1e-16] = 1
     corout = y12/n12
     if distance:
         corout = 1.-corout
