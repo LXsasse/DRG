@@ -17,16 +17,19 @@ def add_frames(att, locations, colors, ax):
         ax.plot([x[1], x[1]] , [mina, maxa], c = cmap[colors[l]])
 
 
-def plot_attribution(seq, att, motifs = None, seq_based = True, figscale = 0.15, ylim = None):
+def plot_attribution(seq, att, motifs = None, seq_based = True, center_attribution = False, figscale = 0.15, ylim = None):
     #print(att[0,:10,:,0], att[0,:10,:,0])
     ism = np.copy(att)
+    
+    if center_attribution:
+        att -= (np.sum(att, axis = -1)/4)[...,None]
+        
+    
     if seq_based:
-        att = -np.sum(att, axis = -1)/3
-        att = seq * att[:, None]
-        ylabel = 'ISM\nmean'
-    else:
-        att -= (np.sum(att, axis = -1)/3)[..., None]
-        ylabel = 'centered ISM'
+        att = seq * att
+        ylabel = 'Attribution\nat ref'
+    if ylabel is None:
+        ylabel = 'Attribution'
     
     
     mina = min(0,np.amin(np.sum(np.ma.masked_greater(att,0), axis = -1)))
@@ -153,8 +156,19 @@ if __name__ == '__main__':
             mlocs[m][1] = np.array(ml[1].split('-'), dtype = int)
         mlocs[:,[2,3]] = mlocs[:,[2,3]].astype(int)
 
+    centatt = False
+    if '--centerattributions' in sys.argv:
+        att -= (np.sum(att, axis = -1)/4)[...,None]
+    elif '--decenterattributions' in sys.argv:
+        att -= seq * att
+    elif '--meaneffectattributions' in sys.argv:
+        att -= (np.sum((seq == 0)*att, axis = -1)/3)[...,None]
+    elif '--centerattributionsforvisual' in sys.argv:
+        centatt = True
+    
+    
     seq_based = True
-    if '--attributions' in sys.argv:
+    if '--showall_attributions' in sys.argv:
         seq_based = False
 
     if '--transpose_seq' in sys.argv:
@@ -175,7 +189,7 @@ if __name__ == '__main__':
         ylim = np.array(ylim, dtype = float)
         print(ylim)
         
-    fig = plot_attribution(seq, att, motifs = mlocs, seq_based = seq_based, ylim = ylim)
+    fig = plot_attribution(seq, att, motifs = mlocs, seq_based = seq_based, center_attribution = centatt, ylim = ylim)
     if '--show' in sys.argv:
         plt.show()
     else:

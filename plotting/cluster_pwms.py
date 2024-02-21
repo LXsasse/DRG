@@ -243,6 +243,7 @@ def write_pwm(file_path, pwms, names):
     for n, name in enumerate(names):
         obj.write('Motif\t'+name+'\n'+'Pos\tA\tC\tG\tT\n')
         for l, line in enumerate(pwms[n]):
+            line = line.astype(float)
             obj.write(str(l+1)+'\t'+'\t'.join(np.around(line,3).astype(str))+'\n')
         obj.write('\n')
     
@@ -383,11 +384,13 @@ def combine_pwms(pwms, clusters, similarity, offsets, orientation, maxnorm = Tru
                 seed = seed/seedcount[:,None]
         else:
             seed = pwms[mask[0]]
+            seedcount = np.ones(len(seed))
 
         if maxnorm:
             seed = seed/np.amax(seedcount)
         else:
             seed = seed/np.sum(np.absolute(seed),axis = 1)[:, None]
+        
         if remove_low > 0:
             edges = np.where(np.sum(np.absolute(seed), axis = 1)>remove_low)[0]
             if len(edges) > 0:
@@ -409,6 +412,9 @@ if __name__ == '__main__':
     pwmfile = sys.argv[1]
     outname = os.path.splitext(pwmfile)[0]
     infmt= os.path.splitext(pwmfile)[1]
+    
+    if '--outname' in sys.argv:
+        outname = sys.argv[sys.argv.index('--outname')+1]
     
     if '--loadstats' in sys.argv:
         pf = np.load(pwmfile, allow_pickle = True)
@@ -498,7 +504,9 @@ if __name__ == '__main__':
         if '--save_stats' in sys.argv:
             np.savez_compressed(outname+'_stats.npz', pwmnames = pwmnames, correlation = correlation, logpvalues = logs, offsets = ofs, pwms = pwm_set, revcomp_matrix = revcomp_matrix)
             
-    
+    if '--outname' in sys.argv and '--loadstats' in sys.argv:
+        outname = sys.argv[sys.argv.index('--outname')+1]
+        
     linkage = sys.argv[2]
     if os.path.isfile(linkage):
         outname = os.path.splitext(linkage)[0]
@@ -512,7 +520,7 @@ if __name__ == '__main__':
         
     else:
         distance_threshold = float(sys.argv[3])
-        outname += '_clustered' + linkage
+        outname += '_cld' + linkage
         
         n_clusters = None
         if '--nclusters' in sys.argv:
@@ -523,7 +531,7 @@ if __name__ == '__main__':
         outname +=str(distance_threshold)
         
         if '--clusteronlogp' in sys.argv:
-            outname += 'pvalclust'
+            outname += 'pv'
             #logs = 10**-logs
             clustering = AgglomerativeClustering(n_clusters = n_clusters, affinity = 'precomputed', linkage = linkage, distance_threshold = distance_threshold).fit(10**-logs)
         else:
@@ -534,9 +542,10 @@ if __name__ == '__main__':
         print(outname + '.txt')
         
     print(len(pwm_set), 'form', len(np.unique(clusters)), 'clusters')
-        
+    
     clusterpwms = combine_pwms(np.array(pwm_set, dtype = object), clusters, logs, ofs, revcomp_matrix)
     #clusterpwms_sing = combine_pwms_single(pwm_set, clusters, logs, ofs)
+        
     if '--clusternames' in sys.argv:
         clusternames = ['Cluster_'+str(i) for i in np.unique(clusters)]
     else:
