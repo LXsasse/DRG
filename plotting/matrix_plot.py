@@ -429,7 +429,43 @@ def approximate_density(set1, bins = 20, moves = 4, miny=None, maxy = None):
         dens = dens/dcount
     return dens
 
-def plot_distribution(matrix, modnames, vert = True, labelside = 'default', ax = None, sort = None, split = 1, outname = None, xwidth = 0.6, height = 4, width = 0.8, show_mean = False, showfliers = False, showcaps = True, facecolor = None, mediancolor = None, grid = True, swarm = False, plotnames = 0, datanames = None, scatter_color = 'grey', scatter_colormap = cm.jet, scatter_alpha = 0.8, scatter_size = 0.5, connect_swarm = False, scattersort = 'top', ylim = None, sizemax = 2, sizemin = 0.25, colormin = None, colormax = None, dpi = 200, savedpi = 200, xorder = 'size', ylabel = None, fmt = 'jpg'):
+def plot_distribution(
+    matrix, 
+    modnames, 
+    vert = True, 
+    labelside = 'default', 
+    ax = None, 
+    sort = None, 
+    split = 1, 
+    outname = None, 
+    xwidth = 0.6, 
+    height = 4, 
+    width = 0.8, 
+    show_mean = False, 
+    showfliers = False, 
+    showcaps = True, 
+    facecolor = None, 
+    mediancolor = None, 
+    grid = True, 
+    swarm = False, 
+    plotnames = 0, 
+    datanames = None, 
+    scatter_color = 'grey', 
+    scatter_colormap = cm.jet, 
+    scatter_alpha = 0.8, 
+    scatter_size = 0.5, 
+    connect_swarm = False, 
+    scattersort = 'top', 
+    ylim = None, 
+    sizemax = 2, 
+    sizemin = 0.25, 
+    colormin = None, 
+    colormax = None, 
+    dpi = 200, 
+    savedpi = 200, 
+    xorder = 'size', 
+    ylabel = None, 
+    fmt = 'jpg'):
     
     if sort is not None:
         positions = np.argsort(sort)

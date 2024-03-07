@@ -101,7 +101,7 @@ if __name__ == '__main__':
     elect = sys.argv[4]
     
     names, values, exp = ism['names'], ism['values'], ism['experiments']
-    
+    print(exp)
     seqfeatures, genenames = ref['seqfeatures'], ref['genenames']
     if len(np.shape(seqfeatures)) == 1:
         seqfeatures, featurenames = seqfeatures

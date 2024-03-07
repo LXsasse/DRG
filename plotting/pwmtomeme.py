@@ -107,7 +107,7 @@ if __name__ == '__main__':
         for p,pwm in enumerate(pwms):
             pwms[p] = np.exp(pwm)
         
-    if '--normpwms' in sys.argv:
+    if '--norm' in sys.argv:
         for p,pwm in enumerate(pwms):
             pwms[p] = pwm/np.sum(pwm,axis =0)
     

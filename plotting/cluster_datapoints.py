@@ -4,7 +4,7 @@ from data_processing import check
 from scipy.linalg import svd
 from scipy.spatial.distance import cdist
 from sklearn.cluster import AgglomerativeClustering
-
+from functools import reduce
 
 
 
@@ -37,6 +37,7 @@ def read(outputfile, delimiter = None):
             for i, yi in enumerate(Y):
                 Y[i] = yi[np.isin(outputnames[i], comnames)]
             outputnames = comnames
+    Y = np.concatenate(Y, axis = 1)
     print(len(outputnames), np.shape(Y))
     return outputnames, Y
 
@@ -78,7 +79,7 @@ def getcentroids(labels, distmat):
     return np.array(centroids), np.array(maxdist)
     
 
-def determine_cluster(X, distance, clustering, clustpar, cparms, plot_mat = False):
+def determine_cluster(X, distance, clustering, clustpar, cparms):
     if type(clustpar) == int:
         n_clusters = clustpar
         distance_threshold = None
@@ -99,9 +100,6 @@ def determine_cluster(X, distance, clustering, clustpar, cparms, plot_mat = Fals
         ca = AgglomerativeClustering(n_clusters=n_clusters, affinity='precomputed', distance_threshold = distance_threshold, **cparms)
     ca.fit(distmat)
     labels = ca.labels_
-    
-    if plot_mat:
-        
     
     if Xold is not None:
         centroids, distcentroid = getcentroids(labels, distmat)
@@ -130,7 +128,12 @@ if __name__ == '__main__':
     clustering = sys.argv[3]
     clustpar = sys.argv[4]
     
-    outname = os.path.splitext(data)[0] + '_cluster'+distance
+    if '--outname' in sys.argv:
+        outname = sys.argv[sys.argv.index('--outname')+1]
+    else:
+        outname = os.path.splitext(data)[0] 
+        
+    outname += '_cluster'+distance
     
     xnames, X = read(data)
     

@@ -437,7 +437,14 @@ if __name__ == '__main__':
         genenames, sequences = genenames[filt], sequences[filt]
         outname += '_max'+str(maxsize)
         print(int(np.sum(~filt)), 'removed because longer than', maxsize)
-        
+    
+    elif '--cut_seqlength' in sys.argv:
+        maxsize = int(sys.argv[sys.argv.index('--cut_seqlength')+1])
+        filt = np.where(np.array(selen) > maxsize)[0]
+        for s in filt:
+            sequences[s] = sequences[s][:maxsize]
+        outname += '_cut'+str(maxsize)
+        print(len(filt), 'shortened because longer than', maxsize)
 
     # optionally provide positions with gneomic regions in transcripts
     # Format:

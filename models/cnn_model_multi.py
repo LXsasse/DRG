@@ -146,7 +146,7 @@ class combined_network(nn.Module):
                 self.n_combine_layers = [n_combine_layers for i in range(len(self.n_classes))]
                     
                     
-        elif (('FRACTION' in outclass.upper()) or ('DIFFERENCE' in outclass.upper())or ('DIRECT' in cout.upper())) and len(l_seqs) == 2:
+        elif (('FRACTION' in outclass.upper()) or ('DIFFERENCE' in outclass.upper())or ('DIRECT' in outclass.upper())) and len(l_seqs) == 2:
             self.cnn_embedding = cnn_embedding = n_classes
             self.n_combine_layers = 0
             self.use_nnout = False
@@ -342,13 +342,13 @@ if __name__ == '__main__':
         if np.sum(mask) < 1:
             print('Selected list names do not match the names in the data')
             sys.exit()
-        X, names = X[mask], names[mask]
+        X, names = [x[mask] for x in X], names[mask]
         if Y is not None:
             if isinstance(Y, list):
                 Y = [y[mask] for y in Y]
             else:
                 Y = Y[mask]
-    
+        print('Selected list', len(names))
     
     # Don't use with multiple Y
     if '--remove_allzero' in sys.argv and Y is not None:
@@ -431,7 +431,7 @@ if __name__ == '__main__':
             cvs = True
     elif '--predictnew' in sys.argv:
         cvs = False
-        trainset, testset, valset = [], np.arange(len(Y), dtype = int), []
+        trainset, testset, valset = [], np.arange(len(names), dtype = int), []
     else:
         folds, fold, Yclass = 10, 0, None
         cvs = True
@@ -651,7 +651,7 @@ if __name__ == '__main__':
         else:
             Ytraintomodel, Yvaltomodel = Y[trainset], Y[valset]
         model.fit([x[trainset] for x in X], Ytraintomodel, XYval = [[x[valset] for x in X], Yvaltomodel])
-    
+    print(testset)
     Y_pred = model.predict([x[testset] for x in X])
     
     if isinstance(Y,list):
@@ -714,6 +714,10 @@ if __name__ == '__main__':
         #np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
         np.savez_compressed(outname+'_pred.npz', names = names[testset], values = Y_pred, columns = experiments)
     
+    topattributions = None
+    if '--topattributions' in sys.argv:
+        topattributions = int(sys.argv[sys.argv.index('--topattributions')+1])
+    
     if '--ism' in sys.argv:
         ismtrack = sys.argv[sys.argv.index('--ism')+1]
         if ',' in ismtrack:
@@ -734,7 +738,7 @@ if __name__ == '__main__':
             itrack = np.arange(len(Y[0]), dtype = int)
         else:
             itrack = [int(gradtrack)]
-        gradarray = takegrad([x[testset] for x in X], model, itrack)
+        gradarray = takegrad([x[testset] for x in X], model, itrack, top = topattributions)
         print('Saved grad with', np.shape(gradarray))
         np.savez_compressed(outname + '_grad'+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = experiments[itrack])
     

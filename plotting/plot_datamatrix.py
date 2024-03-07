@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import sys, os
 from matrix_plot import plot_heatmap
 from data_processing import check 
+from functools import reduce 
 
 def read(outputfile, delimiter = None):
     celltypes = None
@@ -54,7 +55,7 @@ def read(outputfile, delimiter = None):
                 celltypes = None
             else:
                 celltypes = np.concatenate(celltypes)
-                
+    Y = np.concatenate(Y, axis = 1)
     print(len(outputnames), np.shape(Y))
     return outputnames, Y, celltypes
 

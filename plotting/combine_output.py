@@ -147,7 +147,7 @@ if __name__ == '__main__':
 
 
 
-
+    # selected sets of genes
     if '--sets' in sys.argv:
         setfiles = sys.argv[sys.argv.index('--sets')+1]
         masks = []
@@ -170,6 +170,7 @@ if __name__ == '__main__':
             data[d] = da[masks[d]]
             print('Select', np.shape(data[d]))
 
+    # assigns colors to the 
     if '--colors' in sys.argv:
         setfiles = sys.argv[sys.argv.index('--colors')+1]
         masks = []
@@ -202,7 +203,7 @@ if __name__ == '__main__':
             data[d] = da[masks[d]]
             print('Select', np.shape(data[d]))
 
-
+    # rescale values to min max 
     if '--scale' in sys.argv:
         scalefiles = sys.argv[sys.argv.index('--scale')+1]
         scalemin = float(sys.argv[sys.argv.index('--scale')+2]) # also filters everything that is below a reproducible threshold of this

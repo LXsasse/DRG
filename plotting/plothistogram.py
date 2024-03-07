@@ -69,6 +69,9 @@ if '--column' in sys.argv:
 names, data = read(sys.argv[1], column = column)
 outname = os.path.splitext(sys.argv[1])[0]+'_hist'+str(column)
 
+if '--outname' in sys.argv:
+    outname = sys.argv[sys.argv.index('--outname')+1]
+
 if '--count_classes' in sys.argv:
     ud, data = np.unique(data, return_counts = True)
     if '--remove_class' in sys.argv:
@@ -92,8 +95,8 @@ bins = None
 if '--bins' in sys.argv:
     bins = sys.argv[sys.argv.index('--bins')+1]
     if ',' in bins:
-        bins = np.array(bins.split(','),dtype=int)
-        bins = np.linspace(bins[0], bins[1], bins[2])
+        bins = np.array(bins.split(','),dtype=float)
+        bins = np.linspace(bins[0], bins[1], int(bins[2]))
         print(bins)
     else:
         bins = int(bins)

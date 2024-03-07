@@ -94,6 +94,8 @@ def sorttfset(target, targetnames, tnames, stat, tfmetric, tfmetfilter):
         mask = np.where(tnames == tn)[0]
         sort = np.lexsort(stat[mask], -newstat[mask])
         tnames[mask], target[mask], targetnames[mask], stat[mask] = tnames[mask][sort], target[mask][sort], targetnames[mask][sort], stat[mask][sort]
+    
+    sys.exit()
     return target, targetnames, tnames, stat
 
 if __name__ == '__main__':
@@ -162,6 +164,7 @@ if __name__ == '__main__':
         outname += '.'+os.path.splitext(os.path.split(tfmetric)[1])[0] +'.'+tfmetfilter
         tfmetric = np.genfromtxt(tfmetric, dtype = str)
         # this metric can either be for a pair or for a TF, so we need make sure that we assign it correctly and determine how deal with cases that are not in the set.
+        print(target, targetnames, tnames, stat, tfmetric)
         target, targetnames, tnames, stat = sorttfset(target, targetnames, tnames, stat, tfmetric, tfmetfilter)
         
         

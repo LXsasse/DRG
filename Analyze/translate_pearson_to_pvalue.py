@@ -2,6 +2,7 @@ import scipy.special as special
 import numpy as np
 import sys, os
 from statsmodels.stats.multitest import multipletests
+from scipy.stats import t
 
 '''
 Under the assumption that x and y are drawn from
@@ -49,10 +50,32 @@ be 1, the two-sided p-value for a sample of length 2 is always 1.
 def correlation2pvalue(r, n):
     ab = n/2 - 1
     prob = 2*special.btdtr(ab, ab, 0.5*(1 - abs(np.float64(r))))
-    
     return prob
 
+
+# add function pvalue2correlation to compute correlation tresholds for pvalues
+def correlation_to_pvalue(r,n):
+    tt = r* np.sqrt(n-2)/np.sqrt(1-r**2)
+    pval = t.sf(np.abs(tt), n-1)*2
+    return pval
+
+# t.sf is 1-t.cdf
+
+def pvalue_to_correlation(pval,n):
+    tt = t.isf(pval/2, n-1)
+    r = np.sqrt(tt**2/(n-2+tt**2))
+    return r
+
+
 if __name__ == '__main__':
+    
+    '''
+    r = 0.6
+    n = 20
+    print(correlation2pvalue(r,n))
+    print(correlation_to_pvalue(r,n))
+    print(pvalue_to_correlation(correlation_to_pvalue(r,n),n))
+    '''
     
     corrfile = np.genfromtxt(sys.argv[1], dtype = str)
     numsamp = int(sys.argv[2])

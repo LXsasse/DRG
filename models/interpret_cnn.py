@@ -224,7 +224,7 @@ def takegrad(x, model, tracks):
     return grad
 '''                                                        
 
-def takegrad(x, model, tracks, correct_from_neutral = True):
+def takegrad(x, model, tracks, correct_from_neutral = True, top=None):
     grad = []
     if isinstance(x, list):
         x = [torch.Tensor(xi) for xi in x]
@@ -250,11 +250,27 @@ def takegrad(x, model, tracks, correct_from_neutral = True):
                     gra[n].append(gr)
                 xij.grad.zero_()
             for n in range(Nin):
-                grad[n].append(np.concatenate(gra[n],axis = 0))
+                gra[n] = np.concatenate(gra[n],axis = 0)
+                if correct_from_neutral:
+                    gra[n] = correct_by_mean(gra[n])
+                if top is not None:
+                    ngrashape = list(np.shape(gra[n]))
+                    ngrashape[-2] += 1
+                    ngrashape[-1] = top
+                    ngra = np.zeros(ngrashape)
+                    for t in range(np.shape(gra[n])[0]):
+                        lcn = np.argsort(-np.amax(np.absolute(gra[n][t]), axis = -2), axis = -1)
+                        lcn = np.sort(lcn[:top])
+                        ngra[t] = np.append(gra[n][t][...,lcn], lcn[None, :], axis = -2)
+                    gra[n] = ngra
+                    
+                grad[n].append(gra[n])
+                
+                    
         for n in range(Nin):
             grad[n] = np.array(grad[n])
-            if correct_from_neutral:
-                grad[n] = correct_by_mean(grad[n])
+            
+            
     else:
         start = time.time()
         for i in range(x.size(dim = 0)):
