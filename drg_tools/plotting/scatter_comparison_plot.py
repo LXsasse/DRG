@@ -41,12 +41,13 @@ def readfiles(file1, delimiter = None, subtract = False):
         names1 = names1[1:]
     vals1 = np.array(vals1)
     if subtract:
-        vals1 = 1-vals1
+        vals1 = 1-vals1.astype(float)
     names1 = np.array(names1)
     names1, sort = np.unique(names1, return_index = True)
     vals1 = vals1[sort]
     if header is not None and len(header) == np.shape(vals1)[1]:
         header, sort = np.unique(header, return_index = True)
+        vals1 = vals1[:, sort]
         sort = np.argsort(sort)
         header = header[sort]
         vals1 = vals1[:, sort]
@@ -230,7 +231,8 @@ if __name__ == '__main__':
         
     if sizes is not None and '--adjust_size' in sys.argv:
         sizes = sizes * float(sys.argv[sys.argv.index('--adjust_size')+1])
-        
+    
+    cmap = 'viridis'
     if '--colorfile' in sys.argv:
         colorfile = sys.argv[sys.argv.index('--colorfile')+1]
         ccol = sys.argv[sys.argv.index('--colorfile')+2]
@@ -272,6 +274,7 @@ if __name__ == '__main__':
             colorfile = colorfile[:,0]
         colors = np.zeros(len(names))
         colors[np.isin(names, colorfile)] = 1
+        vmin, vmax = 0, 1
         
     elif '--density' in sys.argv:
         colors = gaussian_kde(vals[:, np.random.permutation(len(vals[0]))[:3000]])(vals)
@@ -289,12 +292,19 @@ if __name__ == '__main__':
         colors -= np.amin(colors)
         colors /= np.amax(colors)
         vmin, vmax = 0, 1
+    elif '--setcolor' in sys.argv:
+        cmap = ListedColormap([sys.argv[sys.argv.index('--setcolor')+1]])
+        colors = np.ones(len(vals[0]))
+        vmin = vmax = None
     else:
         colors = None
         vmin = vmax = None
     
+    s1, s2 = 4.5,4.5
+    if '--figsize' in sys.argv:
+        s1, s2 = np.array(sys.argv[sys.argv.index('--figsize')+1].split(','), dtype = float)
     
-    fig = plt.figure(figsize = (4.5,4.5), dpi = 200)
+    fig = plt.figure(figsize = (s1,s2), dpi = 200)
     ax = fig.add_subplot(111)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -307,7 +317,7 @@ if __name__ == '__main__':
     if '--lw' in sys.argv:
         lw = float(sys.argv[sys.argv.index('--lw')+1])
         
-    cmap = 'viridis'
+    
     if '--cmap' in sys.argv:
         cmap = sys.argv[sys.argv.index('--cmap')+1]
         if ',' in cmap:
@@ -349,7 +359,7 @@ if __name__ == '__main__':
         ab = ax.boxplot(boxes, positions = wticks) #, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)))
         ax.set_xticks(wticks)
         ax.set_xticklabels(np.around(wticks,5).astype(str),rotation = 90)
-        a = ax.scatter(vals[0][sortd], vals[1][sortd], s = sizes, cmap = cmap, c=colors, alpha = 0.05, vmin = vmin, vmax = vmax, edgecolor = 'silver', lw = lw, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)), zorder = -1)
+        a = ax.scatter(vals[0][sortd], vals[1][sortd], s = sizes, cmap = cmap, c=colors, alpha = alpha, vmin = vmin, vmax = vmax, edgecolor = 'silver', lw = lw, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)), zorder = -1)
     else:
         a = ax.scatter(vals[0][sortd], vals[1][sortd], s = sizes, cmap = cmap, c=colors, alpha = alpha, vmin = vmin, vmax = vmax, edgecolor = 'silver', lw = lw, label = 'R:'+str(round(pearsonr(vals[0], vals[1])[0],2)))
     
@@ -452,6 +462,10 @@ if __name__ == '__main__':
     if '--symlogy' in sys.argv:
         ax.set_yscale('symlog')
     
+    if '--addnamestoscatter' in sys.argv:
+        # try this: https://github.com/Phlya/adjustText
+        for n, na in enumerate(names):
+            ax.text(vals[0][n], vals[1][n], na, va='bottom', ha = 'left')
     
     dpi = 300
     if '--dpi' in sys.argv:

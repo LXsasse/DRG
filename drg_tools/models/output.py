@@ -525,14 +525,19 @@ def add_params_to_outname(outname, ndict):
 
     
     if 'cnn_embedding' in ndict:
+        cnnemb = ''
+        if 'shared_embedding' in ndict:
+            if ndict['shared_embedding']:
+                cnnemb += 'se'
+        
         if isinstance(ndict['cnn_embedding'], list):
             if len(np.unique(ndict['cnn_embedding']))>1:
-                cnnemb = '-'.join(np.array(unique_ordered(ndict['cnn_embedding'])).astype(str))
+                cnnemb += '-'.join(np.array(unique_ordered(ndict['cnn_embedding'])).astype(str))
             else:
-                cnnemb = ndict['cnn_embedding'][0]
+                cnnemb += str(ndict['cnn_embedding'][0])
         else:
-            cnnemb = ndict['cnn_embedding']
-            
+            cnnemb += str(ndict['cnn_embedding'])
+       
         if isinstance(ndict['n_combine_layers'], list):
             if len(np.unique(ndict['n_combine_layers']))>1:
                 nclay = ''.join(np.array(ndict['n_combine_layers']).astype(str))
@@ -540,8 +545,16 @@ def add_params_to_outname(outname, ndict):
                 nclay = ndict['n_combine_layers'][0]
         else:
             nclay = ndict['n_combine_layers']
+        
+        if isinstance(ndict['combine_function'], list):
+            if len(np.unique(ndict['combine_function']))>1:
+                cof = '-'.join(np.array(unique_ordered(ndict['combine_function'])).astype(str))
+            else:
+                cof = str(ndict['combine_function'][0])
+        else:
+            cof = str(ndict['combine_function'])
             
-        outname += '_comb'+str(cnnemb)+'nl'+str(nclay)+ndict['combine_function']+str(ndict['combine_widening'])+'r'+str(ndict['combine_residual'])
+        outname += '_comb'+str(cnnemb)+'nl'+str(nclay)+cof+str(ndict['combine_widening'])+'r'+str(ndict['combine_residual'])
     
     
     

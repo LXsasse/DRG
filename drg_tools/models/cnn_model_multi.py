@@ -22,7 +22,7 @@ from output import print_averages, save_performance, plot_scatter, add_params_to
 from functions import dist_measures
 from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance, pwms_from_seqs, genseq, takegrad, ism, indiv_network_contribution, kernel_assessment
 from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters, separate_sys
-from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, simple_multi_output, PredictionHead
+from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, func_dict_single, simple_multi_output, PredictionHead
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
@@ -32,7 +32,7 @@ import time
 
 
 class combined_network(nn.Module):
-    def __init__(self, loss_function = 'MSE', validation_loss = None, loss_weights = 1, val_loss_weights = 1, n_features = None, n_classes = 1, l_seqs = None, reverse_complement = None, cnn_embedding = 512, n_combine_layers = 3, combine_function = 'GELU', combine_widening = 1.1, combine_residual = 0, shift_sequence = None, random_shift = False, smooth_onehot = 0, reverse_sign = False, dropout = 0, batch_norm = False, epochs = 1000, lr = 1e-2, kernel_lr = None, cnn_lr = None, batchsize = None, patience = 50, outclass = 'Linear', input_to_combinefunc = 'ALL', outlog = 2, outlogoffset = 2, outname = None, shared_cnns = False, optimizer = 'Adam', optim_params = None, optim_weight_decay = None, verbose = True, checkval = True, init_epochs = 0, writeloss = True, write_steps = 1, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
+    def __init__(self, loss_function = 'MSE', validation_loss = None, loss_weights = 1, val_loss_weights = 1, n_features = None, n_classes = 1, l_seqs = None, reverse_complement = None, cnn_embedding = 512, n_combine_layers = 3, combine_function = 'GELU', shared_embedding = True, combine_widening = 1.1, combine_residual = 0, shift_sequence = None, random_shift = False, smooth_onehot = 0, reverse_sign = False, dropout = 0, batch_norm = False, epochs = 1000, lr = 1e-2, kernel_lr = None, cnn_lr = None, batchsize = None, patience = 50, outclass = 'Linear', input_to_combinefunc = 'ALL', outlog = 2, outlogoffset = 2, outname = None, shared_cnns = False, optimizer = 'Adam', optim_params = None, optim_weight_decay = None, verbose = True, checkval = True, init_epochs = 0, writeloss = True, write_steps = 1, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, **kwargs):
         super(combined_network, self).__init__()
         # set manual seed to replicate results with same seed
         # may not work if dataloader is outside this script and seed is not given to it.
@@ -50,6 +50,7 @@ class combined_network(nn.Module):
         self.cnn_embedding = cnn_embedding # dimension of final output of each CNN that is then concatented and given to n_combine_layers for final prediction from all inputs
         self.n_combine_layers = n_combine_layers
         self.combine_function = combine_function # activation function of the combining network. (For network set to GELU)
+        self.shared_embedding = shared_embedding # if False: the individual sequence cnns return individual embeddings for len(n_classses) outputs, if True: returns only one embedding that is cloned for all. 
         #if output is direct or difference, combine_function is the outclass of the subnetwork. Therefore, if a value can be positive and negativbe, the GELU function will not be correct. (For direct or difference set to Linear)
         self.combine_widening = combine_widening
         self.combine_residual = combine_residual
@@ -93,6 +94,7 @@ class combined_network(nn.Module):
         # __dict__ is used to make a parameter file that contains all the model parameters and can be used for reloading the model or just checking the parameters that were used
         self.__dict__['reverse_complement'] = any(reverse_complement)
 
+        # if 'ALL', every output uses the embedding of all inputs, else use the assigned inputs in the list of lists, f.e if two input sequences are provided for three output modalities, create list of three lists [[0,1],[0],[1]]
         if input_to_combinefunc == 'ALL':
             inplist = [i for i in range(self.n_inputs)]
             self.input_to_combinefunc = []
@@ -123,19 +125,41 @@ class combined_network(nn.Module):
                 self.outclass = [outclass for n in self.n_classes]
             print(self.outclass)
             
+            if not isinstance(self.combine_function, list) and shared_embedding == False:
+                self.combine_function = [combine_function for n in self.n_classes]
+                for c, cf in enumerate(self.combine_function):
+                    if ('DIFFERENCE' in self.outclass[c].upper())or ('DIRECT' in  self.outclass[c].upper()):
+                        self.combine_function[c] = 'Linear'
+                
+                    
+            
             if self.use_nnout == False:
                 self.cnn_embedding, self.n_combine_layers= [], [] #if a specific function is chosen, the individual cnns produce several outputs that are given individually to different combining functions for each data modularity. 
+                if self.shared_embedding:
+                    if (np.array(self.n_classes) == self.n_classes[0]).all():
+                        self.cnn_embedding = n_classes[0]
+                        if isinstance(self.combine_function, list):
+                            if (np.array(self.combine_function) == self.combine_function[0]).all():
+                                self.combine_function = self.combine_function[0]
+                    else:
+                        self.shared_embedding = False
+                        print('shared_embedding set to False because n_classes or combine_function not all equal')
+                else:
+                    for co, cout in enumerate(self.outclass):
+                        if (('FRACTION' in cout.upper()) or ('DIFFERENCE' in cout.upper())or ('DIRECT' in cout.upper())) and len(l_seqs) == 2:
+                            # if specific function is chosen the output of the individual CNNs is equal to the number of n_classes
+                            self.cnn_embedding.append(n_classes[co])
+                        else:
+                            # if not a specific function, then use a NN for the specific output
+                            if isinstance(cnn_embedding, list):
+                                self.cnn_embedding.append(cnn_embedding[co])
+                            else:
+                                self.cnn_embedding.append(cnn_embedding)
+
                 for co, cout in enumerate(self.outclass):
                     if (('FRACTION' in cout.upper()) or ('DIFFERENCE' in cout.upper())or ('DIRECT' in cout.upper())) and len(l_seqs) == 2:
-                        # if specific function is chosen the output of the individual CNNs is equal to the number of n_classes
-                        self.cnn_embedding.append(n_classes[co])
                         self.n_combine_layers.append(0)
                     else:
-                        # if not a specific function, then use a NN for the specific output
-                        if isinstance(cnn_embedding, list):
-                            self.cnn_embedding.append(cnn_embedding[co])
-                        else:
-                            self.cnn_embedding.append(cnn_embedding)
                         if isinstance(n_combine_layers, list):
                             self.n_combine_layers.append(n_combine_layers[co])
                         else:
@@ -150,6 +174,8 @@ class combined_network(nn.Module):
             self.cnn_embedding = cnn_embedding = n_classes
             self.n_combine_layers = 0
             self.use_nnout = False
+            if ('DIFFERENCE' in outclass.upper())or ('DIRECT' in outclass.upper()):
+                self.combine_function = 'Linear'
         
         if add_outname:
             ### Generate file name from all settings
@@ -184,6 +210,8 @@ class combined_network(nn.Module):
         if isinstance(n_classes, list):
             self.nclayers = nn.ModuleList()
             self.classifier = nn.ModuleList()
+            if self.shared_embedding and not isinstance(self.combine_function, list):
+                self.combine_function = [self.combine_function for co in self.outclass]
             for co, cout in enumerate(self.outclass): # if one of the outclasses is not a NN then the individual CNNs produce individual outputs for each output NN.
                 if ('FRACTION' in cout.upper()) or ('DIFFERENCE' in cout.upper()) or ('DIRECT' in cout.upper()):
                     prefunc = None
@@ -201,8 +229,9 @@ class combined_network(nn.Module):
                 else:
                     currdim = len(self.input_to_combinefunc[co]) * cnn_embedding # count the size of the input to the combining network from the concatenated outputs, is only used if no specific function was chosen as outclass
                     # Even if a specific function is chosen, then each individual CNN returns one array for the function and one with size cnn_embedding            for the NN predicted modularity. The sum of there is the currdim 
+                    
                     if self.n_combine_layers[co] > 0:
-                        self.nclayers.append(Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.n_combine_layers[co], layer_widening = combine_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = self.combine_function, residual_after = combine_residual, bias = True))
+                        self.nclayers.append(Res_FullyConnect(currdim, outdim = currdim, n_classes = None, n_layers = self.n_combine_layers[co], layer_widening = combine_widening, batch_norm = self.batch_norm, dropout = self.dropout, activation_function = self.combine_function[co], residual_after = combine_residual, bias = True))
                     else:
                         self.nclayers.append(nn.Identity())
                     self.classifier.append(PredictionHead(currdim, n_classes[co], cout, dropout = self.dropout, batch_norm = self.batch_norm))
@@ -258,7 +287,10 @@ class combined_network(nn.Module):
             multipred = []
             for s, ncl in enumerate(self.n_classes):
                 if not self.use_nnout:
-                    npred = [pred[t][s] for t in self.input_to_combinefunc[s]]
+                    if self.shared_embedding:
+                        npred = [pred[t] for t in self.input_to_combinefunc[s]]
+                    else:
+                        npred = [pred[t][s] for t in self.input_to_combinefunc[s]]
                     if ('FRACTION' in self.outclass[s].upper()) or ('DIFFERENCE' in self.outclass[s].upper()) or ('DIRECT' in self.outclass[s].upper()):
                         multipred.append(self.classifier[s](npred))
                     else:
@@ -282,6 +314,7 @@ class combined_network(nn.Module):
                 pred = self.nclayers(pred)
                 if location == '-1' or location == '2':
                     return pred
+            
             pred = self.classifier(pred)
             
         return pred
@@ -562,6 +595,7 @@ if __name__ == '__main__':
             elif '=' in p:
                 p = p.split('=',1)
             params[p[0]] = check(p[1])
+            
         
         print('Device', params['device'])
         params['n_features'], params['l_seqs'], params['reverse_complement'] = np.shape(X[0])[-2], [np.shape(x)[-1] for x in X], reverse_complement
@@ -721,9 +755,18 @@ if __name__ == '__main__':
     if '--ism' in sys.argv:
         ismtrack = sys.argv[sys.argv.index('--ism')+1]
         if ',' in ismtrack:
-            itrack = np.array(ismtrack.split(','), dtype = int)
+            gradtracksplit = ismtrack.split(',')
+            itrack = []
+            for g,gt in enumerate(gradtracksplit):
+                gt = numbertype(gt)
+                if not isinstance(gt, int):
+                    gt = list(experiments).index(gt)
+                itrack.append(gt)
+            itrack = np.array(itrack)
         elif ismtrack == 'all' or ismtrack == 'complete':
             itrack = np.arange(len(Y[0]), dtype = int)
+        elif 'to' in gradtrack:
+            itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
         else:
             itrack = [int(ismtrack)]
         ismarray = ism([x[testset] for x in X], model, itrack)
@@ -733,13 +776,25 @@ if __name__ == '__main__':
     if '--grad' in sys.argv:
         gradtrack = sys.argv[sys.argv.index('--grad')+1]
         if ',' in gradtrack:
-            itrack = np.array(gradtrack.split(','), dtype = int)
+            gradtracksplit = gradtrack.split(',')
+            itrack = []
+            for g,gt in enumerate(gradtracksplit):
+                gt = numbertype(gt)
+                if not isinstance(gt, int):
+                    gt = list(experiments).index(gt)
+                itrack.append(gt)
+            itrack = np.array(itrack)
+            gradtrack = ','.join(itrack.astype(str))
         elif gradtrack == 'all' or gradtrack == 'complete':
             itrack = np.arange(len(Y[0]), dtype = int)
+        elif 'to' in gradtrack:
+            itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
         else:
             itrack = [int(gradtrack)]
-        gradarray = takegrad([x[testset] for x in X], model, itrack, top = topattributions)
+        gradarray = takegrad([x[testset] for x in X], model, itrack, ensemble = 1, top = topattributions)
         print('Saved grad with', np.shape(gradarray))
+        if '--gradname' in sys.argv:
+            gradtrack = sys.argv[sys.argv.index('--gradname')+1]
         np.savez_compressed(outname + '_grad'+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = experiments[itrack])
     
 
@@ -755,15 +810,32 @@ if __name__ == '__main__':
     # Generate global importance of kernel for each gene and testclasses
     if '--convertedkernel_ppms' in sys.argv:
         # stppm determines the start index of the ppms that should be looked at and Nppm determines the number of ppms for which the operations is performed. only compute the correlation for the pwms from stppm up to stppm + Nppm
-        ppmparal = False
-        stppm = Nppm = None
+        
+        kerkwargs = {}
         addppmname = ''
         if len(sys.argv) > sys.argv.index('--convertedkernel_ppms')+2:
-            stppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+1])
-            Nppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+2])
-            if isinstance(stppm, int) and isinstance(Nppm, int):
-                ppmparal = True
-                addppmname = str(stppm)+'-'+str(Nppm + stppm)
+            # define stppm : first kernel to be collected, 
+            # Nppm : number of kernels to be selected, 
+            # kactivation_cut = 1.64 : cutoff for kernelactivations to generate pwms from sequences,
+            # kactivation_selection = True : if kernel activation should be transformed by z-score before cutoff determines selected set  
+            # activate_kernel = False # if kernel activation are tranformed before sequences are selected based on activations
+            if '=' in sys.argv[sys.argv.index('--convertedkernel_ppms')+1]:
+                if '+' in sys.argv[sys.argv.index('--convertedkernel_ppms')+1]:
+                    adjpar = sys.argv[sys.argv.index('--convertedkernel_ppms')+1].split('+')
+                else:
+                    adjpar = [sys.argv[sys.argv.index('--convertedkernel_ppms')+1]]
+                for p in adjpar:
+                    p = p.split('=',1)
+                    kerkwargs[p[0]] = check(p[1])
+                    if '_' in str(p[0]):
+                        appmname = str(p[0]).split('_')
+                        apname = ''
+                        for ap in appmname:
+                            apname += ap[0]
+                    else:
+                        apname = str(p[0])[:2]
+                    addppmname += apname+str(p[1][:3])
+        
         onlyppms = False
         if '--onlyppms' in sys.argv:
             onlyppms = True
@@ -771,10 +843,11 @@ if __name__ == '__main__':
         if '--genewise_kernel_impact' in sys.argv:
             genewise = True
             
-        ppms, pwms, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, onlyppms = onlyppms, genewise = genewise, ppmparal = ppmparal, stppm= stppm, Nppm = Nppm)
+        ppms, pwms, weights, biases, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, genewise = genewise, onlyppms = onlyppms, **kerkwargs)
         
         write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms'+addppmname+'.meme')
         write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms'+addppmname+'.meme')
+        write_meme_file(weights, motifnames, 'ACGT', outname+'_kernelweights'+addppmname+'.meme', biases = biases)
         
         if not onlyppms:
             importance = np.array(importance)
@@ -788,7 +861,7 @@ if __name__ == '__main__':
             np.savetxt(outname+'_kerneffct'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), abseffect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments))
             
             if '--genewise_kernel_impact' in sys.argv:
-                # summarize the correlation change of all genes that are predicted better than corrcut
+                # summarize the correlation change of all genes that are predicted better/higher than corrcut correlation
                 corrcut = 1.-float(sys.argv[sys.argv.index('--genewise_kernel_impact')+1])
                 geneimportance = np.array(geneimportance)
                 uclasses, nclasses = np.unique(testclasses, return_counts = True)

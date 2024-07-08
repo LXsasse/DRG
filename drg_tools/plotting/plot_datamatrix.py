@@ -25,37 +25,36 @@ def read(outputfile, delimiter = None):
             Yf = open(outputfile).readline()
             if Yf[0] == '#':
                 celltypes = np.array(Yf.strip('#').strip().split())
-    else:
-        if ',' in outputfile:
-            Y, outputnames, celltypes = [], [], []
-            for putfile in outputfile.split(','):
-                if os.path.splitext(putfile)[1] == '.npz':
-                    Yin = np.load(putfile, allow_pickle = True)
-                    onames = Yin['names']
-                    sort = np.argsort(onames)
-                    Y.append(Yin['counts'][sort])
-                    outputnames.append(onames[sort])
-                    if 'celltypes' in Yin.files:
-                        celltypes.append(Yin['celltypes'])
-                else:
-                    Yin = np.genfromtxt(putfile, dtype = str, delimiter = delimiter)
-                    onames = Yin[:,0]
-                    sort = np.argsort(onames)
-                    Y.append(Yin[:, 1:].astype(float)[sort]) 
-                    outputnames.append(onames[sort])
-                    Yf = open(outputfile).readline()
-                    if Yf[0] == '#':
-                        celltypes.append(np.array(Yf.strip('#').strip().split()))
-                
-            comnames = reduce(np.intersect1d, outputnames)
-            for i, yi in enumerate(Y):
-                Y[i] = yi[np.isin(outputnames[i], comnames)]
-            outputnames = comnames
-            if len(celltypes) == 0:
-                celltypes = None
+    elif ',' in outputfile:
+        Y, outputnames, celltypes = [], [], []
+        for putfile in outputfile.split(','):
+            if os.path.splitext(putfile)[1] == '.npz':
+                Yin = np.load(putfile, allow_pickle = True)
+                onames = Yin['names']
+                sort = np.argsort(onames)
+                Y.append(Yin['counts'][sort])
+                outputnames.append(onames[sort])
+                if 'celltypes' in Yin.files:
+                    celltypes.append(Yin['celltypes'])
             else:
-                celltypes = np.concatenate(celltypes)
-    Y = np.concatenate(Y, axis = 1)
+                Yin = np.genfromtxt(putfile, dtype = str, delimiter = delimiter)
+                onames = Yin[:,0]
+                sort = np.argsort(onames)
+                Y.append(Yin[:, 1:].astype(float)[sort]) 
+                outputnames.append(onames[sort])
+                Yf = open(outputfile).readline()
+                if Yf[0] == '#':
+                    celltypes.append(np.array(Yf.strip('#').strip().split()))
+            
+        comnames = reduce(np.intersect1d, outputnames)
+        for i, yi in enumerate(Y):
+            Y[i] = yi[np.isin(outputnames[i], comnames)]
+        outputnames = comnames
+        if len(celltypes) == 0:
+            celltypes = None
+        else:
+            celltypes = np.concatenate(celltypes)
+        Y = np.concatenate(Y, axis = 1)
     print(len(outputnames), np.shape(Y))
     return outputnames, Y, celltypes
 
@@ -98,16 +97,47 @@ if __name__ == '__main__':
             
     if '--ydistmat' in sys.argv:
         ydnames, ydistmat, xdnames = read(sys.argv[sys.argv.index('--ydistmat')+1])
-        ysort, xsort = sortafter(ydnames, ynames), sortafter(xdnames, xnames)
-        ydistmat = ydistmat[ysort][:, xsort]
+        ysort = sortafter(ydnames, ynames)
+        ydistmat = ydistmat[ysort]
         cparms['ydistmat'] = ydistmat
     
     if '--xdistmat' in sys.argv:
         dnames, xdistmat, xdnames = read(sys.argv[sys.argv.index('--xdistmat')+1])
-        ysort, xsort = sortafter(ydnames, ynames), sortafter(xdnames, xnames)
-        xdistmat = xdistmat[ysort][:, xsort]
+        xsort = sortafter(xdnames, xnames)
+        xdistmat = xdistmat[:, xsort]
         cparms['xdistmat'] = xdistmat
-        
+    
+    x_attributes = None
+    if '--xattributes' in sys.argv:
+        xattributes = sys.argv[sys.argv.index('--xattributes')+1]
+        if os.path.isfile(xattributes):
+            xattributes = np.genfromtxt(xattributes, dtype = str)
+        elif xattributes == 'names':
+            x_attributes = np.array([[xn.rsplit('.')[0].upper(),xn.rsplit('.')[-1].upper()] for xn in xnames]).T
+        keep = []
+        for t, xat in enumerate(x_attributes):
+            print(np.unique(xat))
+            if len(np.unique(xat)) > 1:
+                keep.append(t)
+        x_attributes = x_attributes[keep]
+        cparms['x_attributes'] = x_attributes\
+
+    y_attributes = None
+    if '--yattributes' in sys.argv:
+        yattributes = sys.argv[sys.argv.index('--yattributes')+1]
+        if os.path.isfile(yattributes):
+            y_attributes = np.genfromtxt(yattributes, dtype = str)
+            mask = np.isin(y_attributes[:,0], ynames)
+            y_attributes = y_attributes[mask]
+            if not np.array_equal(y_attributes[:,0], ynames):
+                keep = []
+                for jy, yn in enumerate(ynames):
+                    keep.append(list(y_attributes[:,0]).index(yn))
+                y_attributes = y_attributes[keep]
+            y_attributes = y_attributes[:,[1]]
+            print(np.unique(y_attributes))
+            cparms['y_attributes'] = y_attributes
+    
     
     figname = None
     if '--savefig' in sys.argv:

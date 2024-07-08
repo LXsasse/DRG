@@ -98,6 +98,13 @@ def sorttfset(target, targetnames, tnames, stat, tfmetric, tfmetfilter):
     sys.exit()
     return target, targetnames, tnames, stat
 
+def isint(x):
+    try:
+        int(x)
+        return True
+    except:
+        return False
+
 if __name__ == '__main__':
     
     tomtom = sys.argv[1] # output tsv from tomtom
@@ -123,6 +130,24 @@ if __name__ == '__main__':
     if '--nameline' in sys.argv:
         nameline = sys.argv[sys.argv.index('--nameline')+1]
     
+        
+    # change tnames if they were cut by tomtom
+    tnames = tnames.astype('U1000')
+    pwmnames = []
+    for l, line in enumerate(pwms):
+        linesplit = line.split()
+        if len(linesplit) > 0:
+            if linesplit[0].upper() == nameline.upper(): # check fi nameline is first string in line
+                pwm_name = line[len(linesplit[0])+1:].strip() # name of the cluster
+                pwmnames.append(pwm_name)
+    for t, tname in enumerate(tnames):
+        if tname not in pwmnames:
+            #print(tname)
+            for pwm_name in pwmnames:
+                if tname in pwm_name:
+                    tnames[t] = pwm_name
+                    #print(tnames[t])
+    
     # split the taret names if they contain for example version names species names
     # target names is a copy of target otherwise, target can be used for filtering later
     targetnames = np.copy(target)
@@ -140,13 +165,20 @@ if __name__ == '__main__':
     # if True only most significant naem will be assigned, otherwise all that pass
     only_best = False
     if '--only_best' in sys.argv:
-        only_best = True
-        outname += 'best'
+        if isint(sys.argv[sys.argv.index('--only_best')+1]):
+            only_best = int(sys.argv[sys.argv.index('--only_best')+1])
+        else:
+            only_best = 1
+        outname += 'best'+str(only_best)
     
     # if cluster name should be reduced from Clust_X to X for example
     rsplit = None
     if '--reduce_clustername' in sys.argv:
         rsplit = sys.argv[sys.argv.index('--reduce_clustername')+1]
+    
+    rnsplit = None
+    if '--reduce_nameset' in sys.argv:
+        rnsplit = sys.argv[sys.argv.index('--reduce_nameset')+1]
     
     # filter the Transcription factor names that can be assigned to name
     if '--TFset' in sys.argv:
@@ -190,7 +222,16 @@ if __name__ == '__main__':
                 pot_name = line[len(linesplit[0])+1:].strip() # name of the cluster
                 mask = tnames == pot_name # find all possible names for this cluster
                 if rsplit is not None: # check if pot_name should potentially be trimmed
-                    pot_name = pot_name.split(rsplit)[-1]
+                    if rnsplit is not None:
+                        pot_name = pot_name.split(rnsplit)
+                        for p, ptn in enumerate(pot_name):
+                            pot_name[p] = ptn.split(rsplit)[-1]
+                        if len(pot_name) > 4:
+                            pot_name = pot_name[:5]
+                            pot_name[4] = '...'
+                        pot_name = rnsplit.join(np.array(pot_name))
+                    else:
+                        pot_name = pot_name.split(rsplit)[-1]
                 # check for any matches
                 if np.sum(mask) > 0:
                     ptarget, ptarname = target[mask], targetnames[mask]
@@ -202,7 +243,7 @@ if __name__ == '__main__':
                         else:
                             ptarname = np.array([ptarname[0]+'*']) # * means that we couldn't find any with the filter but used the best name that did not have this filter
                     if only_best and len(ptarname) > 0: # only keep the most promising result in the name
-                        ptarname = ptarname[[0]]
+                        ptarname = ptarname[:only_best]
                     pot_name = pot_name + '('+','.join(ptarname)+')'
                 if gennamefile: # write a file that maps the original name to the new name
                     nline = str(orig_name)+'\t'+pot_name+ '\n'

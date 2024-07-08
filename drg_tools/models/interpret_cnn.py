@@ -2,8 +2,12 @@ from functions import dist_measures, correlation, mse
 import numpy as np
 import sys, os
 from scipy.spatial.distance import cdist
+from scipy.stats import pearsonr
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import time 
+from modules import func_dict, SoftmaxNorm
 # Need per-sequence method that accounts dependencies of between positions
     # Maybe first scan for one mutation, then sample from ones to create twos, then sample from twos to create threes and so on. 
     # Scrambler does that basically --> can be used
@@ -205,31 +209,17 @@ def ism(x, model, tracks, correct_from_neutral = True):
         if correct_from_neutral:
             ismout = correct_by_mean(ismout)
     return ismout
-'''
-# slower because grad is computed for all inputs
-def takegrad(x, model, tracks):
-    grad = []
-    x = torch.Tensor(x)
-    x.requires_grad = True
-    pred = model.predict(x, enable_grad=True)
-    for i in range(x.size(dim = 0)):
-        gra = []
-        for t, tr in enumerate(tracks):
-            pred[i, tr].backward(retain_graph = True)
-            gr = x.grad.clone().cpu().numpy()[i]
-            gra.append(gr)
-            x.grad.zero_()
-        grad.append(np.concatenate(gra,axis = 0))
-    grad = np.array(grad)
-    return grad
-'''                                                        
+                                                     
 
-def takegrad(x, model, tracks, correct_from_neutral = True, top=None):
+def takegrad(x, model, tracks, ensemble = 1, correct_from_neutral = True, top=None):
     grad = []
     if isinstance(x, list):
         x = [torch.Tensor(xi) for xi in x]
     else:
         x = torch.Tensor(x)
+    if ensemble > 1:
+        model.train()
+        
     if isinstance(x,list):
         Nin = len(x)
         grad = [[] for n in range(Nin)]
@@ -239,17 +229,20 @@ def takegrad(x, model, tracks, correct_from_neutral = True, top=None):
                 xij = torch.clone(x[n][[i]])
                 xij.requires_grad = True
                 xi.append(xij)
-            gra = [[] for n in range(Nin)]
-            pred = model.predict(xi, enable_grad = True)
-            if isinstance(pred, list):
-                pred = torch.cat(pred, axis = 1)
-            for t, tr in enumerate(tracks):
-                pred[0, tr].backward(retain_graph = True)
-                for n, xij in enumerate(xi):
-                    gr = xij.grad.clone().cpu().numpy()
-                    gra[n].append(gr)
-                xij.grad.zero_()
+            gra = [[[] for e in range(ensemble)] for n in range(Nin)]
+            for e in range(ensemble):
+                pred = model.predict(xi, enable_grad = True)
+                if isinstance(pred, list):
+                    pred = torch.cat(pred, axis = 1)
+                for t, tr in enumerate(tracks):
+                    pred[0, tr].backward(retain_graph = True)
+                    for n, xij in enumerate(xi):
+                        gr = xij.grad.clone().cpu().numpy()
+                        gra[n][e].append(gr)
+                        xij.grad.zero_()
+            
             for n in range(Nin):
+                gra[n] = np.mean(gra[n],axis = 0)
                 gra[n] = np.concatenate(gra[n],axis = 0)
                 if correct_from_neutral:
                     gra[n] = correct_by_mean(gra[n])
@@ -259,10 +252,18 @@ def takegrad(x, model, tracks, correct_from_neutral = True, top=None):
                     ngrashape[-1] = top
                     ngra = np.zeros(ngrashape)
                     for t in range(np.shape(gra[n])[0]):
-                        lcn = np.argsort(-np.amax(np.absolute(gra[n][t]), axis = -2), axis = -1)
+                        # change this to largest at reference
+                        #print(n, t, np.amax(np.absolute(gra[n][t]), axis = -1))
+                        lcn = np.argsort(-np.amax(np.absolute(gra[n][t]*x[n][i].numpy()),axis = -2))
+                        #print(gra[n][t][:,lcn[:10]])
                         lcn = np.sort(lcn[:top])
+                        #print(len(lcn))
                         ngra[t] = np.append(gra[n][t][...,lcn], lcn[None, :], axis = -2)
+                        #print(n, t, np.amax(np.absolute(ngra[t]), axis = -1))
                     gra[n] = ngra
+                
+                #for t in range(np.shape(gra[n])[0]):
+                    #print(n, t, np.amax(np.absolute(gra[n][t]), axis = -1))
                     
                 grad[n].append(gra[n])
                 
@@ -274,22 +275,32 @@ def takegrad(x, model, tracks, correct_from_neutral = True, top=None):
     else:
         start = time.time()
         for i in range(x.size(dim = 0)):
+            #checkcorr = []
             xi = torch.clone(x[[i]])
             xi.requires_grad = True
-            gra = []
-            pred = model.predict(xi, enable_grad = True)
-            if isinstance(pred, list):
-                pred = torch.cat(pred, axis = 1)
-            for t, tr in enumerate(tracks):
-                pred[0, tr].backward(retain_graph = True)
-                gr = xi.grad.clone().cpu().numpy()
-                gra.append(gr)
-                xi.grad.zero_()
+            gra = [[] for e in range(ensemble)]
+            for e in range(ensemble):
+                pred = model.predict(xi, enable_grad = True)
+                if isinstance(pred, list):
+                    pred = torch.cat(pred, axis = 1)
+                for t, tr in enumerate(tracks):
+                    #print(i,tr,round(float(pred[0,tr]),2))
+                    pred[0, tr].backward(retain_graph = True)
+                    gr = xi.grad.clone().cpu().numpy()
+                    gra[e].append(gr)
+                    xi.grad.zero_()
+                    #print(np.amax(correct_by_mean(gra[-1])))
+                    #checkcorr.append([float(pred[0,tr]), np.amax(correct_by_mean(gra[-1]))])
+                #print(i,'corr', pearsonr(np.array(checkcorr)[:,0],np.array(checkcorr)[:,1])) 
+            gra = np.mean(gra, axis = 0)
             grad.append(np.concatenate(gra,axis = 0))
         grad = np.array(grad)
         end = time.time()
         if correct_from_neutral:
             grad = correct_by_mean(grad)
+        #for i in range(x.size(dim = 0)):
+            #for t, tr in enumerate(tracks):
+                #print(i, tr, np.amax(grad[i,t]))
         print('TISM time for', x.size(dim = 0), len(tracks),  end-start)
     return grad
 
@@ -304,11 +315,151 @@ def correct_deeplift(dlvec, freq):
     dlvec = dlvec - negmul[...,None,:]
     return dlvec
 
+# compare linearization with model predictions
+def check_deltas(multipliers, # multipliers from deeplift, 
+                 delta_pred, # difference between model prediction from baseline and x
+                 delta_in, # x - baseline
+                 target, # target tracks
+                 is_multiplied = False):
+    print('Deltas for track', tr, 'min', np.amin(delt), '5%', np.percentile(delt, 5), '10%',np.percentile(delt, 10), 'median',np.median(delt), '90%',np.percentile(delt, 90),'95%',np.percentile(delt, 95),'max', np.amax(delt))
+
+
+class cnn_multi_deeplift_wrapper(torch.nn.Module):
+    def __init__(self, model, N = 2, n = 0):
+        super(Wrapper, self).__init__()
+        self.model = model
+        self.N = N
+        self.n = n
+    def forward(self, X, arg):
+        x = []
+        for i in range(N):
+            t = 0
+            if i == n:
+                x.append(X)
+                t += 1
+            else:
+                x.append(args[i+t])
+        return self.model(x)
+
+# This works for some sequence but not for all. 
+def _weightedpool(module, grad_input, grad_output):
+    """An internal function implementing a 1D max-pooling correction.
+
+    This function, copied and slightly modified from Captum, is meant to be
+    the `rescale` rule applied to max pooling layers given their nature of
+    aggregating values across multiple positions.
+    """
+    
+    pool_func, unpool_func = F.max_pool1d, F.max_unpool1d
+
+    with torch.no_grad():
+        delta_in_ = torch.sub(*module.input.chunk(2))
+        delta_in = torch.cat([delta_in_, delta_in_])
+
+        output, output_ref = module.output.chunk(2)
+        delta_out_xmax = torch.max(output, output_ref)
+        delta_out = torch.cat([delta_out_xmax - output_ref,
+            output - delta_out_xmax])
+        module_padding = module.padding
+        if not isinstance(module_padding, int):
+            module_padding = module_padding[0]
+        _, indices = pool_func(module.input, module.kernel_size, module.stride,
+            module_padding, module.dilation, module.ceil_mode, True)
+
+        unpool_ = unpool_func(grad_output[0] * delta_out, indices,
+            module.kernel_size, module.stride, module_padding,
+            list(module.input.shape))
+        unpool_delta, unpool_ref_delta = torch.chunk(unpool_, 2)
+
+    unpool_delta_ = unpool_delta + unpool_ref_delta
+    unpool_delta = torch.cat([unpool_delta_, unpool_delta_])
+    idxs = torch.abs(delta_in) < 1e-7
+
+    new_grad_inp = torch.where(idxs, grad_input[0], unpool_delta / delta_in)
+    return (new_grad_inp,)
+
+# Use the cnn_multi_deeplift_wrapper to get attributions for multi sequence models
+# use args = all_other_sequences to give it to tangermeme
+def deeplift(x, model, tracks, baseline = None, batchsize = None, effective_attributions = True, raw_outputs = True, hypothetical = False):
+    from tangermeme.deep_lift_shap import deep_lift_shap, _nonlinear, _maxpool
+    from tangermeme.ersatz import dinucleotide_shuffle
+    
+    x = torch.Tensor(x)
+    model.eval()
+    
+    # batch size will be taken from model
+    if batchsize is None:
+        batchsize = model.batchsize
+    
+    n_shuffles = None
+    if baseline is None:
+        basefreq = 1./x.size(-2)
+        baseline = torch.ones_like(x)*basefreq
+    
+    elif isinstance(baseline, int):
+        n_shuffles = baseline
+        baseline = dinucleotide_shuffle
+        raw_outputs = False
+        hypothetical = True
+        
+    if baseline is not None:
+        if isinstance(baseline, np.ndarray):
+            baseline = torch.Tensor(baseline)
+        if isinstance(baseline, torch.Tensor):
+            if baseline.size() != x.size():
+                # always need to expand baseline to number of data points to 
+                baseline = baseline.unsqueeze(0).expand((x.size(0),) + tuple(baseline.size()))
+                # if only frequencies were given, need to expand it along the length of the sequences
+                if baseline.size() != x.size():
+                    baseline = baseline.unsqueeze(-1).expand(tuple(baseline.size())+(x.size(-1),))
+            baseline = baseline.unsqueeze(1)
+    
+    # when shift_sequence in my model is not None, inputs will be padded
+    if model.shift_sequence is not None:
+        if n_shuffles is not None:
+            x = torch.nn.functional.pad(x, (model.shift_sequence, model.shift_sequence), mode = 'circular')
+        else:
+            x = torch.nn.functional.pad(x, (model.shift_sequence, model.shift_sequence), mode = 'constant', value = 0.25)
+        
+            if isinstance(baseline, torch.Tensor):
+                baseline = torch.nn.functional.pad(baseline, (model.shift_sequence, model.shift_sequence), mode = 'constant', value = 0.25)
+
+    #predx = model.forward(x.to(model.device)).cpu()
+    #predbase = model.forward(baseline.squeeze(1).to(model.device)).cpu()
+    
+    
+    grad = []
+    for t, tr in enumerate(tracks):
+        # if you want to represent certain custom functions with replacement functions use:
+        #additional_nonlinear_ops = {Padded_AvgPool1d: _weightedpool}
+        gr = deep_lift_shap(model, x, target = tr, references = baseline, n_shuffles = n_shuffles, device=model.device, raw_outputs = raw_outputs, hypothetical = hypothetical, additional_nonlinear_ops = {SoftmaxNorm: _nonlinear}).cpu().detach().numpy()
+        if raw_outputs:
+            gr = np.mean(gr, axis = 1)
+        grad.append(gr)
+        #deltas = (predx[:,[tr]] - predbase[:,[tr]]) - torch.sum(gr * (x.unsqueeze(1)-baseline), dim = (-1,-2))
+        #print(tr, deltas)
+    
+    grad = np.array(grad)
+    # return array if shape = (Ndatapoints, Ntracks, Nbase, Lseq)
+    grad = np.transpose(grad, axes = (1,0,2,3))
+    
+    # return array if shape = (Ndatapoints, Ntracks, Nbase, Lseq)
+    if model.shift_sequence is not None:
+        grad = grad[..., model.shift_sequence: np.shape(grad)[-1]-model.shift_sequence]
+        if isinstance(baseline, torch.Tensor):
+            baseline = baseline[..., model.shift_sequence: np.shape(baseline)[-1]-model.shift_sequence]
+    # correct the deeplift output
+    if not hypothetical and effective_attributions:
+        grad = correct_deeplift(grad, baseline.detach().numpy())
+    #attmax = np.amax(grad, axis = (-1,-2))
+    #for a, am in enumerate(attmax):
+        #print(pearsonr(am, x_pred[a]))
+    print(np.shape(grad))
+    return grad  
+
 # use a different way to correct_deeplift, and allow for multiple dlvec and mulitple freq
 # use deeplift in a different way, give it list of output tracks and multiple sequences at once. 
-    
-                
-def deeplift(x, model, tracks, deepshap = False, basefreq = None, batchsize = None, effective_attributions = True):
+def deepliftcaptum(x, model, tracks, deepshap = False, basefreq = None, batchsize = None, effective_attributions = True):
     from captum.attr import DeepLift, DeepLiftShap
     #GradientShap,
     #DeepLift,
@@ -320,23 +471,33 @@ def deeplift(x, model, tracks, deepshap = False, basefreq = None, batchsize = No
         dl = DeepLift(model.eval(), multiply_by_inputs=False, eps=1e-6)
     
     x = torch.Tensor(x)
-    # when shift_sequence in my model is not None, inputs will be padded
-    if model.shift_sequence is not None:
-        x = torch.nn.functional.pad(x, (model.shift_sequence, model.shift_sequence), mode = 'constant', value = 0.25)
+    x_pred = model.predict(x)[:,tracks]
+    #print(np.shape(x_pred))
+
     # batch size will be taken from model
     if batchsize is None:
         batchsize = model.batchsize
+    
     fnum = x.size(-2)
     if basefreq is None:
         basefreq = 1./x.size(-2)
     if isinstance(basefreq, float):
         basefreq = torch.ones(fnum) * basefreq
+    
     # basefreq needs to be an array of length fnum by now, can also be provided as an array
     baseline = torch.ones_like(x)*basefreq[:,None]
     # Version were each sequence is tested against a random set of permutations is not implemented yet and requires way more resources
+    baseline_pred = model.predict(baseline)[:,tracks]
+    #print(np.shape(baseline_pred))
+    # when shift_sequence in my model is not None, inputs will be padded
+    if model.shift_sequence is not None:
+        x = torch.nn.functional.pad(x, (model.shift_sequence, model.shift_sequence), mode = 'constant', value = 0.25)
+        baseline = torch.nn.functional.pad(baseline, (model.shift_sequence, model.shift_sequence), mode = 'constant', value = 0.25)
+        
     grad = []
     deltas = []
     # perform deeplift independently for each output track
+    
     for t, tr in enumerate(tracks):
         gr = []
         delt = []
@@ -349,7 +510,6 @@ def deeplift(x, model, tracks, deepshap = False, basefreq = None, batchsize = No
             gr.append(attributions.cpu().detach().numpy())
         grad.append(np.concatenate(gr, axis = 0))
         delt = np.concatenate(delt)
-        print('Deltas for track', tr, 'min', np.amin(delt), '5%', np.percentile(delt, 5), '10%',np.percentile(delt, 10), 'median',np.median(delt), '90%',np.percentile(delt, 90),'95%',np.percentile(delt, 95),'max', np.amax(delt))
     # return array if shape = (Ndatapoints, Ntracks, Nbase, Lseq)
     grad = np.transpose(np.array(grad), axes = (1,0,2,3))
     if model.shift_sequence is not None:
@@ -357,11 +517,14 @@ def deeplift(x, model, tracks, deepshap = False, basefreq = None, batchsize = No
     # correct the deeplift output
     if effective_attributions:
         grad = correct_deeplift(grad, basefreq.detach().numpy())
+    #attmax = np.amax(grad, axis = (-1,-2))
+    #for a, am in enumerate(attmax):
+        #print(pearsonr(am, x_pred[a]))
     print(np.shape(grad))
     return grad            
 
 
-def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise = False, ppmparal = False, stppm= None, Nppm = None, respwm = 200000): 
+def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise = False, stppm= None, Nppm = None, respwm = 200000, activate_kernel = False, kactivation_cut = 1.64, kactivation_selection = True): 
         ppms = [] # position frequency matrices from kernel weights, with biases included 
         pwms = [] # position frequency matrices from alignment of highest scoring sequences, zscore > 2.326
         weights = []
@@ -407,7 +570,7 @@ def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise
                     
                 # collect the first layer convolution kernels
                 kernelweight = parms.detach().cpu().numpy()
-                if ppmparal: 
+                if stppm is not None: 
                     kernelweight = kernelweight[stppm : stppm+Nppm]
                 else:
                     stppm, Nppm = 0, len(kernelweight)
@@ -424,8 +587,15 @@ def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise
                 motifnames.append(np.array(['filter'+str(j+stppm)+nameadd for j in range(len(ppms[-1]))]))
                 # compute motif means from the activation of kernels with the random sequences.
                 seqactivations = np.sum(ppms[-1][:,None]*seq_seq[None,...],axis = (2,3))
+                if not onlyppms:
+                    motifmeans.append(np.mean(seqactivations + bias[:,None] , axis = 1))
+                if activate_kernel:
+                    # use activation function of model to adjust sequence activations
+                    kernel_activation = func_dict[model.kernel_function]
+                    print(model.kernel_function)
+                    seqactivations = kernel_activation(torch.Tensor(seqactivations)).numpy()
                 # generate motifs from aligned sequences with activation over 0.9 of the maximum activation
-                pwms.append(pwms_from_seqs(seq_seq, seqactivations, 1.64))
+                pwms.append(pwms_from_seqs(seq_seq, seqactivations, kactivation_cut, z_score = kactivation_selection))
                 # take the mean of these activations from all 100000 sequences as a mean actiavation value for each filter.
                 if not onlyppms:
                     motifmeans.append(np.mean(seqactivations + bias[:,None] , axis = 1))
@@ -456,17 +626,18 @@ def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise
                 i += 1
         
         motifnames = np.concatenate(motifnames)
+        weights = np.concatenate(weights, axis = 0)
         ppms = np.concatenate(ppms, axis = 0)
         biases = np.concatenate(biases, axis = 0)
         # create ppms directly from kernel matrix
         ppms = np.around(kernel_to_ppm(ppms[:,:,:], kernel_bias =biases),3)
-        weights = np.around(kernelweight, 6)
+        weights = np.around(weights, 6)
         # generate pwms from most activated sequences
         pwms = np.around(np.concatenate(pwms, axis = 0),3)
         min_nonrand_freq = 0.3
         iupacmotifs = pfm2iupac(pwms, bk_freq = min_nonrand_freq)
     
-        return ppms, pwms, weights, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr
+        return ppms, pwms, weights, biases, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr
 
 
 def indiv_network_contribution(model, X, Y, testclasses, outname, names):
@@ -519,7 +690,7 @@ def indiv_network_contribution(model, X, Y, testclasses, outname, names):
             
         np.savetxt(outname+'_netatt'+tclass+'.dat', np.concatenate([[names],np.around([trainmse,traincorr],4), np.around(np.array(genecont),6)],axis = 0).T, header = 'Gene '+' '.join(np.array(header)), fmt = '%s')
     
-def write_meme_file(pwm, pwmname, alphabet, output_file_path):
+def write_meme_file(pwm, pwmname, alphabet, output_file_path, biases = None):
     """[summary]
     write the pwm to a meme file
     Args:
@@ -539,11 +710,10 @@ def write_meme_file(pwm, pwmname, alphabet, output_file_path):
         if np.sum(np.absolute(pwm[i])) > 0:
             meme_file.write("\n")
             meme_file.write("MOTIF %s \n" % pwmname[i])
-            meme_file.write(
-                "letter-probability matrix: alength= "+str(len(alphabet))+" w= %d \n"
-                % np.count_nonzero(np.sum(pwm[i], axis=0))
-            )
-        
+            if biases is not None:
+                meme_file.write("letter-probability matrix: alength= "+str(len(alphabet))+" w= {0} bias= {1} \n".format(np.count_nonzero(np.sum(pwm[i], axis=0)), biases[i]))
+            else:
+                meme_file.write("letter-probability matrix: alength= "+str(len(alphabet))+" w= %d \n" % np.count_nonzero(np.sum(pwm[i], axis=0)))
         for j in range(0, np.shape(pwm[i])[-1]):
             #if np.sum(pwm[i][:, j]) > 0:
                 for a in range(len(alphabet)):

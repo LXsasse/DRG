@@ -6,7 +6,7 @@ import glob
 import seaborn as sns
 from matrix_plot import plot_heatmap, plot_distribution
 from matplotlib import cm
-from scipy.stats import skew, wilcoxon, ranksums
+from scipy.stats import skew, wilcoxon, mannwhitneyu, ranksums
 
 from data_processing import check
 
@@ -38,6 +38,7 @@ def read_in(files, reverse = False, replacenan = 1., allthesame = False, valcol=
         values[np.isnan(values)] = replacenan
         if reverse:
             values = 1. - values
+        print('Combined', len(allnames), np.shape(values))
     else:
         for i in range(len(values)):
             values[i] = np.array(values[i])
@@ -46,7 +47,7 @@ def read_in(files, reverse = False, replacenan = 1., allthesame = False, valcol=
                 values[i] = 1. - values[i]
         allnames = rnames
         values = values
-    print('Combined', len(allnames), np.shape(values))
+    
     return allnames, values
     
 def sortafter(array, target):
@@ -59,6 +60,8 @@ def sortafter(array, target):
         
 if __name__ == '__main__':    
     files = sys.argv[1]
+    modnames = sys.argv[2]
+    
     if '^' in files:
         files = np.sort(glob.glob(files.replace('^', '*')))
     else:
@@ -112,6 +115,7 @@ if __name__ == '__main__':
             for r, rname in enumerate(classname):
                 mask = np.isin(rname, datapoints)
                 classvalue[r] = classvalue[r][mask]
+                print('Filter', int(np.sum(mask)))
         else:
             mask = np.isin(classname, datapoints)
             print('Filter', int(np.sum(mask)))
@@ -141,7 +145,7 @@ if __name__ == '__main__':
         join = int(sys.argv[sys.argv.index('--join')+1])
     cond = int(len(files)/join)
 
-    modnames = sys.argv[2]
+    
     if modnames == 'None':
         modnames = [os.path.splitext(os.path.split(fi)[1])[0].replace('ALL.FC.PV', '').replace('-on-mouse_proteincoding-3utr-on-ALL.FC.PV_max7500_kmer-', '').replace('_pvsign', 'pvsign') for fi in files]
     elif modnames == 'modelx':
@@ -196,8 +200,10 @@ if __name__ == '__main__':
                         jcval = classvalue[m+j*cond]
                         icval = classvalue[m+i*cond]
                         if len(icval) == len(jcval):
-                            pst = wilcoxon(jcval, icval)
-                            print(means[m+j*cond,0], means[m+i*cond,0], len(icval), 'wilcoxon', pst[1])
+                            pst = wilcoxon(jcval, icval, alternative = 'less')
+                        else:
+                            pst = mannwhitneyu(jcval, icval, alternative = 'less')
+                        print(means[m+j*cond,0], means[m+i*cond,0], len(icval), 'wilcoxon', pst[1])
             else:
                 for n in range(m+1,cond):
                     pst = wilcoxon(classvalue[m], classvalue[n])

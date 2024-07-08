@@ -77,4 +77,4 @@ weights = np.around(np.concatenate(weights, axis = 0),6)
 
 write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms'+addppmname+'.meme')
 write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms'+addppmname+'.meme')
-write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernelweights'+addppmname+'.meme')
+write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernelweights'+addppmname+'.meme', biases = biases)

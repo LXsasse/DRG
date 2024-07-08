@@ -87,6 +87,9 @@ def quick_onehot(sequences, nucs = 'ACGT', wildcard = None, onehotregion = None,
     if align == 'right' or align == 'bidirectional':
         for s, sequence in enumerate(sequences):
             ohvec[s][-len(sequence):] = np.array(list(sequence))[:, None] == nucs
+    if align == 'center':
+        for s, sequence in enumerate(sequences):
+            ohvec[s][(mlenseqs-len(sequence))//2:(mlenseqs-len(sequence))//2+len(sequence)] = np.array(list(sequence))[:, None] == nucs
     ohvec = ohvec.astype(np.int8)
     
     if addonehot:

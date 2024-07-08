@@ -98,6 +98,7 @@ if __name__ == '__main__':
         mask = np.where(np.isin(names, tset))[0]
         outname += '_'+os.path.splitext(os.path.split(setfile)[1])[0]
         pwms, names = [pwms[i] for i in mask], [names[i] for i in mask]
+        outname += 'sbst'+str(len(names))
         
     if '--adjust_sign' in sys.argv:
         for p,pwm in enumerate(pwms):
@@ -107,7 +108,7 @@ if __name__ == '__main__':
         for p,pwm in enumerate(pwms):
             pwms[p] = np.exp(pwm)
         
-    if '--norm' in sys.argv:
+    if '--norm' in sys.argv or '--normpwms' in sys.argv:
         for p,pwm in enumerate(pwms):
             pwms[p] = pwm/np.sum(pwm,axis =0)
     

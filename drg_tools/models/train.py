@@ -677,12 +677,34 @@ def reverse_inoutsign(x):
     x = torch.cat([x, -x], dim = 0)
     return x
 
+# For sequence warm up: only keep the most central 'c' or most left 'l' or most right 'r' sequence parts
 def zero_sequence_flanks(x, flanks = 0, flankloc = 'c'):
     if flankloc == 'c' or flankloc == 'l':
         x[...,:flanks*(1+int(flankloc == 'l'))] = 0
     if flankloc == 'c' or flankloc == 'r':
         x[...,-1-flanks*(1+int(flankloc == 'r')):] = 0
     return x
+
+# if sequences use different padding on one side, create a copy of the sequence that is aligned to the other side
+def realign_sequence(X, end = True, start = False):
+    ltensor = X.size(dim = -1)
+    if end: 
+        Xmirrorend = torch.zeros_like(X)
+    if start:
+        Xmirrorstart = torch.zeros_like(X)
+    
+    for i, x in enumerate(X):
+        pos_seqs = torch.where(x == 1)[-1]
+        start_of_seq, end_of_seq = pos_seqs.min(), pos_seqs.max()+1
+        if end:
+            Xmirrorend[i, :,  ltensor-end_of_seq+start_of_seq:] = x[:,start_of_seq:end_of_seq]
+        if start: 
+            Xmirrorstart[i, :,  :end_of_seq-start_of_seq] = x[:,start_of_seq:end_of_seq]
+    if end:
+        X = torch.cat([X, Xmirrorend], axis = 0)
+    if end:
+        X = torch.cat([X, Xmirrorstart], axis = 0)
+    return X
 
 # make version so that nothing gets lost and so that array with shifts can be given    
 def shift_sequences(sample_x, shift_back, maxshift = None, just_pad = False, mode = 'constant', value = 0.25, random_shift = False): # 'constant', 'reflect', 'replicate' or 'circular'
@@ -957,7 +979,7 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
 
 
 # The prediction after training are performed on the cpu
-def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, device = 'cpu', batchsize = None, shift_sequence = None, random_shift = True, enable_grad = False):
+def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, device = 'cpu', batchsize = None, shift_sequence = None, random_shift = True, enable_grad = False, location = 'None'):
     if shift_sequence is not None:
         if isinstance(shift_sequence, int):
             if shift_sequence > 0:
@@ -1007,7 +1029,7 @@ def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, devic
                     if shift_sequence is not None:
                         xin = shift_sequences(xin, shift_sequence, just_pad = random_shift)
                     xin = xin.to(device)
-                fpred = model.forward(xin, xadd = pwm_outin, mask = mask,mask_value = mask_value)
+                fpred = model.forward(xin, xadd = pwm_outin, mask = mask,mask_value = mask_value, location = location)
                 if isinstance(fpred, list):
                     fpred = torch.cat(fpred, axis = 1)
                 if not enable_grad:
@@ -1025,7 +1047,7 @@ def batched_predict(model, X, pwm_out = None, mask = None, mask_value = 0, devic
                 X = [x.to(device) for x in X]
             else:
                 X = X.to(device)
-            predout = model.forward(X, xadd = pwm_out, mask = mask, mask_value = mask_value)
+            predout = model.forward(X, xadd = pwm_out, mask = mask, mask_value = mask_value, location = location)
             if isinstance(predout, list):
                 predout = torch.cat(predout, axis = 1)
             if not enable_grad:

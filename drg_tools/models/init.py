@@ -41,18 +41,23 @@ def load_parameters(model, PATH, translate_dict = None, allow_reduction = False,
         # If include is False (default): if the name0 of the current model is not given specifically in exclude, it will be considered for replacement.
         # if include is True: only perform this if name0 is specifically in exclude, exclude is the list of layers in the current model that are considered for replacement.
         if name in state_dict and ((name0 in exclude) == include):
-            print("Loaded", name0 ,'with', name)
             ntens = None
             if cstate_dict[name0].size() == state_dict[name].size():
                 cstate_dict[name0] = state_dict[name]
+                print("Loaded", name0 ,'with', name)
             # Reduction can be used if number of kernels in current model differs from number of kernels in loaded models. 
             elif allow_reduction:
+                print('REDUCED size')
                 if (cstate_dict[name0].size(dim = 0) > state_dict[name].size(dim = 0)) and ((cstate_dict[name0].size(dim = -1) == state_dict[name].size(dim = -1)) or ((len(cstate_dict[name0].size()) ==1) and (len(state_dict[name].size())==1))):
                     ntens = cstate_dict[name0]
                     ntens[:state_dict[name].size(dim = 0)] = state_dict[name]
                 elif cstate_dict[name0].size(dim = 0) <= state_dict[name].size(dim = 0) and ((cstate_dict[name0].size(dim = -1) == state_dict[name].size(dim = -1)) or ((len(cstate_dict[name0].size()) ==1) and (len(state_dict[name].size())==1))):
                     ntens = state_dict[name][:cstate_dict[name0].size(dim = 0)]
                 cstate_dict[name0] = ntens
+            else:
+                print('\nATTENTION:', name, 'different size. Current model', cstate_dict[name0].size(),  'Saved model', state_dict[name].size(), '\n')
+        else:
+            print('\nATTENTION:', name, 'not in state_dict\n')
             
     model.load_state_dict(cstate_dict)
     

@@ -22,7 +22,7 @@ from output import print_averages, save_performance, plot_scatter
 from functions import dist_measures
 from interpret_cnn import write_meme_file, pfm2iupac, kernel_to_ppm, compute_importance, ism, takegrad, deeplift, kernel_assessment
 from init import get_device, MyDataset, kmer_from_pwm, pwm_from_kmer, kmer_count, kernel_hotstart, load_parameters, separate_sys
-from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, Padded_Conv1d, RC_Conv1d, PredictionHead, Hyena_Conv
+from modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, func_dict_single, Padded_Conv1d, RC_Conv1d, PredictionHead, Hyena_Conv
 from train import pwmset, pwm_scan, batched_predict
 from train import fit_model
 from compare_expression_distribution import read_separated
@@ -347,7 +347,7 @@ class cnn(nn.Module):
             modellist['Kernelthresh'] = Kernel_linear(currdim, self.kernel_thresholding)
         
         # Non-linear conversion of kernel output
-        modellist[kernel_function+'0'] = func_dict[kernel_function]
+        modellist[kernel_function+'0'] = func_dict_single[kernel_function]
         
         # Max and mean pooling layers
         if self.max_pooling or self.mean_pooling or self.weighted_pooling:
@@ -382,7 +382,7 @@ class cnn(nn.Module):
         if self.n_transformer > 0:
             self.layer_norm = nn.LayerNorm(currdim*self.n_distattention)
             
-            self.encoder_layer = nn.TransformerEncoderLayer(d_model=int(currdim*self.n_distattention), nhead=self.n_distattention, dim_feedforward = int(self.n_distattention *self.dim_distattention *currdim), batch_first=True, dropout = self.attention_dropout, activation = func_dict[net_function])                               
+            self.encoder_layer = nn.TransformerEncoderLayer(d_model=int(currdim*self.n_distattention), nhead=self.n_distattention, dim_feedforward = int(self.n_distattention *self.dim_distattention *currdim), batch_first=True, dropout = self.attention_dropout, activation = func_dict[net_function]())                               
             
             self.transformer = nn.TransformerEncoder(self.encoder_layer, self.n_transformer, norm=self.layer_norm)
             currdim = currdim*self.n_distattention
@@ -520,16 +520,19 @@ class cnn(nn.Module):
         if isinstance(nfc_layers, list): # you can split network earlier by using list as nfc_layers, so only layers before that are shared and each modularity gets its own fully connected layers for combining data embeddings. 
             self.nfcs = nn.ModuleList()
             for nfcl in nfc_layers:
+                #print(currdim,self.fclayer_size)
                 self.nfcs.append(Res_FullyConnect(currdim, outdim = currdim, embdim = self.fclayer_size, n_classes = None, n_layers = nfcl, layer_widening = layer_widening, batch_norm = self.fc_batch_norm, dropout = self.fc_dropout, activation_function = self.fc_function, residual_after = self.nfc_residuals, bias = True))
-                
+                #print(self.nfcs[-1].outdim)
+            currdim = self.nfcs[0].outdim
         elif self.nfc_layers > 0:
             self.nfcs = Res_FullyConnect(currdim, outdim = currdim, embdim = self.fclayer_size, n_classes = None, n_layers = self.nfc_layers, layer_widening = layer_widening, batch_norm = self.fc_batch_norm, dropout = self.fc_dropout, activation_function = self.fc_function, residual_after = self.nfc_residuals, bias = True)
-            
+            currdim = self.nfcs.outdim
+        
         # Interaction layer multiplies every features with each other and accounts for non-linearities explicitly, often dimension gets to big to use. Parameters are of dimension d + d*(d-1)/2
         
         if self.verbose:
             print('outclasses', n_classes)
-        
+
         if isinstance(n_classes, list):
             self.classifier = nn.ModuleList()
             if not isinstance(outclass, list):
@@ -543,7 +546,7 @@ class cnn(nn.Module):
         
    
     # The prediction after training are performed on the cpu
-    def predict(self, X, pwm_out = None, mask = None, mask_value = 0, device = None, enable_grad = False):
+    def predict(self, X, pwm_out = None, mask = None, mask_value = 0, device = None, enable_grad = False, location = 'None'):
         if device is None:
             device = self.device
         if self.fixed_kernels is not None:
@@ -551,7 +554,7 @@ class cnn(nn.Module):
                 pwm_out = pwm_scan(X, self.fixed_kernels, targetlen = self.l_kernels, motif_cutoff = self.motif_cutoff)
             pwm_out = torch.Tensor(pwm_out)
             
-        predout = batched_predict(self, X, pwm_out =pwm_out, mask = mask, mask_value = mask_value, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence, random_shift = self.random_shift, enable_grad = enable_grad)
+        predout = batched_predict(self, X, pwm_out =pwm_out, mask = mask, mask_value = mask_value, device = device, batchsize = self.batchsize, shift_sequence = self.shift_sequence, random_shift = self.random_shift, enable_grad = enable_grad, location = location)
         return predout
     
     def forward(self, x, xadd = None, mask = None, mask_value = 0, location = 'None'):
@@ -690,6 +693,24 @@ if __name__ == '__main__':
         trand = int(sys.argv[sys.argv.index('--testrandom')+1])
         mask = np.random.permutation(len(X))[:trand]
         X, names = X[mask], names[mask]
+        if Y is not None:
+            if isinstance(Y, list):
+                Y = [y[mask] for y in Y]
+            else:
+                Y = Y[mask]
+    
+    if '--select_sample' in sys.argv:
+        sel = sys.argv[sys.argv.index('--select_sample')+1]
+        if ',' in sel:
+            sel = sel.split(',')
+        else:
+            sel = [sel]
+        mask = np.isin(names, sel)
+        if np.sum(mask) < 1:
+            print('Selected list names do not match the names in the data')
+            sys.exit()
+        X, names = X[mask], names[mask]
+        print('List selected', np.shape(X))
         if Y is not None:
             if isinstance(Y, list):
                 Y = [y[mask] for y in Y]
@@ -929,7 +950,7 @@ if __name__ == '__main__':
                 params['n_classes'] = [np.shape(y)[-1] for y in Y]
             else:
                 params['n_classes'] = np.shape(Y)[-1]    
-        
+        params['outname'] = outname
         for p in parameters:
             if ':' in p and '=' in p:
                 p = p.split('=',1)
@@ -939,7 +960,7 @@ if __name__ == '__main__':
                 p = p.split('=',1)
             params[p[0]] = check(p[1])
         
-        params['outname'] = outname
+        
         print('Device', params['device'])
         params['n_features'], params['l_seqs'], params['reverse_complement'] = np.shape(X)[-2], np.shape(X)[-1], reverse_complement
         model = cnn(**params)
@@ -1053,6 +1074,11 @@ if __name__ == '__main__':
         outname = model.outname
     print(outname)
     
+    if '--save_embedding' in sys.argv:
+        emb_layer = sys.argv[sys.argv.index('--save_embedding')+1]
+        Y_emb = model.predict(X[testset], location = emb_layer)
+        np.savez_compressed(outname+'_embed.npz', names = names[testset], values = Y_emb)
+        
     
     if Y is not None:
             
@@ -1113,11 +1139,13 @@ if __name__ == '__main__':
             itrack = np.array(ismtrack.split(','), dtype = int)
         elif ismtrack == 'all' or ismtrack == 'complete':
             itrack = np.arange(len(Y_pred[0]), dtype = int)
-        elif 'to' in gradtrack:
+        elif 'to' in ismtrack:
             itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
         else:
             itrack = [int(ismtrack)]
         ismarray = ism(X[testset], model, itrack)
+        if '--gradname' in sys.argv:
+            ismtrack = sys.argv[sys.argv.index('--gradname')+1]
         print('Saved ism with', np.shape(ismarray))
         if experiments is not None:
             itrack = experiments[itrack]
@@ -1126,13 +1154,23 @@ if __name__ == '__main__':
     if '--grad' in sys.argv:
         gradtrack = sys.argv[sys.argv.index('--grad')+1]
         if ',' in gradtrack:
-            itrack = np.array(gradtrack.split(','), dtype = int)
+            gradtracksplit = gradtrack.split(',')
+            itrack = []
+            for g,gt in enumerate(gradtracksplit):
+                gt = numbertype(gt)
+                if not isinstance(gt, int):
+                    gt = list(experiments).index(gt)
+                itrack.append(gt)
+            itrack = np.array(itrack)
+            gradtrack = ','.join(itrack.astype(str))
         elif gradtrack == 'all' or gradtrack == 'complete':
             itrack = np.arange(len(Y_pred[0]), dtype = int)
         elif 'to' in gradtrack:
             itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
         else:
             itrack = [int(gradtrack)]
+        if '--gradname' in sys.argv:
+            gradtrack = sys.argv[sys.argv.index('--gradname')+1]
         gradarray = takegrad(X[testset], model, itrack, top = topattributions)
         print('Saved grad with', np.shape(gradarray))
         if experiments is not None:
@@ -1150,14 +1188,24 @@ if __name__ == '__main__':
                 deepshap = True
                 add = '_deepshap'
         if ',' in gradtrack:
-            itrack = np.array(gradtrack.split(','), dtype = int)
+            gradtracksplit = gradtrack.split(',')
+            itrack = []
+            for g,gt in enumerate(gradtracksplit):
+                gt = numbertype(gt)
+                if not isinstance(gt, int):
+                    gt = list(experiments).index(gt)
+                itrack.append(gt)
+            itrack = np.array(itrack)
+            gradtrack = ','.join(itrack.astype(str))
         elif gradtrack == 'all' or gradtrack == 'complete':
             itrack = np.arange(len(Y_pred[0]), dtype = int)
         elif 'to' in gradtrack:
             itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
         else:
             itrack = [int(gradtrack)]
-        gradarray = deeplift(X[testset], model, itrack, deepshap = deepshap)
+        if '--gradname' in sys.argv:
+            gradtrack = sys.argv[sys.argv.index('--gradname')+1]
+        gradarray = deeplift(X[testset], model, itrack)
         print('Saved deeplift with', np.shape(gradarray), deepshap)
         if experiments is not None:
             itrack = experiments[itrack]
@@ -1178,27 +1226,47 @@ if __name__ == '__main__':
     # Generate global importance of kernel for each gene and testclasses
     if '--convertedkernel_ppms' in sys.argv:
         # stppm determines the start index of the ppms that should be looked at and Nppm determines the number of ppms for which the operations is performed. only compute the correlation for the pwms from stppm up to stppm + Nppm
-        ppmparal = False
-        stppm = Nppm = None
+        
+        kerkwargs = {}
         addppmname = ''
         if len(sys.argv) > sys.argv.index('--convertedkernel_ppms')+2:
-            stppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+1])
-            Nppm = numbertype(sys.argv[sys.argv.index('--convertedkernel_ppms')+2])
-            if isinstance(stppm, int) and isinstance(Nppm, int):
-                ppmparal = True
-                addppmname = str(stppm)+'-'+str(Nppm + stppm)
+            # define stppm : first kernel to be collected, 
+            # Nppm : number of kernels to be selected, 
+            # kactivation_cut = 1.64 : cutoff for kernelactivations to generate pwms from sequences,
+            # kactivation_selection = True : if kernel activation should be transformed by z-score before cutoff determines selected set  
+            # activate_kernel = False # if kernel activation are tranformed before sequences are selected based on activations
+            if '=' in sys.argv[sys.argv.index('--convertedkernel_ppms')+1]:
+                if '+' in sys.argv[sys.argv.index('--convertedkernel_ppms')+1]:
+                    adjpar = sys.argv[sys.argv.index('--convertedkernel_ppms')+1].split('+')
+                else:
+                    adjpar = [sys.argv[sys.argv.index('--convertedkernel_ppms')+1]]
+                for p in adjpar:
+                    p = p.split('=',1)
+                    kerkwargs[p[0]] = check(p[1])
+                    if '_' in str(p[0]):
+                        appmname = str(p[0]).split('_')
+                        apname = ''
+                        for ap in appmname:
+                            apname += ap[0]
+                    else:
+                        apname = str(p[0])[:2]
+                    addppmname += apname+str(p[1][:3])
+        
         onlyppms = False
+        #if true only pwms and ppms will be generated, no activation matrices that take a long time to compute
         if '--onlyppms' in sys.argv:
             onlyppms = True
+            
         genewise = False
+        #this generates a large npz file that contains the kernel importance for every data point for every data type
         if '--genewise_kernel_impact' in sys.argv:
             genewise = True
             
-        ppms, pwms, weights, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, onlyppms = onlyppms, genewise = genewise, ppmparal = ppmparal, stppm= stppm, Nppm = Nppm)
+        ppms, pwms, weights, biases, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, genewise = genewise, onlyppms = onlyppms, **kerkwargs)
         
         write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms'+addppmname+'.meme')
         write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms'+addppmname+'.meme')
-        write_meme_file(weights, motifnames, 'ACGT', outname+'_kernelweights'+addppmname+'.meme')
+        write_meme_file(weights, motifnames, 'ACGT', outname+'_kernelweights'+addppmname+'.meme', biases = biases)
         
         if not onlyppms:
             importance = np.array(importance)

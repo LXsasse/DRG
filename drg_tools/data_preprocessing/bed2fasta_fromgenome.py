@@ -37,7 +37,7 @@ uchroms = np.unique(ifile[:,0])
 offset = 0
 if '--oneindex' in sys.argv:
     # USE this if the bed file counts from 1-X and not from 0 to X
-    offset = 1
+    offset = -1
 
 flank = 0
 if '--add_flanks' in sys.argv:

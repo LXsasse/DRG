@@ -54,7 +54,17 @@ class SinAct(nn.Module):
         return torch.sin(x)
         
 
-func_dict0 = {'ReLU': nn.ReLU(),
+func_dict = {'ReLU': nn.ReLU,
+              'ReLUnonZero': ReLUnonZero,
+              'GELU': nn.GELU,
+              'Sigmoid': nn.Sigmoid,
+              'Tanh': nn.Tanh,
+              'Sin': SinAct,
+              'Id0': nn.Identity,
+              'CLAMP': CapOut,
+              'Softmax' : nn.Softmax}
+
+func_dict_single = {'ReLU': nn.ReLU(),
               'ReLUnonZero': ReLUnonZero(),
               'GELU': nn.GELU(),
               'Sigmoid': nn.Sigmoid(),
@@ -71,13 +81,13 @@ func_dict0 = {'ReLU': nn.ReLU(),
 class mixfunc(nn.Module):
     def __init__(self, f1 = 'ReLU', f2 = 'CLAMP'):
         super(mixfunc, self).__init__()
-        self.f1 = func_dict0[f1]
-        self.f2 = func_dict0[f2]
+        self.f1 = func_dict[f1]()
+        self.f2 = func_dict[f2]()
     def forward(self,x):
         x = self.f1(x)
         return self.f2(x)
 
-func_dict = func_dict0 | {'cReLU': mixfunc('ReLU', 'CLAMP'),
+func_dict_single = func_dict_single | {'cReLU': mixfunc('ReLU', 'CLAMP'),
                           'cGELU': mixfunc('GELU', 'CLAMP')}
 
 class conv_nonlinear(nn.Module):
@@ -116,7 +126,7 @@ class conv_nonlinear(nn.Module):
             self.nfc_weights, self.nfc_bias = nn.Parameter(nfc_weights), nn.Parameter(nfc_bias)
                 
         else:
-            self.activation = func_dict0[activation]
+            self.activation = func_dict[activation]()
             self.nfc_weights = nn.ParameterList()
             self.nfc_bias = nn.ParameterList()
             if self.fclayer_size is not None:
@@ -596,7 +606,7 @@ class simple_multi_output(nn.Module):
         self.out_relation = out_relation # difference, expdifference, FRACTION, LOGXPLUSFRACTION, LOGXPLUSDIFFERENCE
         self.pre_function = pre_function
         if self.pre_function is not None:
-            self.pre_function = func_dict[pre_function]
+            self.pre_function = func_dict[pre_function]()
         self.offset = offset
         if 'EXPDIFFERENCE' in self.out_relation.upper():
             self.exp = EXPmax(crop_max = 2048)
@@ -672,17 +682,24 @@ class Res_FullyConnect(nn.Module):
         super(Res_FullyConnect, self).__init__()
         # Initialize fully connected layers
         self.nfcs = nn.ModuleDict()
-        self.act_function = func_dict[activation_function]
+        
         self.n_layers = n_layers
         self.batch_norm = batch_norm
         self.dropout = dropout
         self.residual_after = residual_after
-        if outdim is None:
-            outdim = indim
+        
+        #if outdim is None:
+            #outdim = indim
         
         if embdim is not None:
             self.nfcs['EmbeddtoFully'] = nn.Linear(indim, embdim, bias = bias)
             indim = np.copy(embdim)
+            outdim = np.copy(indim)
+        
+        # Needs to be here instead; just kept it to use older models
+        if outdim is None:
+            outdim = indim
+        
         #self.layer_widening = 1.2 # Factor by which number of parameters are increased for each layer
         # Fully connected layers are getting wider and then back smaller to the original size
         # For-loops for getting wider
@@ -699,7 +716,7 @@ class Res_FullyConnect(nn.Module):
             
             if self.dropout > 0:
                 self.nfcs['Dropout_fullyconnected'+str(n)] = nn.Dropout(p=self.dropout)
-            self.nfcs['Actfunc'+str(n)] = self.act_function
+            self.nfcs['Actfunc'+str(n)] = func_dict[activation_function]()
             if residual_after > 0 and (n+1)%residual_after == 0:
                 if n_classes is None:
                     self.nfcs['Residuallayer'+str(n)] = nn.Linear(resdim, currdim2, bias = False)
@@ -720,7 +737,7 @@ class Res_FullyConnect(nn.Module):
             
             if self.dropout > 0:
                 self.nfcs['Dropout_fullyconnected'+str(n)] = nn.Dropout(p=self.dropout)
-            self.nfcs['Actfunc'+str(n)] = self.act_function
+            self.nfcs['Actfunc'+str(n)] = func_dict[activation_function]()
             if residual_after > 0 and (n+1)%residual_after == 0:
                 if n_classes is None:
                     self.nfcs['Residuallayer'+str(n)] = nn.Linear(resdim, currdim, bias = False)
@@ -742,7 +759,7 @@ class Res_FullyConnect(nn.Module):
                 self.nfcs['MultiFullyconnected'+str(n)] = Expanding_linear(currdim, [n_classes, currdim2], bias = bias)
             if self.dropout> 0:
                 self.nfcs['Dropout_fullyconnected'+str(n)] = nn.Dropout(p=self.dropout)
-            self.nfcs['Actfunc'+str(n)] = self.act_function
+            self.nfcs['Actfunc'+str(n)] = func_dict[activation_function]()
             if residual_after > 0 and (n+1)%residual_after == 0:
                 if n_classes is None:
                     self.nfcs['Residuallayer'+str(n)] = nn.Linear(resdim, currdim2, bias = False)
@@ -750,8 +767,10 @@ class Res_FullyConnect(nn.Module):
                     self.nfcs['MultiResiduallayer'+str(n)] = Expanding_linear(resdim, [n_classes, currdim2], bias = False)
                 resdim = currdim2
             currdim = currdim2
-    
+        self.outdim = currdim2
+
     def forward(self, x):
+        
         if self.residual_after > 0:
             res = x
         pred = x
@@ -761,12 +780,46 @@ class Res_FullyConnect(nn.Module):
                 res = pred
             else:
                 pred = item(pred)
+
         return pred
-    
+
+from einops.layers.torch import Rearrange
+#from einops import rearrange
+# This one is included into Padded_AvgPool1d now
+class SoftmaxNorm(nn.Module):
+    def __init__(self, dim = -1, pool_size=2):
+        super(SoftmaxNorm, self).__init__()
+        self.pool_size = pool_size
+        self.pool_fn = Rearrange("b d (n p) -> b d n p", p=pool_size)
+        self.soft = nn.Softmax(dim = dim)
+        
+    def forward(self, x):
+        b, _, n = x.shape
+        remainder = n % self.pool_size
+        needs_padding = remainder > 0
+        if needs_padding:
+            #x = x[...,:-remainder]
+            x = F.pad(x, (0, self.pool_size - remainder), value=0)
+            mask = torch.zeros((b, 1, n), dtype=torch.bool, device=x.device)
+            mask = F.pad(mask, (0, self.pool_size - remainder), value=True)
+        
+        x = self.pool_fn(x)
+        logits = x
+
+        if needs_padding:
+            mask_value = -torch.finfo(logits.dtype).max
+            logits = logits.masked_fill(self.pool_fn(mask), mask_value)
+
+        attn = self.soft(logits)
+        x = x * attn
+        x = x.flatten(-2)
+        x = x[...,:n]
+        return x
+
 # This average pooling can use dilation and also include padding that is larger than half of the kernel_size to cover kernel_size*dilation/2
 # if weighted = True performs a weighted average pooling with weights = exp(x)/sum(exp(x))
 class Padded_AvgPool1d(nn.Module):
-    def __init__(self, kernel_size, stride=None, padding=0, dilation = 1, count_include_pad=True, weighted = False):
+    def __init__(self, kernel_size, stride=None, padding=0, dilation = 1, count_include_pad=True, weighted = False, ceil_mode=False):
         super(Padded_AvgPool1d, self).__init__()
         if stride is None:
             stride = kernel_size
@@ -776,6 +829,7 @@ class Padded_AvgPool1d(nn.Module):
         self.dilation = dilation
         self.padding = padding
         self.gopad = False
+        self.ceil_mode = ceil_mode
         if isinstance(self.padding, int):
             if self.padding > 0:
                 self.padding = (padding, padding)
@@ -785,7 +839,11 @@ class Padded_AvgPool1d(nn.Module):
         self.count_include_pad = count_include_pad
         
         if weighted:
-            self.register_buffer('weight', torch.eye(kernel_size).unsqueeze(1).unsqueeze(2))
+            self.norm_fn = SoftmaxNorm(pool_size=kernel_size)
+            self.rearrange = Rearrange("b d (n p) -> b d n p", p=kernel_size)
+            #self.soft = nn.Softmax(dim = -1)
+            #self.register_buffer('weight', torch.eye(kernel_size).unsqueeze(1).unsqueeze(2))
+            #self.nonlinear = nn.Softmax(dim = 1)
         else:   
             self.register_buffer('weight', torch.ones(1,1,1,kernel_size)/kernel_size)
             self.register_buffer('norm',None)
@@ -796,10 +854,15 @@ class Padded_AvgPool1d(nn.Module):
         if self.weighted:
             if self.gopad:
                 x = F.pad(x, self.padding, value = float(x.min()))
-            x = F.conv2d(x.unsqueeze(1), self.weight, stride = (1,self.stride), dilation = (1,self.dilation))
-            norm = x.softmax(dim =1)
-            x = x * norm
-            x = x.sum(dim = 1)
+            x = self.norm_fn(x)
+            b, _, n = x.shape
+            remainder = n % self.kernel_size
+            needs_cropping = remainder > 0
+            if needs_cropping:
+                x = x[...,:-remainder]
+            x = self.rearrange(x)
+            x = x.sum(dim=-1)
+            
         else:
             if self.gopad:
                 x = F.pad(x, self.padding)
@@ -824,7 +887,6 @@ class Padded_AvgPool1d(nn.Module):
             #print(x.size(), self.norm.size())
             x = x/self.norm
             x = x.squeeze(1)
-            #print('fxsize', x.size())
         return x
         
     
@@ -1184,7 +1246,7 @@ class Res_Conv1d(nn.Module):
             residual_after = n_layers +10
         self.residual_after = residual_after
         self.convlayers = nn.ModuleDict()
-        kernel_function = func_dict[activation_function]
+        
         self.residual_entire = residual_entire
         self.concatenate_residual = concatenate_residual
         self.linear_layer = linear_layer
@@ -1234,7 +1296,7 @@ class Res_Conv1d(nn.Module):
             
             # decide if activation function should be applied before or after convolutional layer
             if act_func_before and ((~is_modified) or (n != 0)):
-                self.convlayers['Conv_func'+str(n)] = kernel_function
+                self.convlayers['Conv_func'+str(n)] = func_dict[activation_function]()
             
             if long_conv:
                 # Interpolated convolution which is as long as the sequence itself
@@ -1254,7 +1316,7 @@ class Res_Conv1d(nn.Module):
                 currlen = int(np.floor((currlen +convpad[0]+convpad[1]- dilations[n]*(l_kernels[n]-1)-1)/strides[n]+1))
             # see above
             if not act_func_before:
-                self.convlayers['Conv_func'+str(n)] = kernel_function
+                self.convlayers['Conv_func'+str(n)] = func_dict[activation_function]()
             
             # compute the new dimension and length of after the convolution
             currdim = int(currdim*kernel_increase[n])
@@ -1281,7 +1343,7 @@ class Res_Conv1d(nn.Module):
                 if batch_norm:
                     self.convlayers['LinBnorm'+str(n)] = nn.BatchNorm1d(currdim+concatcheck*currdim)
                 if linear_func is not None:
-                    self.convlayers['Lin_conv_func'+str(n)] = kernel_function
+                    self.convlayers['Lin_conv_func'+str(n)] = func_dict[activation_function]()
                 
                 self.convlayers['ConvLinear'+str(n)] = nn.Conv1d(currdim+concatcheck*currdim, currdim, 1, bias = False)
             
@@ -1413,7 +1475,7 @@ class gap_conv(nn.Module):
         if dropout > 0:
             self.dropout = nn.Dropout(dropout)
             
-        self.act_func = func_dict[activation_function]
+        self.act_func = func_dict[activation_function]()
         self.kernelgap_size = self.kernel_size + self.kernel_gap
         
     def forward(self, x):
@@ -1707,7 +1769,7 @@ class MyAttention_layer(nn.Module):
         # Fully connected feed forward network, see 3.3 in paper: Liner_layer applies two linear convolutions but expands the dimension by a factor 4 in the middle. 
         self.Linear_layer = Linear_layer
         if self.Linear_layer:
-            self.feedforward = nn.Sequential(nn.Conv1d(self.dim_values, self.dim_values*4, 1, bias = False), func_dict[Activation], nn.Conv1d(self.dim_values*4, self.dim_values, 1, bias = False))
+            self.feedforward = nn.Sequential(nn.Conv1d(self.dim_values, self.dim_values*4, 1, bias = False), func_dict[Activation](), nn.Conv1d(self.dim_values*4, self.dim_values, 1, bias = False))
             if self.layernorm:
                 self.feedforward_layer_norm = nn.LayerNorm(self.dim_values)
             
@@ -1845,7 +1907,7 @@ class PredictionHead(nn.Module):
         elif outclass == 'Complex':
             classifier['Complex'] = Complex(n_classes)
         elif outclass != 'Linear': 
-            classifier[outclass] = func_dict[outclass]
+            classifier[outclass] = func_dict_single[outclass]
         
         self.classifier = nn.Sequential(classifier)
     def forward(self, x):
