@@ -1,6 +1,7 @@
 # DRG
 
 This is a repository with code to develop Convolutional Neural Networks (CNNs) for genomic sequence-to-function models that predict molecular phenotypes from genomic sequence, such as gene expression or chromatin accessibility. 
+
 There are also scripts to visualize, compare and assess model performance or to compute and visualize feature importance. 
 
 ## Summary
@@ -10,20 +11,20 @@ Deep sequence-to-function models learn the relationship between genomic sequence
 
 ### Multi-modal multi-species multi-cell type models
 
-To improve the foundational knowledge of these models about gene regulation, three directions seem to be promising: 1) Improving cell type resolution with single cell data. 2) Inclusion of different data modalities of different scales that measure different aspects of the multi-layered gene-regulatory process into a single model 3) Inclusion of data from other species to increase the number of available data modalities from different cell types and even more the sequence variance from which the model can learn evolutionary conserved cis-regulatory elements. Incorporating these data types in a biologically meaningful way at cell type resolution is a major challenge to gain a more comprehensive view on gene expression regulation. 
+To improve the foundational knowledge of these models about gene regulation, three directions seem to be promising: 1) Improving cell type resolution with single cell data. 2) Inclusion of different data modalities of different scales that measure different aspects of the multi-layered gene-regulatory process into a single model 3) Inclusion of data from other species to increase the number of available data modalities from different cell types, and to increase the sequence variance from which the model can learn evolutionary conserved cis-regulatory elements. Incorporating these data types in a biologically meaningful way at cell type resolution is a major challenge to gain a more comprehensive view on gene expression regulation. 
 
 ### Generating Genomic sequences from Sequence-to-function models
 
 Deep neural networks can learn the link between genomic sequence and functional molecular measurements in a cell type specific manner from large scale measurement of molecular phenotypes. Utilizing the power of these models enables us, not only to extract the learn regulatory features, but also to design new sequences with cell type specific regulatory functions which can be exploited in bioengineering or new therapeutics. To generate these sequences, accurate sequence-to-function models are combined with generative processes that exploit the knowledge of the model to generate artificial sequences with target specific functionalities. However, how to effectively generate sequences that are cell type specific with improved functionality compared to wild-type sequences is an open research question. 
 
 
-### Learning complex long-range interactions, such as structure for post-transcriptional regulation 
+### Learning complex long-range interactions
 
-Gene expression is a multi-layered process and current models mostly focus in transcriptional activity. Models for post-transcriptional processes that influence the amount of gene product in a cell type specific manner are still missing. In this project, we aim at improving our ability to model complex post-transcriptional processes, such as mRNA structure, ribosome loading and RNA degradation, and finally integrate these models with models of transcriptional processes into a foundational model for regulation of gene expression. Post-transcriptional processes are affected by complex non-linear sequence interactions, and new model architectures, and feature attributions will have to be developed to learn and extract the information from them. 
+Gene expression is a multi-layered process and current models mostly focus in transcriptional activity. To improve models ability to predict gene expression, we require new model architectures that can effectively learn complex interactions betweeen variably spaced sequences elements. Moreover, new feature attribution methods will have to be developed to extract the information about complex long-range interactions, such as mRNA structure from these models. 
 
-### Building cell type agnostic sequence-to-function models from knock-out data
+### Building cell type agnostic sequence-to-function models
 
-Deep sequence-to-function models learn the relationship between genomic sequence and genome-wide functional molecular measurements. Trained on data from multiple cell types, these models are capable of developing a foundational understanding of the cis-regulatory code for individual cell types. However, current architectures have to learn the cell type specific code from data of each cell type individually or in a multi-task fashion. These models only learn the direct link between sequence elements and functional molecular phenotypes but cannot reason which trans-factors are causing differences between cell types, such as gene regulatory networks. It is hoped that next-generation models will be able to use the information about the abundance of trans-acting factors to interpolate to unseen cells. These models will use readily accessible data, such as gene expression of regulatory factors, as an additional input to the model to determine the cell type and adjust the parameters of the model to interpolate to new unseen cell types. To effectively learn the relationship between factors and the cis-regulatory code, measurements in which a single or multiple regulatory factor were perturbed are essential to train the models on. This data serves as training data, as well as validation on which the models’ zero-shop ability can be tested. 
+Deep sequence-to-function models learn the relationship between genomic sequence and genome-wide functional molecular measurements. Trained on data from multiple cell types, these models are capable of developing a foundational understanding of the cis-regulatory code for individual cell types. However, current architectures have to learn the cell type specific code from data of each cell type individually or in a multi-task fashion. These models cannot reason which trans-factors are causing differences between cell types. It is hoped that next-generation models will be able to use the information about the abundance of trans-acting factors to interpolate to unseen cell types. These models will use readily accessible data, such as gene expression of regulatory factors, as an additional input to the model to determine the cell type and adjust the parameters of the model to interpolate to new unseen cell types.
 
 
 ## Installation
@@ -36,9 +37,15 @@ Install by navigating to the location of the local repository
 
 ## Usage
 
-In this example, ...
+### Single sequence --> multi-task modalitiy 
 
-You can download the model parameters from
+### Single sequence --> multi-modal modalities
+
+### Multiple sequence --> multi-modal modalities
+
+### Load pre-trained models
+
+You can download pre-trained model parameteters from ..., and load them with ...
 
 ```
 mkdir data
@@ -48,7 +55,7 @@ wget https://zenodo.org/record/3402406/files/deepsea.beluga.pth
 
 ### Sequence attributions
 
-See also ... 
+Sequence attributions are derived from linear approximations of the model to describe the impact of each input feature around the sequence of interest. From the linar model's coefficients, also referred to as multipliers, sequence attributions are derived as ***local***, ***global***, and ***hypothetical*** attributions. 
 
 ```math
 a_{local} = m_{s_0}
@@ -56,6 +63,11 @@ a_{local} = m_{s_0}
 ```math
 a_{global} = m_{s_0} \cdot (s_0 - s_{baseline})
 ```
+```math
+a_{hypo}(j)= m_{s_0}(j) - \sum_{i}^{\{A,C,G,T\}} b(i) \cdot m_{s_0}(i) \; ; \: j \in \{A,C,G,T\}
+```
+
+Sequence attributions can be easily determined with the model's gradient or ISM. See TISM for more details. 
 
 ```python
 import numpy as np

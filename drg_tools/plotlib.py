@@ -1,6 +1,11 @@
+# plotlib.py
+# functions and classes to plot data 
+# Author: Alexander Sasse <alexander.sasse@gmail.com>
+
 import numpy as np
-import sys, os
 import matplotlib.pyplot as plt
+import sys,os
+from scipy.linalg import svd
 from functools import reduce
 import glob
 from matplotlib import cm
@@ -717,3 +722,307 @@ def plot_distribution(
         fig.savefig(outname+'_distribution.'+fmt, dpi = savedpi, bbox_inches = 'tight')
 
 
+
+def vulcano(fc, pv, figname, xcutoff=1., ycutoff = 1.96, text = None, mirror = False, eigenvalues = False, colors = None, cmap = 'viridis'):
+    fig = plt.figure(figname, figsize = (4,4), dpi = 200)
+    ax = fig.add_subplot(111)
+    maskx = np.absolute(fc) > xcutoff
+    masky = pv > ycutoff
+    if mirror:
+        pv = np.sign(fc) * pv
+    if colors is not None:
+        sort = np.argsort(colors)
+        ap = ax.scatter(fc[sort], pv[sort], cmap = cmap, c = colors[sort], alpha = 0.6)
+        fig.colorbar(ap, aspect = 2, pad = 0, anchor = (0,0.9), shrink = 0.15)
+    else:
+        ax.scatter(fc[~(maskx*masky)], pv[~(maskx*masky)], c = 'grey', alpha = 0.3)
+        ax.scatter(fc[maskx*masky], pv[maskx*masky], c='maroon', alpha = 0.8)
+    
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.set_title(figname)
+    ax.set_xlabel('Log2 Fold change')
+    ax.set_ylabel('Log10 p-value')
+    if mirror:
+        ax.set_ylabel('Log10 sign p-value')
+    if eigenvalues:
+        u, s, v = svd(np.array([fc,pv]), full_matrices=False, compute_uv=True)
+        u = u/u[0]
+        ax.plot([-u[0,0],0, u[0,0]], [-u[1,0], 0, u[1,0]], color = 'r', ls = '--', label = 'Eigval1 (m='+ str(np.around(u[1,0]/u[0,0],2))+ ')')
+        ax.legend()
+        
+    
+    if text is not None:
+        for s in np.where(masky*maskx)[0]:
+            if fc[s] < 0:
+                ax.text(fc[s], pv[s], text[s], ha = 'left', size = 8)
+            else:
+                ax.text(fc[s], pv[s], text[s],ha = 'right', size = 8)
+    fig.tight_layout()
+    return fig
+
+
+
+
+def plotHist(x, y = None, xcolor='navy', yaxis = False, xalpha= 0.5, ycolor = 'indigo', yalpha = 0.5, addcumulative = False, bins = None, xlabel = None, title = None, logx = False, logy = False, logdata = False):
+    fig = plt.figure(figsize = (3.5,3.5))
+    axp = fig.add_subplot(111)
+    axp.spines['top'].set_visible(False)
+    axp.spines['right'].set_visible(False)
+    
+    if logdata:
+        x = np.log10(x+1)
+    
+    a,b,c = axp.hist(x, bins = bins, color = xcolor, alpha = xalpha)
+    if y is not None:
+        ay,by,cy = axp.hist(y, bins = bins, color = ycolor, alpha = yalpha)
+    
+    if addcumulative != False:
+        axp2 = axp.twinx()
+        axp2.spines['top'].set_visible(False)
+        axp2.spines['left'].set_visible(False)
+        axp2.tick_params(bottom = False, labelbottom = False)
+        axp2.set_yticks([0.25,0.5,0.75,1])
+        axp2.set_yticklabels([25,50,75,100])
+        if addcumulative == 2:
+            addcumulative = 1
+            ag_,bg_,cg_ = axp2.hist(x, color = 'maroon', alpha = 1, density = True, bins = bins, cumulative = -1, histtype = 'step')
+        ag,bg,cg = axp2.hist(x, color = xcolor, alpha = 1, density = True, bins = bins, cumulative = addcumulative, histtype = 'step')
+        if y is not None:
+            agy,bgy,cgy = axp2.hist(y, color = ycolor, alpha = 1, density = True, bins = bins, cumulative = addcumulative, histtype = 'step')
+    
+    
+    
+    if yaxis:
+        print('yaxis',np.amax(a))
+        axp.plot([0,0], [0, np.amax(a)], c = 'k', zorder = 5)
+    
+    if logx:
+        if addcumulative:
+            axp2.set_xscale('symlog')
+        axp.set_xscale('symlog')
+        
+    if logy:
+        axp.set_yscale('symlog')
+    
+    if xlabel is not None:
+        axp.set_xlabel(xlabel)
+    if title is not None:
+        axp.set_title(title)
+    return fig
+
+
+
+
+def scatter3D(x,y,z, axis = True, color = None, cmap = None, xlabel = None, ylabel = None, zlabel=None, alpha = 0.9, diag = False):
+    fig = plt.figure(figsize = (4,4), dpi = 150)
+    ax = fig.add_subplot(111, projection='3d') #plt.axes(projection='3d')
+    xlim = np.array([np.amin(x), np.amax(x)])
+    ylim = np.array([np.amin(y), np.amax(y)])
+    zlim = np.array([np.amin(z), np.amax(z)])
+    lrat = 0.5
+    if axis:
+        # plot axis in there
+        xlim0, ylim0, zlim0 = xlim * lrat, ylim * lrat, zlim * lrat
+        ax.plot3D(xlim0,[0,0],[0,0], color = 'k', lw = 1)
+        ax.plot3D([0,0],ylim0,[0,0], color = 'k', lw = 1)
+        ax.plot3D([0,0],[0,0],zlim0, color = 'k', lw = 1)
+    if diag:
+        maxlim = np.array([xlim, ylim,zlim])*lrat
+        print(maxlim)
+        maxlim = [np.amax(maxlim[:,0]), np.amin(maxlim[:,1])]
+        print(maxlim)
+        ax.plot3D(maxlim, maxlim, maxlim, color = 'maroon', lw = 1)
+    # plot a scatterplot in 3d
+    ax.scatter3D(x, y, z, c=color, cmap=cmap, lw=0, alpha = alpha, s = 3)
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+        
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+        
+    if zlabel is not None:
+        ax.set_zlabel(zlabel)
+    lrat = 0.75
+    ax.set_xlim(xlim*lrat)
+    ax.set_xlim(ylim*lrat)
+    ax.set_xlim(zlim*lrat)
+    ax.view_init(elev=25, azim=-49)
+    return fig
+
+def plot_bars(x, width = 0.8, xticklabels=None, xlabel = None, ylabel=None, 
+        ylim=None, color = None, figsize = (3.5,3.5), labels = None, 
+        title = None, horizontal = False):
+    
+    """
+    Parameter
+    ---------
+    x : list or np.array, shape = (n_bars,) or (n_bars, n_models), or 
+    (n_bars, n_models, n_conditions)
+    
+    Return
+    ------
+    
+    fig : matplotlib.pyplot.fig object
+    
+    """
+
+    x = np.array(x)
+    positions = np.arange(np.shape(x)[0])
+    xticks = np.copy(positions)
+    
+    if len(np.shape(x)) >1:
+        n_models = np.shape(x)[1]
+        bst = -width/2
+        width = width/n_models
+        shifts = [bst + width/2 + width *n for n in range(n_models)]
+        positions = [positions+shift for shift in shifts]
+        if color is None:
+            color = [None for i in range(np.shape(x)[1])]
+   
+    if len(np.shape(x)) > 2:
+        if horizontal: 
+            fig = plt.figure(figsize = (figsize[0]* np.shape(x)[-1], 
+                figsize[1]))
+        else:
+            fig = plt.figure(figsize = (figsize[0], 
+                figsize[1] * np.shape(x)[-1]))
+        
+        for a in range(np.shape(x)[-1]):
+            if horizontal:
+                ax = fig.add_subplot(1, np.shape(x)[-1], a+1)
+            else:
+                ax = fig.add_subplot(np.shape(x)[-1], 1, a+1)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+        
+            for p, pos in enumerate(positions):
+                if labels is None:
+                    plotlabel = None
+                else:
+                    plotlabel = labels[p]
+                ax.bar(pos, x[:,p,a],  width = width, color = color[p], 
+                        label = plotlabel)
+            
+            if labels is not None:
+                ax.legend()
+        
+            ax.grid()
+            
+            if horizontal: 
+                if a == 0:
+                    if ylabel is not None:
+                        ax.set_ylabel(ylabel)    
+                if xticklabels is not None:
+                    ax.set_xticks(xticks)
+                    ax.set_xticklabels(xticklabels, rotation = 60)
+                if xlabel is not None:
+                    ax.set_xlabel(xlabel)
+                
+            else:
+                if a + 1 == np.shape(x)[-1]:
+                    if xticklabels is not None:
+                        ax.set_xticks(xticks)
+                        ax.set_xticklabels(xticklabels, rotation = 60)
+                    if xlabel is not None:
+                        ax.set_xlabel(xlabel)
+                else:
+                    ax.tick_params(labelbottom = False)
+            
+                if ylabel is not None:
+                    ax.set_ylabel(ylabel)
+            
+            if ylim is not None:
+                ax.set_ylim(ylim)
+            
+            if title is not None:
+                ax.set_title(title[a])
+        
+        if horizontal:
+            plt.subplots_adjust(wspace=0.2)
+        else:
+            plt.subplots_adjust(hspace=0.2)
+    else:
+        fig = plt.figure(figsize = figsize)
+        ax = fig.add_subplot(111)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        if len(np.shape(x))>1:
+            for p, pos in enumerate(positions):
+                if labels is None:
+                    plotlabel = None
+                else:
+                    plotlabel = labels[p]
+                ax.bar(pos, x[:,p], width = width, color = color[p], 
+                        label = plotlabel)
+        else:
+            ax.bar(positions, x, width = width, color = color, label = label)
+        if labels is not None:
+            ax.legend()
+    
+        ax.grid()
+        
+        if xticklabels is not None:
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(xticklabels, rotation = 60)
+        
+        if xlabel is not None:
+            ax.set_xlabel(xlabel)
+        
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
+        
+        if ylim is not None:
+            ax.set_ylim(ylim)
+    
+    return fig
+
+
+
+
+
+
+
+
+def plot_scatter(Ytest, Ypred, titles = None, xlabel = None, ylabel = None, outname = None, include_lr = True, include_mainvar = True, color=None, color_density = False, size = None, alpha = None, lw = None):
+    n = len(Ytest[0])
+    if n > 100:
+        print('Number of examples is too large', n)
+        return
+    x_col = int(np.sqrt(n))
+    y_row = int(n/x_col) + int(n%x_col!= 0)
+    fig = plt.figure(figsize = (x_col*3.5,y_row*3.5), dpi = 100)
+    for e in range(n):
+        ax = fig.add_subplot(y_row, x_col, e+1)
+        pcorr = pearsonr(Ytest[:,e], Ypred[:,e])[0]
+        if titles is not None:
+            ax.set_title(titles[e]+' R='+str(np.around(pcorr,2)), fontsize = 6)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.scatter(Ytest[:,e], Ypred[:,e], c = 'slategrey', alpha = 0.7, s = 6)
+        ax.set_xlim([0,1])
+        ax.set_ylim([0,1])
+        limx, limy = ax.get_xlim(), ax.get_ylim()
+        lim = [max(limx[0], limy[0]), min(limx[1], limy[1])]
+        ax.plot(lim, lim, color = 'dimgrey', ls = '-')
+        if include_lr:
+            lr = linear_model.LinearRegression().fit(Ytest[:, [e]], Ypred[:,e])
+            ax.plot(np.array(limx), lr.predict(np.array(limx).reshape(-1,1)), color = 'r')
+        if include_mainvar:
+            centerx, centery = np.mean(Ytest[:,e]), np.mean(Ypred[:,e])
+            maindir, u, v = np.linalg.svd(np.array([Ytest[:,e]-centerx, Ypred[:,e]-centery]), full_matrices=False)
+            maindir = maindir[:,0]
+            slope = maindir[1]/maindir[0]
+            bias = centery-slope*centerx
+            ax.plot(np.array(limx), np.array(limx)*slope + bias, color = 'r')
+        
+    if xlabel is not None:
+        fig.text(0.5, 0.05-0.25/y_row, xlabel, ha='center')
+    if ylabel is not None:
+        fig.text(0.05-0.2/x_col, 0.5, ylabel, va='center', rotation='vertical')
+    if outname is not None:
+        print('SAVED as', outname)
+        fig.savefig(outname, dpi = 200, bbox_inches = 'tight')
+    else:
+        fig.tight_layout()
+        plt.show()

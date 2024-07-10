@@ -7,6 +7,75 @@ from collections import OrderedDict
 from functools import reduce
 
 
+def reduce_dim(X, red, var, center = True):
+    if center:
+        Xmean = np.mean(X, axis = 0)
+        X = X - Xmean
+    if 'standard' in red:
+        X /= np.std(X, axis = 0)
+    U, S, Vh = svd(X, full_matrices=False, compute_uv=True, overwrite_a=False, check_finite=True, lapack_driver='gesdd')
+    print(np.shape(U))
+    # check if singular values are in correct order
+    if not np.array_equal(np.argsort(-S), np.arange(len(S))):
+        print('Singular values not sorted')
+    if var > 1:
+        U, S, Vh = U[:,:var], S[:var], Vh[:var]
+    else: 
+        Sv = S**2
+        SV = np.cumsum(Sv)/np.sum(Sv)
+        var = np.where(SV < var)[0][-1] + 1
+        print('Selected', var, 'singular values')
+        U, S, Vh = U[:,:var], S[:var], Vh[:var]
+        print(SV[:var])
+    if 'normed' not in red:
+        U = U * S
+    return U
+
+
+class embedding():
+    def __init__(self, norm = 'standard', normvar = 0.9, algorithm = 'umap', n_components = 2, metric = 'euclidean', **kwargs):
+        self.normvar = normvar
+        self.algorithm = algorithm
+        self.center = True
+        self.norm = norm
+        if self.algorithm == 'NMF':
+            self.center = False
+            self.norm = 'none'
+        self.mean = None
+        self.std = None
+        self.xfit = None
+        self.n_components = n_components
+        self.metric = 'euclidean'
+        self.kwargs = kwargs
+        
+    def fit(self,x):
+        print(self.normvar, self.algorithm)
+        if self.normvar != 1:
+            x = reduce_dim(x, self.norm, self.normvar, center = self.center)
+        
+        if self.algorithm == 'svd' or self.algorithm == 'SVD':
+            self.decoder = TruncatedSVD(n_components=self.n_components, n_iter=7, random_state=42)
+        elif self.algorithm == 'NMF':
+            self.decoder = NMF(n_components=self.n_components, init = 'nndsvda')
+        elif self.algorithm == 'pca' or self.algorithm == 'PCA':
+            self.decoder = PCA(n_components=self.n_components)
+        elif self.algorithm == 'TSNE' or self.algorithm == 'tsne':
+            print('Fit TSNE')
+            self.decoder = skm.TSNE(n_components=self.n_components, metric = self.metric, **self.kwargs)
+            # perplexity=30.0, early_exaggeration=12.0, learning_rate='warn', n_iter=1000, n_iter_without_progress=300, min_grad_norm=1e-07, metric='euclidean', metric_params=None, init='warn', verbose=0, random_state=None, method='barnes_hut', angle=0.5, n_jobs=None, square_distances='deprecated'
+        elif self.algorithm == 'umap' or self.algorithm == 'UMAP':
+            print('Fit UMAP')
+            self.decoder = umap.UMAP(n_components=self.n_components, metric = self.metric, **self.kwargs)
+            # n_neighbors=15, n_components=2, metric='euclidean', metric_kwds=None, output_metric='euclidean', output_metric_kwds=None, n_epochs=None, learning_rate=1.0, init='spectral', min_dist=0.1, spread=1.0, low_memory=True, n_jobs=-1, set_op_mix_ratio=1.0, local_connectivity=1.0, repulsion_strength=1.0, negative_sample_rate=5, transform_queue_size=4.0, a=None, b=None, random_state=None, angular_rp_forest=False, target_n_neighbors=-1, target_metric='categorical', target_metric_kwds=None, target_weight=0.5, transform_seed=42, transform_mode='embedding', force_approximation_algorithm=False, verbose=False, tqdm_kwds=None, unique=False, densmap=False, dens_lambda=2.0, dens_frac=0.3, dens_var_shift=0.1, output_dens=False, disconnection_distance=None, precomputed_knn=(None, None, None)
+        if self.algorithm == 'TSNE' or self.algorithm == 'tsne':
+            return self.decoder.fit_transform(x)
+        
+        self.decoder.fit(x)
+        print('Done fit')
+        return self.transform(x)
+    
+    def transform(self,x):
+        return self.decoder.transform(x)
 
 
 
