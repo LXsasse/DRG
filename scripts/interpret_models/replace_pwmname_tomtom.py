@@ -199,7 +199,9 @@ if __name__ == '__main__':
         print(target, targetnames, tnames, stat, tfmetric)
         target, targetnames, tnames, stat = sorttfset(target, targetnames, tnames, stat, tfmetric, tfmetfilter)
         
-        
+    usepwmid = False
+    if '--usepwmid' in sys.argv:
+        usepwmid = True
             
         
     
@@ -213,12 +215,17 @@ if __name__ == '__main__':
         print(outname+os.path.splitext(sys.argv[4])[1])
         modpwms = open(outname+os.path.splitext(sys.argv[4])[1], 'w')
     
+    icount = -1
     for l, line in enumerate(pwms):
         linesplit = line.split()
         if len(linesplit) > 0:
             if linesplit[0].upper() == nameline.upper(): # check fi nameline is first string in line
+                icount += 1
                 pre = line[:len(linesplit[0])+1] # use identical nameline and delimiter as in original file
-                orig_name = line[len(linesplit[0])+1:].strip() # name of the cluster
+                if usepwmid:
+                    orig_name = str(icount)
+                else:
+                    orig_name = line[len(linesplit[0])+1:].strip() # name of the cluster
                 pot_name = line[len(linesplit[0])+1:].strip() # name of the cluster
                 mask = tnames == pot_name # find all possible names for this cluster
                 if rsplit is not None: # check if pot_name should potentially be trimmed
@@ -231,7 +238,12 @@ if __name__ == '__main__':
                             pot_name[4] = '...'
                         pot_name = rnsplit.join(np.array(pot_name))
                     else:
-                        pot_name = pot_name.split(rsplit)[-1]
+                        if rsplit == 'empty':
+                            pot_name = ''
+                        elif rsplit == 'Number':
+                            pot_name = str(icount)
+                        else:
+                            pot_name = pot_name.split(rsplit)[-1]
                 # check for any matches
                 if np.sum(mask) > 0:
                     ptarget, ptarname = target[mask], targetnames[mask]

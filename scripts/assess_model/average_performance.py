@@ -37,7 +37,12 @@ if __name__ == '__main__':
     data = np.array(data)
     print(np.shape(data))
     
-    avg = np.mean(data, axis = 0)
+    if '--min' in sys.argv:
+        avg = np.amin(data, axis = 0)
+    if '--max' in sys.argv:
+        avg = np.amax(data, axis = 0)
+    else:
+        avg = np.mean(data, axis = 0)
     print(len(avg))
     
     np.savetxt(outname, np.array([common, np.around(avg,4).astype(str)]).T, fmt = '%s')

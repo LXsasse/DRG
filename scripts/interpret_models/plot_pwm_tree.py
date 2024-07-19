@@ -24,6 +24,12 @@ if __name__ == '__main__':
 
     min_sim = 4
     
+    if '--usepwmid' in sys.argv:
+        pwmnames = np.arange(len(pwmnames)).astype(str)
+    elif '--clipname' in sys.argv:
+        clip = sys.argv[sys.argv.index('--clipname')+1]
+        pwmnames = np.array([pwmname.replace(clip, '') for pwmname in pwmnames])
+    
     if '--set' in sys.argv:
         print('Before', len(pwmnames))
         pwmset = np.genfromtxt(sys.argv[sys.argv.index('--set')+1], dtype = str)
@@ -31,6 +37,18 @@ if __name__ == '__main__':
         pwmnames = np.array(pwmnames)[keep]
         pwms = [pwms[k] for k in keep]
         print('After filter', len(pwmnames))
+    
+    if '--setcut' in sys.argv:
+        print('Before', len(pwmnames))
+        pwmset = np.genfromtxt(sys.argv[sys.argv.index('--setcut')+1], dtype = str)
+        setcut = float(sys.argv[sys.argv.index('--setcut')+2])
+        pwmset = pwmset[pwmset[:,-1].astype(float) >= setcut,0]
+        keep = np.where(np.isin(pwmnames, pwmset))[0]
+        pwmnames = np.array(pwmnames)[keep]
+        pwms = [pwms[k] for k in keep]
+        print('After filter', len(pwmnames))
+        
+    
     
     if '--addpseudo' in sys.argv:
         for p,pwm in enumerate(pwms):
@@ -70,7 +88,7 @@ if __name__ == '__main__':
     cmap = 'Blues'
     measurex = None
     if '--heatmap' in sys.argv:
-        noheatmap, measurex = False, 'correlation'
+        noheatmap, measurex = False, 'euclidean'
         heatmap = np.genfromtxt(sys.argv[sys.argv.index('--heatmap')+1], dtype = str)
         heatnames = heatmap[:,0]
         heatmap = heatmap[:, 2:].astype(float)
@@ -86,6 +104,8 @@ if __name__ == '__main__':
             vmin = -vmax
         else:
             vmin = 0
+        print('Heatmap', np.shape(heatmap))
+        
         if '--filtermax' in sys.argv:
             top = float(sys.argv[sys.argv.index('--filtermax')+1])
             if top > 1: 
@@ -147,13 +167,17 @@ if __name__ == '__main__':
         # read in txt file 
         nameobj = np.genfromtxt(sys.argv[sys.argv.index('--pwmnames')+1], delimiter = None, dtype = str)
         nnames, repnames = nameobj[:,0], nameobj[:,1]
+        assignedpwms = 0
+        #print(nnames, repnames, pwmnames)
         for p, pwmname in enumerate(pwmnames):
             if pwmname in nnames:
+                assignedpwms += 1
                 yticklabels[p] = repnames[list(nnames).index(pwmname)]
                 if pwmfeatures is not None and '--addsizetoname' in sys.argv:
                     yticklabels[p] += '('+str(len(pwmfeatures[p]))+')'
-        print('PWMnames assigned', len(yticklabels), len(pwms))
-                #print(pwmname, yticklabels[p])
+        print('PWMnames assigned', assignedpwms, len(pwms))
+        #print(pwmname, yticklabels[p])
+        #sys.exit()
     
     revcom_array = np.zeros(len(pwms), dtype = int)
     if '--reverse_complement' in sys.argv:
@@ -202,11 +226,14 @@ if __name__ == '__main__':
                 if revcomp_matrix[p,best] == 1:
                     pwms[p] = reverse(pwm)
     
+    if '--sortx' in sys.argv:
+        sortx = check(sys.argv[sys.argv.index('--sortx')+1])
+        
     plot_heatmap(heatmap, # matrix that is plotted with imshow
                  ydistmat = correlation,
                  measurex = measurex, # if matrix is not a symmetric distance matrix then measurex define distannce metric for linkage clustering 
                  measurey = None, # same as measurex just for y axic
-                 sortx = 'average', # agglomerative clustering algorith used in likage, f.e average, or single
+                 sortx = sortx, # agglomerative clustering algorith used in likage, f.e average, or single
                  sorty = 'average', # same as above but for y axis
                  x_attributes = None, # additional heatmap with attributes of columns
                  y_attributes = None, # same as above for y axis

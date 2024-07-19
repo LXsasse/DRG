@@ -23,7 +23,7 @@ if __name__ == '__main__':
     clusterfile = sys.argv[1]
     importance_matrices = sys.argv[2] # with comma connected files
     # output corrected clusterfile, and summarized importance matrix
-    mincorr = 0.7
+    mincorr = 0.7 # 1-correlation
     pvalue = False
 
     clusters = np.genfromtxt(clusterfile, dtype = str)
@@ -75,7 +75,7 @@ if __name__ == '__main__':
         if len(mask) > 0:
             #print(len(mask))
             dist = cdist(imp_matrix[mask], imp_matrix[mask], 'correlation')
-            clustering = AgglomerativeClustering(n_clusters = None, affinity = 'precomputed', linkage = 'complete', distance_threshold = mincorr).fit(dist)
+            clustering = AgglomerativeClustering(n_clusters = None, metric = 'precomputed', linkage = 'complete', distance_threshold = mincorr).fit(dist)
             newclust = clustering.labels_
             unnew = np.unique(newclust)
             #if len(unnew > 1):
@@ -98,6 +98,11 @@ if __name__ == '__main__':
 impmatrixtype = importance_matrices[0].rsplit('_',1)[-1]
 
 np.savetxt(os.path.splitext(clusterfile)[0]+'_cl'+os.path.splitext(impmatrixtype)[0]+'.txt', np.array([clusters[:,0], newclusters.astype(int)]).T, fmt = '%s')
+
+uclust, nclust = np.unique(newclusters, return_counts = True)
+nhist, yhist = np.unique(nclust, return_counts = True)
+for n, nh in enumerate(nhist):
+    print(nh, yhist[n])
 
 np.savetxt(os.path.splitext(clusterfile)[0]+'_clm'+os.path.splitext(impmatrixtype)[0]+'.dat', np.concatenate([uniquenewclust.astype(int).astype(str).reshape(-1,1), Nuniquenew.astype(int).astype(str).reshape(-1,1), newmatrix],axis = 1), fmt = '%s', header = 'Kernelcluster N_kernels '+' '.join(header))
 

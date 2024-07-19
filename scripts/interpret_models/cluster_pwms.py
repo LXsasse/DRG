@@ -533,9 +533,9 @@ if __name__ == '__main__':
         if '--clusteronlogp' in sys.argv:
             outname += 'pv'
             #logs = 10**-logs
-            clustering = AgglomerativeClustering(n_clusters = n_clusters, affinity = 'precomputed', linkage = linkage, distance_threshold = distance_threshold).fit(10**-logs)
+            clustering = AgglomerativeClustering(n_clusters = n_clusters, metric = 'precomputed', linkage = linkage, distance_threshold = distance_threshold).fit(10**-logs)
         else:
-            clustering = AgglomerativeClustering(n_clusters = n_clusters, affinity = 'precomputed', linkage = linkage, distance_threshold = distance_threshold).fit(correlation)
+            clustering = AgglomerativeClustering(n_clusters = n_clusters, metric = 'precomputed', linkage = linkage, distance_threshold = distance_threshold).fit(correlation)
         
         clusters = clustering.labels_
         np.savetxt(outname + '.txt', np.array([pwmnames,clusters]).T, fmt = '%s')
