@@ -1,3 +1,8 @@
+
+# Attempt to define a constrained regression with non-linear contraints on the parameters
+# for example that parameters have to sum to 1
+# Last time did not work for a toy problem: There are different optimization algorithms to choose from
+
 import jax.numpy as np
 import numpy as onp
 from scipy.optimize import minimize
@@ -40,6 +45,11 @@ def null(b):
     return np.sum(0*b)
 
 class constrained_regression():
+    '''
+    Attempt to define a constrained regression with a constrained parameter space.
+    For example, the euclidean norm of the parameters should be smaller than 1
+    Or the max of the parameters should be smaller than a given value. 
+    '''
     def __init__(self, fit_intercept = True, objective = 'mse', constraint_up = 1., constraint_low = 0., constraint_func = '2-norm', ncores = 1, regular = 0., p_init = 'lsq'):
         
         self.init = p_init

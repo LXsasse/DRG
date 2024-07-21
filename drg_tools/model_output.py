@@ -1,25 +1,18 @@
-import sys, os 
+# model_output.py
+'''
+Handles output for training and testing models.
+TODO 
+- clean up functions
+- improve naming from dictionary
+'''
 import numpy as np
 import scipy.stats as stats
-from sklearn import linear_model, metrics
-from scipy.stats import pearsonr, ranksums
 from scipy.spatial.distance import cdist, jensenshannon
-from functools import reduce
-from functions import correlation, mse
-from scipy.stats import pearsonr
-import matplotlib.pyplot as plt
 
-def avgpool(x,window):
-    lx = np.shape(x)[-1]
-    if lx%window!=0:
-        xtend = [int(np.floor((lx%window)/2)), int(np.ceil((lx%window)/2))]
-        x = np.pad(x, pad_width = [[0,0],[0,0],xtend])
-    lx = np.shape(x)[-1]
-    xavg = np.zeros(list(np.shape(x)[:-1])+[int(lx/window)])
-    for i in range(int(lx/window)):
-        xavg[..., i] = np.mean(x[..., i*window:(i+1)*window], axis = -1)
-    return xavg
-    
+from .stats_functions import correlation, mse, RankSum, AuROC, AuPR
+from .sequence_utils import avgpool
+
+
 
 def print_averages(Y_pred, Ytest, testclasses, sysargv):
     if '--aurocaverage' in sysargv:
@@ -61,6 +54,12 @@ def print_averages(Y_pred, Ytest, testclasses, sysargv):
         for tclass in np.unique(testclasses):
             consider = np.where(testclasses == tclass)[0]
             print(tclass, 'Wilcoxon', np.mean(-np.log10(ranksums(Ytest[:,consider], Y_pred[:,consider], axis = -1)[1])))
+
+
+
+
+
+
             
 def shuffle_along_axis(array, axis = 0):
     if axis != 0:
@@ -74,6 +73,7 @@ def shuffle_along_axis(array, axis = 0):
     while True:
         rng.shuffle(shuf)
         if not np.array_equal(shuf, np.arange(len(array))):
+            print('Shuffling of array went wrong')
             break
     array = array[shuf]
     if axis != 0:
@@ -82,8 +82,6 @@ def shuffle_along_axis(array, axis = 0):
     return array
 
     
-
-        
 def compute_performance(Ytest, Y_pred, func, axis, testclasses, experiments, meanclasses, compare_random = True):
     if len(np.shape(Ytest))>2:
         Ytest = np.sum(Ytest, axis = -1)
@@ -114,27 +112,6 @@ def outfmt(names, experiments, values):
     elif len(experiments) == len(values):
         return np.append(experiments.reshape(-1,1), values.reshape(-1,1), axis = 1)
 
-def RankSum(yp, yt, axis = 0, fmt = 0, log = True):
-    rs = ranksums(yp, yt, axis = axis)[fmt]
-    if log:
-        rs = -np.log10(rs)
-    return rs
-
-def AuROC(x, y, axis=0):
-    if axis != 0:
-        x, y = x.T, y.T
-    rs = -np.ones(np.shape(x)[1])
-    for i in range(np.shape(x)[1]):
-        rs[i] = metrics.roc_auc_score(x[:,i],y[:,i])
-    return rs
-
-def AuPR(x,y, axis = 0):
-    if axis != 0:
-        x, y = x.T, y.T
-    rs = -np.ones(np.shape(x)[1])
-    for i in range(np.shape(x)[1]):
-        rs[i] = metrics.average_precision_score(x[:,i],y[:,i])
-    return rs
     
 def save_performance(Y_pred, Ytest, testclasses, experiments, names, outname, sysargv, compare_random = True, meanclasses = None, pooling = None):
     evaldict = {'--save_mse_perclass':(mse, '_clss_mse_tcl', 0, None), 
@@ -167,66 +144,6 @@ def save_performance(Y_pred, Ytest, testclasses, experiments, names, outname, sy
                 np.savetxt(outname+nameadd+r+'.txt', outfmt(names, res[1], res[0]), fmt = '%s')
 
 
-
-
-
-
-def plot_scatter(Ytest, Ypred, titles = None, xlabel = None, ylabel = None, indsize = 3.5, dpi = 300, outname = None, include_lr = False, include_mainvar = False, dotlabel = None):
-    n = len(Ytest)
-    if n > 100:
-        print('Number of examples is too large', n)
-        return
-    y_row = int(np.sqrt(n))
-    x_col = int(n/y_row) + int(n%y_row!= 0)
-    fig = plt.figure(figsize = ((x_col+0.3)*indsize,y_row*indsize), dpi = 100)
-    for e in range(n):
-        ax = fig.add_subplot(y_row, x_col, e+1)
-        
-        pcorr = pearsonr(Ytest[e], Ypred[e])[0]
-        if titles is not None:
-            ax.set_title(titles[e], fontsize = int(indsize*3))
-        
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        
-        
-        ax.scatter(Ytest[e], Ypred[e], c = 'slategrey', alpha = 0.7, s = int(indsize*10), label = ' R='+str(np.around(pcorr,2)))
-        
-        limx, limy = ax.get_xlim(), ax.get_ylim()
-        lim = [max(limx[0], limy[0]), min(limx[1], limy[1])]
-        ax.plot(lim, lim, color = 'maroon', ls = '--')
-        
-        if include_lr:
-            lr = linear_model.LinearRegression().fit(Ytest[e], Ypred[e])
-            ax.plot(np.array(limx), lr.predict(np.array(limx).reshape(-1,1)), color = 'k')
-        if include_mainvar:
-            centerx, centery = np.mean(Ytest[e]), np.mean(Ypred[e])
-            maindir, u, v = np.linalg.svd(np.array([Ytest[e]-centerx, Ypred[e]-centery]), full_matrices=False)
-            maindir = maindir[:,0]
-            slope = maindir[1]/maindir[0]
-            bias = centery-slope*centerx
-            ax.plot(np.array(limx), np.array(limx)*slope + bias, color = 'k')
-    
-        ax.legend(fontsize = int(indsize*3))
-        if dotlabel is not None:
-            for d, dl in enumerate(dotlabel):
-                ax.text(Ytest[e][d], Ypred[e][d], dl, ha = 'left', va = 'bottom', fontsize = int(indsize*3))
-        
-    if xlabel is not None:
-        fig.text(0.5, 0.07/y_row, xlabel, ha='center')
-    if ylabel is not None:
-        fig.text(0.07, 0.5, ylabel, va='center', rotation='vertical')
-    fig.subplots_adjust(wspace=0.5,hspace=0.5)
-    if outname is not None:
-        print('SAVED as', outname)
-        fig.savefig(outname, dpi = dpi, bbox_inches = 'tight')
-    else:
-        fig.tight_layout()
-        plt.show()
- 
- 
- 
- 
  
  
 def unique_ordered(alist):
@@ -235,9 +152,14 @@ def unique_ordered(alist):
         if l not in a:
             a.append(l)
     return a
-        
+
+
+
+
 def add_params_to_outname(outname, ndict):
-    
+    '''
+    Generates outname for neural networks from model.__dict__
+    '''
     if isinstance(ndict['loss_function'], list):
         lssf = ''
         for lsf in unique_ordered(ndict['loss_function']):

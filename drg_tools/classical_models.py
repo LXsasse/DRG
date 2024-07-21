@@ -1,3 +1,11 @@
+# classical_models.py 
+
+'''
+Contains implemetations of classical models with different caveats
+Models are designed to handle mutli-task data. 
+
+'''
+
 import sys, os 
 import numpy as np
 import scipy.stats as stats
@@ -8,13 +16,12 @@ from scipy.stats import pearsonr
 from scipy.spatial.distance import cdist
 from joblib import Parallel, delayed
 from functools import reduce
-from functions import mse, correlation
-from data_processing import create_outname, check, numbertype, manipulate_input, readin, create_sets
-from output import save_performance, print_averages, plot_scatter
-from torch_regression import torch_Regression
+
+from .stats_functions import mse, correlation
+from .torch_regression import torch_Regression
 
 
-# Logistic regression wrapper that uses joblib to fit outclasses independently
+# Logistic regression wrapper that uses joblib to fit multiple outclasses independently
 class logistic_regression():
     def __init__(self, n_jobs = None, penalty='l2', dual=False, tol=0.0001, C=1.0, fit_intercept=True, intercept_scaling=1, class_weight=None, random_state=None, solver='lbfgs', max_iter=100, multi_class='auto', verbose=0, warm_start=False, l1_ratio=None):
         
@@ -81,8 +88,9 @@ class logistic_regression():
         return pred
     
 
-    
-    
+
+# multi-regression framework that performs automatic dependent, or independent search for hyperparameter for each output track
+   
 class sk_regression():
     def __init__(self, alpha=1.0, fit_intercept=True, max_iter=None, tol=None, solver='auto', positive=False, random_state=None, penalty = None, pca = None, center = False, optimize_alpha = True, change_alpha =.6, validation_axis = 1, alpha_search = 'dependent', normalize = False, full_nonlinear = False, logistic = False, warm_start = False, verbose = True, n_jobs = None, refit_l1 = False, **kwargs):
         

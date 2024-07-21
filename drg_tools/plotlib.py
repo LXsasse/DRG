@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import sys,os
 from scipy.linalg import svd
 from functools import reduce
-import glob
 from matplotlib import cm
 from scipy.spatial.distance import pdist, cdist
 from scipy.cluster.hierarchy import dendrogram, linkage
@@ -15,6 +14,268 @@ import seaborn as sns
 import matplotlib as mpl
 import logomaker
 import pandas as pd
+
+
+def add_frames(att, locations, colors, ax):
+    att = np.array(att)
+    cmap = ['purple', 'limegreen']
+    for l, loc in enumerate(locations):
+        mina, maxa = np.amin(np.sum(np.ma.masked_greater(att[loc[0]:loc[1]+1],0),axis = 1)), np.amax(np.sum(np.ma.masked_less(att[loc[0]:loc[1]+1],0),axis = 1))
+        x = [loc[0]-0.5, loc[1]+0.5]
+        ax.plot(x, [mina, mina], c = cmap[colors[l]])
+        ax.plot(x, [maxa, maxa], c = cmap[colors[l]])
+        ax.plot([x[0], x[0]] , [mina, maxa], c = cmap[colors[l]])
+        ax.plot([x[1], x[1]] , [mina, maxa], c = cmap[colors[l]])
+
+
+def logoax(fig, att, ylabel = None, ylim = None, sb = 111, pos = None, labelbottom = True, bottom = True, xticks = None, xticklabels = None):
+    ax0 =  fig.add_subplot(sb[0], sb[1], sb[2])
+    if pos is not None:
+        ax0.set_position(pos)
+    ax0.spines['top'].set_visible(False)
+    ax0.spines['right'].set_visible(False)
+    ax0.tick_params(bottom = bottom, labelbottom = labelbottom)
+    att = pd.DataFrame({'A':att[:,0],'C':att[:,1], 'G':att[:,2], 'T':att[:,3]})
+    lm.Logo(att, ax = ax0)
+    if ylabel is not None:
+        ax0.set_ylabel(ylabel)
+    if ylim is not None:
+        ax0.set_ylim(ylim)
+    if xticks is not None:
+        ax0.set_xticks(xticks)
+    if xticklabels is not None:
+        ax0.set_xticklabels(xticklabels)
+    return ax0
+    
+def heatax(ism, fig, pos = None, sb = 111, cmap = 'coolwarm', ylabel = None, labelbottom = True, bottom = True, vlim = None):
+    if vlim is None:
+        vlim = np.amax(np.absolute(ism))
+    ax1 =fig.add_subplot(sb)
+    if pos is not None:
+        ax1.set_position(pos)
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    ax1.imshow(ism.T, aspect = 'auto', cmap = cmap, vmin = -vlim, vmax = vlim)
+    if ylabel is not None:
+        ax1.set_ylabel(ylabel)
+    ax1.tick_params(bottom = bottom, labelbottom = labelbottom)
+    ax1.set_yticks(np.arange(4))
+    ax1.set_yticklabels(['A','C','G','T'])
+    return ax1
+
+def activity_plot(values, ylim, xticklabels, ax):
+    ax.bar(np.arange(len(values)), values)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.set_ylim(ylim)
+    if xticklabels is None:
+        ax.tick_params(bottom = False, labelbottom = False)
+    else:
+        ax.set_xticklabels(xticklabels, rotation = 60)
+    return ax
+
+def generate_xticks(start, end, n):
+    possible = np.concatenate([np.array([1,2,5,10])*10**i for i in range(-16,16)])
+    steps=(end-start)/n
+    steps = possible[np.argmin(np.absolute(possible - steps))]
+    ticklabels = np.arange(start, end)
+    ticks = np.where(ticklabels%steps == 0)[0]
+    ticklabels = ticklabels[ticks]
+    return ticks, ticklabels
+    
+    
+
+def plot_attribution(seq, att, motifs = None, seq_based = 1, exp = None, vlim = None, unit = 0.15, ratio = 10, ylabel = None, xtick_range = None, barplot = None):
+    #print(att[0,:10,:,0], att[0,:10,:,0])
+    ism = np.copy(att)
+    if seq_based:
+        att = seq * att
+        ylabel = 'Attribution\nat ref'
+    
+    if ylabel is None:
+        ylabel = 'Attribution'
+    
+    if exp is None:
+        exp = np.arange(len(att), dtype = int).astype(str)
+        
+    if vlim is None:
+        mina = min(0,np.amin(np.sum(np.ma.masked_greater(att,0), axis = -1)))
+        maxa = np.amax(np.sum(np.ma.masked_less(att,0), axis = -1))
+        attlim = [mina, maxa]
+    else:
+        attlim = vlim
+    
+    if xtick_range is not None:
+        xticks, xticklabels = generate_xticks(xtick_range[0], xtick_range[1], 7)
+    else:
+        xticks, xticklabels = None, None
+    
+    fig = plt.figure(figsize = (unit*len(seq), len(att) * ratio*unit), dpi = 50)
+    
+    axs = []
+    for a, at in enumerate(att):
+        axs.append(logoax(fig, at, ylabel = exp[a], ylim = attlim, sb = [len(att), 1, 1+a], pos = [0.1,0.1+(len(att)-1-a)/len(att)*0.8,0.8,0.8*(1/len(att))*0.8], labelbottom = a == len(att)-1, bottom = a == len(att)-1, xticks = xticks, xticklabels = xticklabels))
+    
+    # This is for a barplot on the side of the sequence logo, that shows predicted and/or measured actibity
+    if barplot is not None:
+        ylim = [0, np.amax(barplot)]
+        for b, bp in enumerate(barplot):
+            ax = fig.add_subplot(len(barplot), len(barplot), len(barplot) + b)
+            ax.set_position([0.9 + 2.5*0.8*(1/len(seq)), 0.1+(len(att)-1-b)/len(att)*0.8, 6*0.8*(1/len(seq)), 0.8*(1/len(att))*0.8])
+            axs.append(activity_plot(bp, ylim, None, ax))
+    
+    
+    if motifs is not None:
+        mask = motifs[:,-2] == 0
+        colors = motifs[mask,-1]
+        #print(motifs[mask,1])
+        locations = [ti1[l] for l in motifs[mask,1]]
+        #print(locations)
+        add_frames(att, locations, colors, ax0)
+
+    return fig
+
+# Combine with above
+def plot_single_attribution(seq, att, motifs = None, seq_based = True, center_attribution = False, figscale = 0.15, ylim = None):
+    #print(att[0,:10,:,0], att[0,:10,:,0])
+    ism = np.copy(att)
+    
+    if center_attribution:
+        att -= (np.sum(att, axis = -1)/4)[...,None]
+        
+    
+    if seq_based:
+        att = seq * att
+        ylabel = 'Attribution\nat ref'
+    if ylabel is None:
+        ylabel = 'Attribution'
+    
+    
+    mina = min(0,np.amin(np.sum(np.ma.masked_greater(att,0), axis = -1)))
+    maxa = np.amax(np.sum(np.ma.masked_less(att,0), axis = -1))
+    attlim = [mina, maxa]
+
+    fig = plt.figure(figsize = (figscale*len(seq), 10*figscale+figscale*5), dpi = 50)
+    
+    ax0 =  fig.add_subplot(211)
+    ax0.set_position([0.1,0.1+(5/15)*0.8,0.8,0.8*(10/15)])
+    ax0.spines['top'].set_visible(False)
+    ax0.spines['right'].set_visible(False)
+    ax0.tick_params(bottom = False, labelbottom = False)
+    att = pd.DataFrame({'A':att[:,0],'C':att[:,1], 'G':att[:,2], 'T':att[:,3]})
+    lm.Logo(att, ax = ax0)
+    ax0.set_ylabel(ylabel)
+    if ylim is not None:
+        ax0.set_ylim(ylim)
+    else:
+        ax0.set_ylim(attlim)
+
+    if motifs is not None:
+        mask = motifs[:,-2] == 0
+        colors = motifs[mask,-1]
+        #print(motifs[mask,1])
+        locations = [ti1[l] for l in motifs[mask,1]]
+        #print(locations)
+        add_frames(att, locations, colors, ax0)
+
+    vlim = np.amax(np.absolute(ism))
+    ax1 =fig.add_subplot(212)
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    ta_ = ax1.imshow(ism.T, aspect = 'auto', cmap = 'coolwarm', vmin = -vlim, vmax = vlim)
+    ax1.set_ylabel('ISM')
+    ax1.set_yticks(np.arange(4))
+    ax1.set_yticklabels(['A','C','G','T'])
+    ax1.set_position([0.1,0.1,0.8,0.8*(4/15)])
+    
+    axc =fig.add_subplot(991)
+    #axc.spines['top'].set_visible(False)
+    #axc.spines['right'].set_visible(False)
+    axc.imshow(np.linspace(0,1,101).reshape(-1,1), aspect = 'auto', cmap = 'coolwarm', vmin = 0, vmax = 1)
+    axc.set_position([0.9+0.25/len(seq),0.1,1/len(seq),0.8*(4/15)])
+    axc.set_yticks([0,100])
+    axc.set_yticklabels([-round(vlim,2), round(vlim,2)])
+    axc.tick_params(bottom = False, labelbottom = False, labelleft = False, left = False, labelright = True, right = True)
+    
+    return fig
+
+
+
+def plot_single_pwm(pwm, log = False, axes = False):
+        fig = plt.figure(figsize = (2.5,1), dpi = 300)
+        ax = fig.add_subplot(111)
+        lim = [min(0, -np.ceil(np.amax(-np.sum(np.ma.masked_array(pwm, pwm >0),axis = 1)))), np.ceil(np.amax(np.sum(np.ma.masked_array(pwm, pwm <0),axis = 1)))]
+        if log:
+            pwm = np.log2((pwm+1e-16)/0.25)
+            pwm[pwm<0] = 0
+            lim = [0,2]
+        logomaker.Logo(pd.DataFrame(pwm, columns = list('ACGT')), ax = ax, color_scheme = 'classic')
+        ax.set_ylim(lim)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        if not axes:
+            ax.spines['left'].set_visible(False)
+            ax.tick_params(labelleft = False, left = False, labelbottom = False, bottom = False)
+        ax.set_yticks(lim)
+        return fig
+
+def plot_pwm(pwm, log = False, axes = False):
+    
+    if isinstance(pwm, list):
+        ifcont = True
+        min_sim = 5
+        for pw in pwm:
+            min_sim = min(min_sim, np.shape(pw)[0])
+            if (pw<0).any():
+                ifcont = False
+        correlation, log_pvalues, offsets, revcomp_matrix, bestmatch, ctrl_ = compare_ppms(pwm, pwm, one_half = True, fill_logp_self = 1000, min_sim = min_sim, infocont = ifcont, reverse_complement = np.ones(len(pwm), dtype = int))
+        pwm_len=np.array([len(pw) for pw in pwm])
+        offsets = offsets[:,0]
+        offleft = abs(min(0,np.amin(offsets)))
+        offright = max(0,np.amax(offsets + pwm_len-np.shape(pwm[0])[0]))
+        revcomp_matrix = revcomp_matrix[:,0]
+        fig = plt.figure(figsize = (2.6,1*len(pwm)), dpi = 50)
+        nshape = list(np.shape(pwm[0]))
+        nshape[0] = nshape[0] + offleft + offright
+        for p, pw in enumerate(pwm):
+            ax = fig.add_subplot(len(pwm), 1, p + 1)
+            if revcomp_matrix[p] == 1:
+                pw = reverse(pw)
+            pw0 = np.zeros(nshape)
+            pw0[offleft + offsets[p]: len(pw) + offleft + offsets[p]] = pw
+            pw = pw0
+            lim = [min(0, -np.ceil(np.amax(-np.sum(np.ma.masked_array(pw, pw >0),axis = 1)))), np.ceil(np.amax(np.sum(np.ma.masked_array(pw, pw <0),axis = 1)))]
+            if log:
+                pw = np.log2((pw+1e-16)/0.25)
+                pw[pw<0] = 0
+                lim = [0,2]
+            logomaker.Logo(pd.DataFrame(pw, columns = list('ACGT')), ax = ax, color_scheme = 'classic')
+            ax.set_ylim(lim)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            if not axes:
+                ax.spines['left'].set_visible(False)
+                ax.tick_params(labelleft = False, left = False, labelbottom = False, bottom = False)
+            ax.set_yticks(lim)
+    else:
+        fig = plt.figure(figsize = (2.5,1), dpi = 300)
+        ax = fig.add_subplot(111)
+        lim = [min(0, -np.ceil(np.amax(-np.sum(np.ma.masked_array(pwm, pwm >0),axis = 1)))), np.ceil(np.amax(np.sum(np.ma.masked_array(pwm, pwm <0),axis = 1)))]
+        if log:
+            pwm = np.log2((pwm+1e-16)/0.25)
+            pwm[pwm<0] = 0
+            lim = [0,2]
+        logomaker.Logo(pd.DataFrame(pwm, columns = list('ACGT')), ax = ax, color_scheme = 'classic')
+        ax.set_ylim(lim)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        if not axes:
+            ax.spines['left'].set_visible(False)
+            ax.tick_params(labelleft = False, left = False, labelbottom = False, bottom = False)
+        ax.set_yticks(lim)
+    return fig
+
+
 
 def plot_heatmap(heatmat, # matrix that is plotted with imshow
                  ydistmat = None,
@@ -716,8 +977,7 @@ def plot_distribution(
         return ax
     
     if outname is None:
-        #fig.tight_layout()
-        plt.show()
+        return fig
     else:
         fig.savefig(outname+'_distribution.'+fmt, dpi = savedpi, bbox_inches = 'tight')
 
@@ -1024,5 +1284,4 @@ def plot_scatter(Ytest, Ypred, titles = None, xlabel = None, ylabel = None, outn
         print('SAVED as', outname)
         fig.savefig(outname, dpi = 200, bbox_inches = 'tight')
     else:
-        fig.tight_layout()
-        plt.show()
+        return fig

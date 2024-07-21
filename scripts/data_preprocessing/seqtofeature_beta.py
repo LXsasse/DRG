@@ -9,25 +9,9 @@ import sys, os
 import time
 from joblib import Parallel, delayed
 import multiprocessing
+from drg_tools.io_utils import readinfasta
 
 
-
-
-
-# reads in fasta file
-def readinfasta(fatafile, minlen = 10):
-    obj = open(fastafile, 'r').readlines()
-    genes = []
-    sequences = []
-    for l, line in enumerate(obj):
-        if line[0] == '>':
-            sequence = obj[l+1].strip()
-            if sequence != 'Sequence unavailable' and len(sequence) > minlen:
-                genes.append(line[1:].strip())
-                sequences.append(sequence.upper())
-    sortgen = np.argsort(genes)
-    genes, sequences = np.array(genes)[sortgen], np.array(sequences)[sortgen]
-    return genes, sequences
 
 
     

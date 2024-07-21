@@ -1,3 +1,10 @@
+#modules.py 
+'''
+Contains torch.modules for automatic model building
+i.e. loss functions and model layers
+'''
+
+
 import sys, os 
 import numpy as np
 import torch.nn as nn
@@ -91,11 +98,17 @@ func_dict_single = func_dict_single | {'cReLU': mixfunc('ReLU', 'CLAMP'),
                           'cGELU': mixfunc('GELU', 'CLAMP')}
 
 class conv_nonlinear(nn.Module):
+    '''
+    Non-linear convolution module: 
+    Instead of summing over kernel * input, it uses a fully connected network for 
+    every kernel to model non-linear interactions between bases in the motif. 
+    
+    '''
     def __init__(self, in_channels, n_kernels, l_kernels, stride = 1, nfc =5, fclayer_size = None, nfclayer_increase = 1.2, position_wise = False, explicit = False, bias = False, activation = 'GELU', dropout = 0):
         super(conv_nonlinear, self).__init__()
         self.in_channels = in_channels
-        self.n_kernels = n_kernels
-        self.l_kernels = l_kernels
+        self.n_kernels = n_kernels # number of non-linear kernels 
+        self.l_kernels = l_kernels # length of non-linear kernels
         self.nfc = nfc
         self.position_wise = position_wise
         self.explicit = explicit

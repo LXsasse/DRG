@@ -1,4 +1,11 @@
-from functions import dist_measures, correlation, mse
+# interpret_cnn.py
+
+'''
+functions to interpret the kernels of models
+and to create sequence attributions from the model
+
+'''
+
 import numpy as np
 import sys, os
 from scipy.spatial.distance import cdist
@@ -7,60 +14,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import time 
-from modules import func_dict, SoftmaxNorm
-# Need per-sequence method that accounts dependencies of between positions
-    # Maybe first scan for one mutation, then sample from ones to create twos, then sample from twos to create threes and so on. 
-    # Scrambler does that basically --> can be used
 
-# Need method that summarizes the importance scores along all sequences
-# Basically cluster/align sequences based on their importance score profiles
-    # Extract single important motifs from sequences, cluster them.
-    # Measure impact of motifs by mutating all single and double bases in it
-    # Then take motifs that occur in combinations and determine expected impact from multiplication
-    # Then scramble two bases, one from each motif and determine combined impact of motifs
-    # Compare combined impact to single impact for each base pair to determine motif interaction
-    # Them move the motifs around and measure the distance importance.
-
-#Integrated gradients faster than in silico mutuations
-# Install also integrated hessians and derive motif interactions from this
-#Could be used before ISM to only do ISM on sequences with motifs?
-
-
-
-def compute_importance(model, in_test, out_test, activation_measure = 'euclidean', direction = True, pwm_in = None, normalize = True):
-    n_kernels = model.num_kernels
-    complete_predict = model.predict(in_test, pwm_out = pwm_in)
-    #activation_measures: euclidean, correlation
-    ## replace cdist with funciton that does not compute the entire matrix
-    #full_predict = np.diagonal(cdist(full_predict.T, out_test.T, activation_measure))
-    full_predict = dist_measures(complete_predict.T, out_test.T, activation_measure, axis = 1)
-    importance = []
-    impacts = []
-    for n in range(n_kernels):
-        mnpredict = model.predict(in_test, mask = n, pwm_out = pwm_in)
-        reduce_predict = np.diagonal(cdist(mnpredict.T, out_test.T, activation_measure))
-        reduce_predict = dist_measures(mnpredict.T, out_test.T, activation_measure, axis = 1)
-        importance.append(reduce_predict - full_predict)
-        impact = mnpredict-complete_predict
-        impacts.append(np.sum(impact**3, axis = 0)/np.sum(impact**2, axis = 0))
-    if pwm_in is not None:
-        for n in range(n_kernels, n_kernels + np.shape(pwm_in)[-2]):
-            mnpredict = model.predict(in_test, mask = n, pwm_out = pwm_in)
-            reduce_predict = dist_measures(mnpredict.T, out_test.T, activation_measure, axis = 1)
-            importance.append(reduce_predict - full_predict)
-            impact = mnpredict-complete_predict
-            impacts.append(np.sum(impact**3, axis = 0)/np.sum(impact**2, axis = 0))
-    importance = np.array(importance)
-    impacts = np.array(impacts)
-    if normalize:
-        importance = np.around(importance/np.amax(importance),4)
-    return importance, impacts
+from .modules import func_dict, SoftmaxNorm
+from .sequence_utils import generate_random_onehot
+from .motif_analysis import pfm2iupac
+from .stats_functions import correlation, mse
 
 def kernel_to_ppm(kernels, kernel_bias = None, bk_freq = None):
     n_kernel, n_input, l_kernel = np.shape(kernels)
     if kernel_bias is not None:
         kernels += kernel_bias[:,None,None]/(n_input*l_kernel)
-    #kernels *= l_kernel
+    # strechting factor to increase impact of large parameter values
+    # alternatively use: kernels *= l_kernel
     kernels /= np.std(kernels, axis = (-1,-2))[...,None, None]
     if bk_freq is None:
         bk_freq = np.ones(n_input)*np.log2(1./float(n_input))
@@ -70,6 +35,8 @@ def kernel_to_ppm(kernels, kernel_bias = None, bk_freq = None):
     ppms = 2.**kernels
     ppms = ppms/np.amax(np.sum(ppms, axis = 1),axis = -1)[:,None, None] #[:,None, :]
     return ppms
+
+
 
 def pwms_from_seqs(ohseqs, activations, cut, z_score = True):
     # scale kernel activations between 0 and 1
@@ -87,21 +54,17 @@ def pwms_from_seqs(ohseqs, activations, cut, z_score = True):
         mask = seqs[1][seqs[0]==a]
         chseq = act[mask][:,None,None]*ohseqs[mask]
         pwms.append(np.sum(chseq, axis = 0)/np.sum(chseq, axis = (0,1))[None, :])
+        
+        # check distribution
         #bins = np.linspace(0,1,21)
         #plt.hist(act, bins = bins)
         #plt.hist(act[seqs[1][seqs[0]==a]],bins = bins, color='orange',zorder = 1)
         #plt.show()
     return np.array(pwms)
  
-def genseq(lseq, nseq):
-    seqs = np.zeros((nseq,4,lseq))
-    pos = np.random.randint(0,4,lseq*nseq)
-    pos0 = (np.arange(lseq*nseq,dtype=int)/lseq).astype(int)
-    pos1 = np.arange(lseq*nseq,dtype=int)%lseq
-    seqs[pos0,pos,pos1] = 1
-    return seqs
 
-# Could use this to propagate importance through network and determine individual nodes and then interpret them.
+
+# IDEA: Use this to propagate importance through network and determine individual nodes and then interpret them.
 # perform zscore test for each parameter as in linear regression
 def parameter_importance(ypred, y, coef_, inputs):
     invcovardiag = np.diagonal(np.pinv(np.dot(inputs.T, inputs),rcond = 1e-8, hermetian = True))
@@ -113,30 +76,12 @@ def parameter_importance(ypred, y, coef_, inputs):
     return z_scores
 
 
-def pfm2iupac(pwms, bk_freq = None):
-    hash = {'A':16, 'C':8, 'G':4, 'T':2}
-    dictionary = {'A':16, 'C':8, 'G':4, 'T':2, 'R':20, 'Y':10, 'S':12, 'W':18, 'K':6, 'M':24, 'B':14, 'D':22, 'H':26, 'V':28, 'N':0}
-    res = dict((v,k) for k,v in dictionary.items())
-    n_nts = len(pwms[0])
-    if bk_freq is None:
-        bk_freq = (1./float(n_nts))*np.ones(n_nts)
-    else:
-        bk_freq = bk_freq*np.ones(n_nts)
-    motifs = []
-    for pwm in pwms:
-        m = ''
-        for p in pwm.T:
-            score = 0
-            for i in range(len(p)):
-                if p[i] > bk_freq[i]:
-                    score += list(hash.values())[i]
-            m += res[score]
-        motifs.append(m)
-    return np.array(motifs)
 
 
 def correct_by_mean(grad):
     return grad - np.mean(grad, axis = -2)[...,None,:]
+
+
 
 def ism(x, model, tracks, correct_from_neutral = True):
     baselines = model.predict(x)
@@ -306,8 +251,11 @@ def takegrad(x, model, tracks, ensemble = 1, correct_from_neutral = True, top=No
 
 
 
-# "scales" deeplift output to the effective change from baseline to observed sequence
+
 def correct_deeplift(dlvec, freq):
+    '''
+    Compute hypothetical attributions from multipliers to a baseline frequency
+    '''
     if len(np.shape(freq)) < len(np.shape(dlvec)):
         freq = np.ones_like(dlvec) * freq[:,None] # for each base, we have to "take step" from the frequency in baseline to 1.
     # This whole procedure is similar to ISM, where we remove the reference base and set it to zero, so take a step of -1, and then go a step of one in the direction of the alternative base. DeepLift returns the regression coefficients, which need to be scaled to the steps that are taken to arrive at the base we're looking at.
@@ -315,71 +263,48 @@ def correct_deeplift(dlvec, freq):
     dlvec = dlvec - negmul[...,None,:]
     return dlvec
 
-# compare linearization with model predictions
-def check_deltas(multipliers, # multipliers from deeplift, 
-                 delta_pred, # difference between model prediction from baseline and x
-                 delta_in, # x - baseline
-                 target, # target tracks
-                 is_multiplied = False):
-    print('Deltas for track', tr, 'min', np.amin(delt), '5%', np.percentile(delt, 5), '10%',np.percentile(delt, 10), 'median',np.median(delt), '90%',np.percentile(delt, 90),'95%',np.percentile(delt, 95),'max', np.amax(delt))
 
 
 class cnn_multi_deeplift_wrapper(torch.nn.Module):
+    '''
+    Wrapper for cnn_multi to use tangermeme's deepshap on one of the inputs
+    
+    Parameters
+    ----------
+    model : pytorch.nn.module
+        The cnn_multi object
+    N : int 
+        Number of sequences that the model takes as input
+    n : int 
+        The index of the sequence that will be investigated with the wrapper
+        
+    '''
     def __init__(self, model, N = 2, n = 0):
         super(Wrapper, self).__init__()
         self.model = model
         self.N = N
         self.n = n
     def forward(self, X, arg):
+        '''
+        X : torch.Tensor 
+            is the sequence of interest
+        arg : list of torch.Tensors 
+            contains other sequences in order as given originally 
+        '''
         x = []
         for i in range(N):
             t = 0
             if i == n:
                 x.append(X)
-                t += 1
+                t = 1
             else:
-                x.append(args[i+t])
+                x.append(args[i-t])
         return self.model(x)
 
-# This works for some sequence but not for all. 
-def _weightedpool(module, grad_input, grad_output):
-    """An internal function implementing a 1D max-pooling correction.
 
-    This function, copied and slightly modified from Captum, is meant to be
-    the `rescale` rule applied to max pooling layers given their nature of
-    aggregating values across multiple positions.
-    """
-    
-    pool_func, unpool_func = F.max_pool1d, F.max_unpool1d
 
-    with torch.no_grad():
-        delta_in_ = torch.sub(*module.input.chunk(2))
-        delta_in = torch.cat([delta_in_, delta_in_])
+# TODO: Use the cnn_multi_deeplift_wrapper to get attributions for multi sequence models
 
-        output, output_ref = module.output.chunk(2)
-        delta_out_xmax = torch.max(output, output_ref)
-        delta_out = torch.cat([delta_out_xmax - output_ref,
-            output - delta_out_xmax])
-        module_padding = module.padding
-        if not isinstance(module_padding, int):
-            module_padding = module_padding[0]
-        _, indices = pool_func(module.input, module.kernel_size, module.stride,
-            module_padding, module.dilation, module.ceil_mode, True)
-
-        unpool_ = unpool_func(grad_output[0] * delta_out, indices,
-            module.kernel_size, module.stride, module_padding,
-            list(module.input.shape))
-        unpool_delta, unpool_ref_delta = torch.chunk(unpool_, 2)
-
-    unpool_delta_ = unpool_delta + unpool_ref_delta
-    unpool_delta = torch.cat([unpool_delta_, unpool_delta_])
-    idxs = torch.abs(delta_in) < 1e-7
-
-    new_grad_inp = torch.where(idxs, grad_input[0], unpool_delta / delta_in)
-    return (new_grad_inp,)
-
-# Use the cnn_multi_deeplift_wrapper to get attributions for multi sequence models
-# use args = all_other_sequences to give it to tangermeme
 def deeplift(x, model, tracks, baseline = None, batchsize = None, effective_attributions = True, raw_outputs = True, hypothetical = False):
     from tangermeme.deep_lift_shap import deep_lift_shap, _nonlinear, _maxpool
     from tangermeme.ersatz import dinucleotide_shuffle
@@ -457,14 +382,17 @@ def deeplift(x, model, tracks, baseline = None, batchsize = None, effective_attr
     print(np.shape(grad))
     return grad  
 
-# use a different way to correct_deeplift, and allow for multiple dlvec and mulitple freq
-# use deeplift in a different way, give it list of output tracks and multiple sequences at once. 
-def deepliftcaptum(x, model, tracks, deepshap = False, basefreq = None, batchsize = None, effective_attributions = True):
+
+# Does not work well for all models: Needs atleast GELU manually added to nonlinar functions. 
+# But could be used for other methods.
+def captum_sequence_attributions(x, model, tracks, deepshap = False, basefreq = None, batchsize = None, effective_attributions = True):
     from captum.attr import DeepLift, DeepLiftShap
+    # TODO use for other methods
     #GradientShap,
     #DeepLift,
     #DeepLiftShap,
-    #IntegratedGradients)
+    #IntegratedGradients
+    
     if deepshap:
         dl = DeepLiftShap(model.eval(), multiply_by_inputs=False)
     else:
@@ -545,7 +473,7 @@ def kernel_assessment(model, X, Y, testclasses = None, onlyppms = True, genewise
             geneimportance = [[] for t in range(len(np.unique(testclasses)))]
         
         # use random sequences to compute mean activations AND pwms from sequence alignments
-        seq_seq = genseq(model.l_kernels, respwm) # generate 200000 random sequences with length l_kernels
+        seq_seq = generate_random_onehot(model.l_kernels, respwm) # generate 200000 random sequences with length l_kernels
         i =0
         islist = isinstance(X, list) # check if several or only one input
         # compute unmasked performances
@@ -689,40 +617,6 @@ def indiv_network_contribution(model, X, Y, testclasses, outname, names):
             #DYdiff = np.mean(Ymask[i][:,consider] - Ypredtrain[:,consider], axis - 1)
             
         np.savetxt(outname+'_netatt'+tclass+'.dat', np.concatenate([[names],np.around([trainmse,traincorr],4), np.around(np.array(genecont),6)],axis = 0).T, header = 'Gene '+' '.join(np.array(header)), fmt = '%s')
-    
-def write_meme_file(pwm, pwmname, alphabet, output_file_path, biases = None):
-    """[summary]
-    write the pwm to a meme file
-    Args:
-        pwm ([np.array]): n_filters * 4 * motif_length
-        output_file_path ([type]): [description]
-    """
-    n_filters = len(pwm)
-    print(n_filters)
-    meme_file = open(output_file_path, "w")
-    meme_file.write("MEME version 4 \n")
-    meme_file.write("ALPHABET= "+alphabet+" \n")
-    meme_file.write("strands: + -\n")
-
-    print("Saved PWM File as : {}".format(output_file_path))
-
-    for i in range(0, n_filters):
-        if np.sum(np.absolute(pwm[i])) > 0:
-            meme_file.write("\n")
-            meme_file.write("MOTIF %s \n" % pwmname[i])
-            if biases is not None:
-                meme_file.write("letter-probability matrix: alength= "+str(len(alphabet))+" w= {0} bias= {1} \n".format(np.count_nonzero(np.sum(pwm[i], axis=0)), biases[i]))
-            else:
-                meme_file.write("letter-probability matrix: alength= "+str(len(alphabet))+" w= %d \n" % np.count_nonzero(np.sum(pwm[i], axis=0)))
-        for j in range(0, np.shape(pwm[i])[-1]):
-            #if np.sum(pwm[i][:, j]) > 0:
-                for a in range(len(alphabet)):
-                    if a < len(alphabet)-1:
-                        meme_file.write(str(pwm[i][ a, j])+ "\t")
-                    else:
-                        meme_file.write(str(pwm[i][ a, j])+ "\n")
-
-    meme_file.close()
 
 
 

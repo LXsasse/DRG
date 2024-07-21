@@ -1,3 +1,14 @@
+# model_training.py 
+
+'''
+Functions for model training and batched predictions
+TODO: 
+- solve resetting optimizer after gradient explosion
+- introduce masks into training
+
+'''
+
+
 import torch
 import numpy as np
 import sys, os
@@ -9,12 +20,118 @@ from torch import Tensor
 from torch import Tensor
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
-from init import MyDataset, get_device
-from modules import loss_dict, func_dict, final_convolution
-from torch_regression import torch_Regression
+from .model_utils import MyDataset, get_device
+from .modules import loss_dict, func_dict, final_convolution
+from .torch_regression import torch_Regression
 import time
 
 
+
+
+
+
+def create_sets(n_samples, folds, fold, seed = 1010, Yclass = None, genenames = None):
+    '''
+    Create random train, test and validation sets using permutations
+    Samples can be split into different classes: each set will have same fraction of each class
+    '''
+    
+    if isinstance(folds, int):
+        if Yclass is None:
+            Yclass = np.ones(n_samples)
+        np.random.seed(seed)
+        permut = np.random.permutation(n_samples)
+        classes = np.unique(Yclass)
+        testset, valset, trainset = [],[],[]
+        valfold = fold -1
+        if valfold == -1:
+            valfold = folds -1
+        for cla in classes:
+            inclass = Yclass[permut] == cla
+            totinclass = np.sum(inclass)
+            modulos = totinclass%folds
+            addedstart = fold * int(fold<modulos)
+            startfold = int((fold/folds)*np.sum(Yclass== cla)) +addedstart
+            endfold = int(((fold+1)/folds)*np.sum(Yclass== cla))+ addedstart + int(fold+1 < modulos)
+            valaddedstart = valfold * int(valfold<modulos)
+            valstartfold = int((valfold/folds)*np.sum(Yclass== cla)) +valaddedstart
+            valendfold = int(((valfold+1)/folds)*np.sum(Yclass== cla))+ valaddedstart + int(valfold+1 < modulos)
+            testset.append(permut[inclass][startfold:endfold])
+            valset.append(permut[inclass][valstartfold:valendfold])
+        testset, valset = np.concatenate(testset), np.concatenate(valset)
+        trainset = np.delete(np.arange(n_samples, dtype = int), np.append(testset, valset))
+    else:
+        lines = open(folds, 'r').readlines()
+        sets = []
+        for l, line in enumerate(lines):
+            if line[0] != '#':
+                line = line.strip().split()
+                sets.append(np.where(np.isin(genenames,line))[0])
+        testset = sets[(fold+1)%len(sets)]
+        valset = sets[fold]
+        trainset = np.delete(np.arange(len(genenames), dtype = int),np.append(testset,valset))
+    return trainset, testset, valset
+
+
+# Kernel initialization with statistical motif enrichment or Lasso regression
+def kernel_hotstart(n_kernels, l_kernels, X, Y, kmervalues = 'Lasso', XYval = None, verbose = True, alpha = 1.):
+    # minimal occurance of motif in sequence
+    n_minimal = 200.
+    # maximal length of initiated patterns is capped to 7, l_kernels or statistical number of different motifs
+    maxlen = min(7,min(int(np.log(np.shape(X)[0]*np.shape(X)[-1]/n_minimal)/np.log(4))+1, l_kernels))
+    print('Hotstart with', maxlen, 'mers')
+    # Generate k-merlist from onehot encoding, and count occurrance, return occurance matrix
+    kmernumbers, allkmers = kmer_count(X, maxlen)
+    
+    if XYval is not None:
+        Xval, Yval = XYval[0], XYval[1]
+        kmernumbersval, allkmers = kmer_count(Xval, maxlen, allkmers = allkmers)
+    
+    zscores = np.zeros((len(allkmers), np.shape(Y)[-1]))
+    if kmervalues == 'Lasso':
+        kmernumbers = (kmernumbers-np.mean(kmernumbers,axis = 0))/np.std(kmernumbers, axis = 0)
+        # Start regularization for Lasso
+        while True:
+            print('Hotstart with Lasso', alpha, "Classes left", len(np.where(np.sum(zscores, axis = 0) == 0)[0]))
+            model = Lasso(fit_intercept = True, alpha = alpha, warm_start = False, max_iter = 250)
+            model.fit(kmernumbers, Y)
+            modpred = model.predict(kmernumbers)
+            if len(np.shape(modpred)) == 1:
+                modpred = modpred.reshape(-1,1)
+            print('Predicted correlation', ' '.join(np.around(np.diagonal(cdist(modpred.T, Y.T, 'correlation')),3).astype(str)))
+            coef_ = model.coef_
+            if len(np.shape(coef_)) ==1:
+                coef_ = coef_.reshape(1,-1)
+            ndetected = []
+            for yi, ycoef in enumerate(np.absolute(coef_)):
+                ndetected.append(int(np.sum(ycoef > 0)))
+                if np.sum(ycoef != 0) > n_kernels and np.sum(zscores[:,yi]) == 0:
+                    zscores[:, yi] = ycoef*alpha
+            print('Ndtected', ' '.join(np.array(ndetected).astype(str)))
+            if (np.sum(zscores, axis = 0) == 0).any():
+                alpha = alpha/2.
+            else:
+                break
+      
+    zscores = np.amax(zscores,axis = 1)
+    chosenk = np.argsort(-zscores)[:n_kernels]
+    select_kmers = allkmers[chosenk]
+    if verbose:
+        print('Initialized kernels', select_kmers)
+        theomodel = LinearRegression(fit_intercept = True).fit(kmernumbers[:, chosenk], Y)
+        theopred = theomodel.predict(kmernumbers[:, chosenk])
+        if len(np.shape(theopred)) == 1:
+            theopred = theopred.reshape(-1,1)
+        print('Final predicted correlation with chosenk', np.diagonal(cdist(theopred.T, Y.T, 'correlation')))
+        
+        if XYval is not None:
+            theopred = theomodel.predict(kmernumbersval[:, chosenk])
+            if len(np.shape(theopred)) == 1:
+                theopred = theopred.reshape(-1,1)
+            print('Final validation correlation with chosenk', np.diagonal(cdist(theopred.T, Yval.T, 'correlation')))
+    # Return pwms for top k-mers
+    hotpwms = np.array([pwm_from_kmer(km, l_pwm = l_kernels) for km in select_kmers])
+    return hotpwms
 
 
 
@@ -51,6 +168,7 @@ def pwmset(pwm, targetlen, shift_long = True):
         return np.array(npwms)
         
 # Scans onehot encoded numpy array for pwms
+# TODO implement pytorch version - needs only be done once before model training 
 def pwm_scan(sequences, pwms, targetlen = None, activation = 'max', motif_cutoff = None, set_to = 0., verbose = False):
     # if pwms are longer than the targeted kernel size then its unclear if we should the convolution with the right side of the pwm or the left side. Each would create  a different positional pattern. Therefore we take the mean over both options all options of pwms with the target length.
     # If Pwms are smaller than the target len we use all the options of padded pwms to create scanning pattern
@@ -75,7 +193,7 @@ def pwm_scan(sequences, pwms, targetlen = None, activation = 'max', motif_cutoff
         outscan[outscan < motif_cutoff] = set_to
     return outscan
 
-
+# Might be better to use torch module instead
 def l1_loss(w):
     return torch.abs(w).mean()
     
@@ -91,7 +209,11 @@ def load_model(model, PATH, device):
     model.load_state_dict(state_dict)
     model.to(device)
 
+
 class hook_grads():
+    '''
+    Unclear for what to use here
+    '''
     def __init__(self):
         self.grads = {}
     def save_grad(self,name):

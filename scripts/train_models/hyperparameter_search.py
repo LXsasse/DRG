@@ -16,6 +16,7 @@ import torch.nn as nn
 import cnn_model
 from scipy.spatial.distance import cdist
 from scipy.stats import pearsonr, cosine
+from output import save_performance
 
 def compute_memory(model, batchsize, n_feataures, l_sequence):
     input_ = torch.rand(batchsize, n_features, l_sequence)
@@ -83,7 +84,7 @@ def combinations(i, n):
     return out
 
 
-from output import save_performance
+
 
 
 if __name__ == '__main__':
