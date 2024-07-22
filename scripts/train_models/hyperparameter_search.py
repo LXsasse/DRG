@@ -1,11 +1,16 @@
 # hyperparameter_search.py
 
+'''
+Loads models and trains them with different combinations of hyperparameters
+Automatically determines all combinations of hyperparameter sets 
+TODO:
 #### Need to find a way to send models for training on gpu with joblib
 #### joblib will wait until one process is done before starting next one, like used before
 #### However, we need an updating list of gpus that are free
 #### and we need a wrapper, so that we can put it all in one line for using processing, 
 #### The wrapper initiates the model, trains it and updates the list of free gpus, 
 #### Maybe the we don't need a list, we just use i%n_gpus
+'''
 
 import numpy as np
 import sys, os
@@ -13,10 +18,10 @@ import itertools
 import time 
 import torch
 import torch.nn as nn
-import cnn_model
+import drg_toos.cnn_model
 from scipy.spatial.distance import cdist
 from scipy.stats import pearsonr, cosine
-from output import save_performance
+from drg_tools.model_output import save_performance
 
 def compute_memory(model, batchsize, n_feataures, l_sequence):
     input_ = torch.rand(batchsize, n_features, l_sequence)

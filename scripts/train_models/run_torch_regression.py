@@ -1,29 +1,15 @@
 import sys, os 
 import numpy as np
-import scipy.stats as stats
-from scipy.sparse.linalg import svds
-from sklearn import linear_model, metrics
-from sklearn.decomposition import SparsePCA
-from scipy.stats import pearsonr
-import matplotlib.pyplot as plt
-from scipy.spatial.distance import cdist
-from joblib import Parallel, delayed
 import torch.nn as nn
 import torch
-from torch.utils.data import TensorDataset, DataLoader, Dataset
-import torch.optim as optim
-from collections import OrderedDict
-from torch import Tensor
-from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 
 from drg_tools.torch_regression import torch_Regression
 
-
-
-from io_utils import readin
-
-from ... import create_sets, manipulate_input, print_averages, create_outname, save_performance, check, numbertype
+from drg_tools.io_utils import readin, check, numbertype, create_outname
+from drg_tools.model_training import create_sets
+from drg_tools.data_processing import manipulate_input
+from drg_tools.model_output import print_averages, save_performance
     
 
 if __name__ == '__main__':
