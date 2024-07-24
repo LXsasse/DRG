@@ -16,7 +16,7 @@ import logomaker
 import pandas as pd
 
 
-def add_frames(att, locations, colors, ax):
+def _add_frames(att, locations, colors, ax):
     att = np.array(att)
     cmap = ['purple', 'limegreen']
     for l, loc in enumerate(locations):
@@ -28,7 +28,7 @@ def add_frames(att, locations, colors, ax):
         ax.plot([x[1], x[1]] , [mina, maxa], c = cmap[colors[l]])
 
 
-def logoax(fig, att, ylabel = None, ylim = None, sb = 111, pos = None, labelbottom = True, bottom = True, xticks = None, xticklabels = None):
+def _logoax(fig, att, ylabel = None, ylim = None, sb = 111, pos = None, labelbottom = True, bottom = True, xticks = None, xticklabels = None):
     ax0 =  fig.add_subplot(sb[0], sb[1], sb[2])
     if pos is not None:
         ax0.set_position(pos)
@@ -47,10 +47,10 @@ def logoax(fig, att, ylabel = None, ylim = None, sb = 111, pos = None, labelbott
         ax0.set_xticklabels(xticklabels)
     return ax0
     
-def heatax(ism, fig, pos = None, sb = 111, cmap = 'coolwarm', ylabel = None, labelbottom = True, bottom = True, vlim = None):
+def _heatax(ism, fig, pos = None, sb = 111, cmap = 'coolwarm', ylabel = None, labelbottom = True, bottom = True, vlim = None, yticklabels = None, xticklabels = None):
     if vlim is None:
         vlim = np.amax(np.absolute(ism))
-    ax1 =fig.add_subplot(sb)
+    ax1 =fig.add_subplot(sb[0], sb[1], sb[2])
     if pos is not None:
         ax1.set_position(pos)
     ax1.spines['top'].set_visible(False)
@@ -59,11 +59,16 @@ def heatax(ism, fig, pos = None, sb = 111, cmap = 'coolwarm', ylabel = None, lab
     if ylabel is not None:
         ax1.set_ylabel(ylabel)
     ax1.tick_params(bottom = bottom, labelbottom = labelbottom)
-    ax1.set_yticks(np.arange(4))
-    ax1.set_yticklabels(['A','C','G','T'])
+    if yticklabels is not None:
+        ax1.set_yticks(np.arange(len(yticklabels)))
+        ax1.set_yticklabels(list(yticklabels))
+    if xticklabels is not None:
+        ax1.set_xticks(np.arange(len(xticklabels)))
+        ax1.set_xticklabels(list(xticklabels))
+    
     return ax1
 
-def activity_plot(values, ylim, xticklabels, ax):
+def _activity_plot(values, ylim, xticklabels, ax):
     ax.bar(np.arange(len(values)), values)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -74,7 +79,7 @@ def activity_plot(values, ylim, xticklabels, ax):
         ax.set_xticklabels(xticklabels, rotation = 60)
     return ax
 
-def generate_xticks(start, end, n):
+def _generate_xticks(start, end, n):
     possible = np.concatenate([np.array([1,2,5,10])*10**i for i in range(-16,16)])
     steps=(end-start)/n
     steps = possible[np.argmin(np.absolute(possible - steps))]
@@ -85,9 +90,12 @@ def generate_xticks(start, end, n):
     
     
 
-def plot_attribution(seq, att, motifs = None, seq_based = 1, exp = None, vlim = None, unit = 0.15, ratio = 10, ylabel = None, xtick_range = None, barplot = None):
-    #print(att[0,:10,:,0], att[0,:10,:,0])
+def plot_attribution(seq, att, motifs = None, seq_based = 1, exp = None, vlim = None, unit = 0.15, ratio = 10, ylabel = None, xtick_range = None, barplot = None, heatmap = False, center_attribution = False):
+    
     ism = np.copy(att)
+    if center_attribution:
+        att -= (np.sum(att, axis = -1)/4)[...,None]
+    
     if seq_based:
         att = seq * att
         ylabel = 'Attribution\nat ref'
@@ -106,15 +114,21 @@ def plot_attribution(seq, att, motifs = None, seq_based = 1, exp = None, vlim = 
         attlim = vlim
     
     if xtick_range is not None:
-        xticks, xticklabels = generate_xticks(xtick_range[0], xtick_range[1], 7)
+        xticks, xticklabels = _generate_xticks(xtick_range[0], xtick_range[1], 7)
     else:
         xticks, xticklabels = None, None
     
-    fig = plt.figure(figsize = (unit*len(seq), len(att) * ratio*unit), dpi = 50)
+    _heat = (1+int(heatmap))
+    
+    fig = plt.figure(figsize = (unit*len(seq), len(att) * _heat * ratio*unit), dpi = 50)
     
     axs = []
     for a, at in enumerate(att):
-        axs.append(logoax(fig, at, ylabel = exp[a], ylim = attlim, sb = [len(att), 1, 1+a], pos = [0.1,0.1+(len(att)-1-a)/len(att)*0.8,0.8,0.8*(1/len(att))*0.8], labelbottom = a == len(att)-1, bottom = a == len(att)-1, xticks = xticks, xticklabels = xticklabels))
+        axs.append(_logoax(fig, at, ylabel = exp[a], ylim = attlim, sb = [len(att)*_heat, 1, 1+(a*_heat)], pos = [0.1, 0.1+(len(att)-1-(a*_heat))/len(att)/_heat*0.8, 0.8, 0.8*(1/len(att)/_heat)*0.8], labelbottom = (a == len(att)-1) & (~heatmap), bottom = (a == len(att)-1)& (~heatmap), xticks = xticks, xticklabels = xticklabels))
+        if heatmap:
+            _vlim = np.amax(np.absolute(attlim))
+            axs.append(_heatax(ism, fig, ylim = attlim, sb = [len(att)*_heat, 1, 1+(a*_heat)], pos = [0.1, 0.1+(len(att)-1-(a*_heat))/len(att)/_heat*0.8, 0.8, 0.8*(1/len(att)/_heat)*0.8], labelbottom = (a == len(att)-1), bottom = (a == len(att)-1), xticks = xticks, xticklabels = xticklabels), cmap = 'coolwarm', ylabel = None, vlim = [-_vlim, _vlim]))
+            
     
     # This is for a barplot on the side of the sequence logo, that shows predicted and/or measured actibity
     if barplot is not None:
@@ -122,82 +136,18 @@ def plot_attribution(seq, att, motifs = None, seq_based = 1, exp = None, vlim = 
         for b, bp in enumerate(barplot):
             ax = fig.add_subplot(len(barplot), len(barplot), len(barplot) + b)
             ax.set_position([0.9 + 2.5*0.8*(1/len(seq)), 0.1+(len(att)-1-b)/len(att)*0.8, 6*0.8*(1/len(seq)), 0.8*(1/len(att))*0.8])
-            axs.append(activity_plot(bp, ylim, None, ax))
+            axs.append(_activity_plot(bp, ylim, None, ax))
     
     
     if motifs is not None:
         mask = motifs[:,-2] == 0
         colors = motifs[mask,-1]
-        #print(motifs[mask,1])
         locations = [ti1[l] for l in motifs[mask,1]]
-        #print(locations)
-        add_frames(att, locations, colors, ax0)
+        _add_frames(att, locations, colors, ax0)
 
     return fig
 
-# Combine with above
-def plot_single_attribution(seq, att, motifs = None, seq_based = True, center_attribution = False, figscale = 0.15, ylim = None):
-    #print(att[0,:10,:,0], att[0,:10,:,0])
-    ism = np.copy(att)
-    
-    if center_attribution:
-        att -= (np.sum(att, axis = -1)/4)[...,None]
-        
-    
-    if seq_based:
-        att = seq * att
-        ylabel = 'Attribution\nat ref'
-    if ylabel is None:
-        ylabel = 'Attribution'
-    
-    
-    mina = min(0,np.amin(np.sum(np.ma.masked_greater(att,0), axis = -1)))
-    maxa = np.amax(np.sum(np.ma.masked_less(att,0), axis = -1))
-    attlim = [mina, maxa]
 
-    fig = plt.figure(figsize = (figscale*len(seq), 10*figscale+figscale*5), dpi = 50)
-    
-    ax0 =  fig.add_subplot(211)
-    ax0.set_position([0.1,0.1+(5/15)*0.8,0.8,0.8*(10/15)])
-    ax0.spines['top'].set_visible(False)
-    ax0.spines['right'].set_visible(False)
-    ax0.tick_params(bottom = False, labelbottom = False)
-    att = pd.DataFrame({'A':att[:,0],'C':att[:,1], 'G':att[:,2], 'T':att[:,3]})
-    lm.Logo(att, ax = ax0)
-    ax0.set_ylabel(ylabel)
-    if ylim is not None:
-        ax0.set_ylim(ylim)
-    else:
-        ax0.set_ylim(attlim)
-
-    if motifs is not None:
-        mask = motifs[:,-2] == 0
-        colors = motifs[mask,-1]
-        #print(motifs[mask,1])
-        locations = [ti1[l] for l in motifs[mask,1]]
-        #print(locations)
-        add_frames(att, locations, colors, ax0)
-
-    vlim = np.amax(np.absolute(ism))
-    ax1 =fig.add_subplot(212)
-    ax1.spines['top'].set_visible(False)
-    ax1.spines['right'].set_visible(False)
-    ta_ = ax1.imshow(ism.T, aspect = 'auto', cmap = 'coolwarm', vmin = -vlim, vmax = vlim)
-    ax1.set_ylabel('ISM')
-    ax1.set_yticks(np.arange(4))
-    ax1.set_yticklabels(['A','C','G','T'])
-    ax1.set_position([0.1,0.1,0.8,0.8*(4/15)])
-    
-    axc =fig.add_subplot(991)
-    #axc.spines['top'].set_visible(False)
-    #axc.spines['right'].set_visible(False)
-    axc.imshow(np.linspace(0,1,101).reshape(-1,1), aspect = 'auto', cmap = 'coolwarm', vmin = 0, vmax = 1)
-    axc.set_position([0.9+0.25/len(seq),0.1,1/len(seq),0.8*(4/15)])
-    axc.set_yticks([0,100])
-    axc.set_yticklabels([-round(vlim,2), round(vlim,2)])
-    axc.tick_params(bottom = False, labelbottom = False, labelleft = False, left = False, labelright = True, right = True)
-    
-    return fig
 
 
 
@@ -538,6 +488,23 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
         ax.set_yticks(np.arange(len(heatmat)))
         ax.set_xticks(np.arange(len(heatmat[0])))
         
+        
+        # colorbar
+        axcol = fig.add_subplot(999)  
+        print(vmin, vmax)
+        axcol.set_position([0.1+before+wfac+ width*0.25/fullw, 0.1+beneath+mfac+ height*0.25/fullh, width*5/fullw, height*1/fullh])
+        axcol.tick_params(bottom = False, labelbottom = False, labeltop = True, top = True, left = False, labelleft = False)
+        axcol.imshow(np.linspace(0,1,101).reshape(1,-1), aspect = 'auto', cmap = heatmapcolor)
+        axcol.set_xticks([0,101])
+        heatmapresolution = 1
+        heatmapresolution = ['Repressive', 'Activating']
+        if isinstance(heatmapresolution, int):
+            axcol.set_xticklabels([round(vmin,heatmapresolution), round(vmax,heatmapresolution)], rotation = 60)
+        elif isinstance(heatmapresolution,list):
+            axcol.set_xticklabels([heatmapresolution[0], heatmapresolution[-1]], rotation = 60)
+            
+        
+        
         if plot_value:
             if np.amax(np.absolute(heatmat)) > 10:
                 heattext = np.array(heatmat, dtype = int)
@@ -750,6 +717,8 @@ def plot_distribution(
     ax = None, 
     sort = None, 
     split = 1, 
+    legend_labels = None,
+    legend_above = True,
     outname = None, 
     xwidth = 0.6, 
     height = 4, 
@@ -812,7 +781,7 @@ def plot_distribution(
                 fcolor = [facecolor[c] for c in range(split) for j in range(int(len(matrix)/split))]
             else:
                 fcolor = [facecolor[c] for c in range(len(matrix))]
-            facecolor = None
+            #facecolor = None
         
         if mediancolor is not None:
             if isinstance(mediancolor, list):
@@ -823,8 +792,7 @@ def plot_distribution(
             else:
                 mediancolor = [mediancolor for c in range(len(matrix))]
             
-    if facecolor is None:
-        facecolor = (0,0,0,0)
+
     if mediancolor is not None:
         if not isinstance(mediancolor, list):
             mediancolor = [mediancolor for mc in range(len(matrix))]
@@ -933,15 +901,40 @@ def plot_distribution(
                 matrix = np.mean(matrix, axis = 1)
             bplot = ax.barh(positions, matrix, height = width*0.9, color = barcolor, linewidth = 1)
             ax.set_ylim([np.amin(positions)-0.5, np.amax(positions)+0.5])
+        # create a legend()
+        
+        if isinstance(facecolor, list) and legend_labels is not None:
+            handles = []
+            for f, fcol in enumerate(facecolor):
+                patch = mpatches.Patch(color=fcol, label=legend_labels[f])
+                handles.append(patch)
+            ax.legend(handles = handles)
     else:
-        bplot = ax.boxplot(matrix, positions = positions, vert = vert, showcaps=showcaps, patch_artist = True, boxprops={'facecolor':facecolor}, showfliers=showfliers, whiskerprops={'linewidth':1}, widths = width,zorder = 4)
+        if facecolor is None or fcolor is not None:
+            boxplotcolor = (0,0,0,0)
+        else:
+            boxplotcolor = facelolor
+        
+        bplot = ax.boxplot(matrix, positions = positions, vert = vert, showcaps=showcaps, patch_artist = True, boxprops={'facecolor':boxplotcolor}, showfliers=showfliers, whiskerprops={'linewidth':1}, widths = width,zorder = 4)
     
         if fcolor is not None:
             for patch, color in zip(bplot['boxes'], fcolor):
                 patch.set_facecolor(color)
                 fc = patch.get_facecolor()
                 patch.set_facecolor(mpl.colors.to_rgba(fc, 0.7))
-        
+            # create legend()
+            if isinstance(facecolor, list) and legend_labels is not None:
+                handles = []
+                for f, fcol in enumerate(facecolor):
+                    patch = mpatches.Patch(color=fcol, label=legend_labels[f])
+                    handles.append(patch)
+                if legend_above:
+                    ax.legend(handles = handles,bbox_to_anchor=(0, 1.02, 1, 0.2), loc="lower left",
+                    mode="expand", borderaxespad=0, ncol=3)
+                else:
+                    ax.legend(handles = handles)
+                
+                
         if mediancolor is not None:
             for mx, median in enumerate(bplot['medians']):
                 median.set_color(mediancolor[mx])
@@ -977,9 +970,11 @@ def plot_distribution(
         return ax
     
     if outname is None:
-        return fig
+        #fig.tight_layout()
+        plt.show()
     else:
         fig.savefig(outname+'_distribution.'+fmt, dpi = savedpi, bbox_inches = 'tight')
+
 
 
 

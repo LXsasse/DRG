@@ -15,12 +15,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 import time 
 
-from .modules import func_dict, SoftmaxNorm
+from .modules import func_dict, func_dict_single, SoftmaxNorm
 from .sequence_utils import generate_random_onehot
 from .motif_analysis import pfm2iupac
 from .stats_functions import correlation, mse
 
 def kernel_to_ppm(kernels, kernel_bias = None, bk_freq = None):
+    '''
+    manipulate kernel values to generate pfms
+    '''
     n_kernel, n_input, l_kernel = np.shape(kernels)
     if kernel_bias is not None:
         kernels += kernel_bias[:,None,None]/(n_input*l_kernel)
@@ -35,6 +38,43 @@ def kernel_to_ppm(kernels, kernel_bias = None, bk_freq = None):
     ppms = 2.**kernels
     ppms = ppms/np.amax(np.sum(ppms, axis = 1),axis = -1)[:,None, None] #[:,None, :]
     return ppms
+
+def kernels_to_pwms_from_seqlets(weights, seqlet_set, maxact, biases = None, activation_func = None, zscore = False, device = 'cpu', batchsize = None):
+    if batchsize is not None:
+        pwms = []
+        for i in range(0, len(weights), bsize):
+            if biases is not None:
+                bias = bias[i:i+bsize]
+            else:
+                bias = None
+            
+            seqactivations = kernels_seqactivations_from_seqlets(weights[i:i+bsize], seqlet_set[i:i+bsize], biases = bias, activation_func=activation_func, device = device)
+            pwm = pwms_from_seqs(seqlet_set, seqactivations, maxact, z_score = zscore)
+        
+            pwms.append(pwm)
+        pwms = np.concatenate(pwms, axis = 0)
+    else:
+        seqactivations = kernels_seqactivations_from_seqlets(weights, seqlet_set, biases = biases, activation_func=activation_func, device = device)
+        pwms = pwms_from_seqs(seqlet_set, seqactivations, maxact, z_score = zscore)
+    return pwms
+    
+
+def kernels_seqactivations_from_seqlets(weights, seqlet_set, biases = None, activation_func = None, device = 'cpu'):
+    '''
+    Uses torch conv1d to compute kernel activations
+    '''
+    with torch.no_grad():
+        weights, biases, seqlet_set = torch.Tensor(weights).to(device), torch.Tensor(biases).to(device), torch.Tensor(seqlet_set).to(device)
+        #seqactivations0 = torch.sum(weights[:,None]*seqlet_set[None,...], dim = (2,3))
+        seqactivations = torch.nn.functional.conv1d(seqlet_set, weights)
+        seqactivations = seqactivations.squeeze(-1).transpose(0,1)
+        if biases is not None:
+            seqactivations += biases[:,None]
+        if activation_func is not None:
+            seqactivations = activation_func(seqactivations)
+    seqactivations = seqactivations.cpu().detach().numpy()
+    return seqactivations
+
 
 
 

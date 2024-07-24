@@ -1,21 +1,16 @@
+'''
+Uses cluster assignment and kernel effect matrix to subcluster initial clusters
+based on correlation between kernel matrices
+'''
+
 import numpy as np
 import sys, os
 from scipy.spatial.distance import cdist
 from sklearn.cluster import AgglomerativeClustering
-from translate_pearson_to_pvalue import correlation_to_pvalue, pvalue_to_correlation
 
-def read_matrix(fi):
-    obj = open(fi, 'r').readlines()
-    header = None
-    matrix, names = [], []
-    for l, line in enumerate(obj):
-        if l == 0 and line[0] == '#':
-            header = np.array(line.strip('#').strip().split()[2:])
-        else:
-            line = line.strip('#').strip().split()
-            names.append(line[0])
-            matrix.append(line[2:])
-    return np.array(names), np.array(matrix, dtype = float), header
+from drg_tools.stats_functions import correlation_to_pvalue, pvalue_to_correlation
+from drg_tools.io_utils import read_matrix_file
+
 
 
 if __name__ == '__main__':
@@ -38,7 +33,7 @@ if __name__ == '__main__':
     imp_matrix, imp_matnames, imp_matstats, imp_matclusters = [], [], [], []
     for c, cf in enumerate(np.unique(cfiles)):
         print(cf, importance_matrices[c])
-        names, matrix, header = read_matrix(importance_matrices[c])
+        names, matrix, header = read_matrix_file(importance_matrices[c], data_start_column = 2)
         
         if np.array_equal(cnames[cfiles == cf], names):
             imp_matrix.append(matrix)

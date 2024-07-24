@@ -1,9 +1,16 @@
+
+'''
+plots a treee with PWMs and if given also a matrix, boxplots, or barplots with the pwms
+'''
+
 import numpy as np
 import sys, os
 import matplotlib.pyplot as plt 
-from matrix_plot import plot_heatmap
-from cluster_pwms import compare_ppms, read_pwm, read_meme, reverse, combine_pwms, write_pwm
-from data_processing import check
+
+from drg_tools.plotlib import plot_heatmap
+from drg_tools.motif_analysis import compare_ppms, reverse, combine_pwms
+from drg_tools.io_utils import read_pwm, read_meme, write_pwm, check
+
 from scipy.spatial.distance import cdist
 from sklearn.cluster import AgglomerativeClustering
 

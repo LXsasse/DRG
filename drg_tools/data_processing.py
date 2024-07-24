@@ -10,6 +10,64 @@ import numpy as np
 
 
 
+def _groupings(tlen, groupsizes, kfold):
+    groups = []
+    csize = []
+    avail = np.arange(len(groupsizes), dtype = int)
+    while True:
+        if len(avail) < 1 or len(csize) == kfold:
+            break
+        seed = np.random.choice(avail)
+        group = np.array([seed])
+        avail = avail[~np.isin(avail, group)]
+        gdist = abs(tlen-np.sum(groupsizes[group]))
+        while True:
+            if len(avail) < 1:
+                groups.append(group)
+                csize.append(int(np.sum(groupsizes[group])))
+                break
+            ngr = avail.reshape(-1,1)
+            egr = np.repeat(group, len(ngr)).reshape(len(group), len(ngr)).T
+            pgr = np.append(egr, ngr, axis = 1)
+            #print(gdist, len(avail), len(group))
+            pdist = np.abs(tlen-np.sum(groupsizes[pgr],axis = 1))
+            if (pdist < gdist).any():
+                mgr = np.argmin(pdist)
+                group = pgr[mgr]
+                gdist = pdist[mgr]
+                avail = avail[~np.isin(avail, group)]
+            else:
+                groups.append(group)
+                csize.append(int(np.sum(groupsizes[group])))
+                break
+    return groups, np.array(csize), np.mean(np.abs(np.array(csize) - tlen))
+
+
+def generatetesttrain(names, groups, outname, kfold = 10):
+    '''
+    uses random sampling of groups to select combination of groups, so that 
+    they are close to equal size.
+    '''
+    ugroups, ugroupsize = np.unique(groups, return_counts = True)
+    #print(ugroups, ugroupsize)
+    n = len(names)
+    st = int(n/kfold)
+    cdist = st
+    for i in range(10000): #sampel 10,000 random possibile combinations
+        cgroups, cgroupsizes, msize = _groupings(st, ugroupsize, kfold)
+        #print(cgroups, cgroupsizes, msize)
+        if msize < cdist:
+            combgroups = cgroups
+            combsize = cgroupsizes
+            cdist = np.copy(msize)
+    print('Best split', cdist)
+
+    obj=open(outname, 'w')
+    for j, grp in enumerate(combgroups):
+        print(j, ugroups[grp], np.sum(ugroupsize[grp]) - st)
+        test = names[np.isin(groups, ugroups[grp])]
+        obj.write('# Set_'+str(j)+'\n' + ' '.join(test)+'\n')
+
 def reduce_dim(X, red, var, center = True):
     '''
     Reduces the dimension of a matrix of size N_data, d_features

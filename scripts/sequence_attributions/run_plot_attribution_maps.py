@@ -1,84 +1,8 @@
 import numpy as np
 import sys, os
 import matplotlib.pyplot as plt
-import logomaker as lm
-import pandas as pd
 
-
-def add_frames(att, locations, colors, ax):
-    att = np.array(att)
-    cmap = ['purple', 'limegreen']
-    for l, loc in enumerate(locations):
-        mina, maxa = np.amin(np.sum(np.ma.masked_greater(att[loc[0]:loc[1]+1],0),axis = 1)), np.amax(np.sum(np.ma.masked_less(att[loc[0]:loc[1]+1],0),axis = 1))
-        x = [loc[0]-0.5, loc[1]+0.5]
-        ax.plot(x, [mina, mina], c = cmap[colors[l]])
-        ax.plot(x, [maxa, maxa], c = cmap[colors[l]])
-        ax.plot([x[0], x[0]] , [mina, maxa], c = cmap[colors[l]])
-        ax.plot([x[1], x[1]] , [mina, maxa], c = cmap[colors[l]])
-
-
-def plot_attribution(seq, att, motifs = None, seq_based = True, center_attribution = False, figscale = 0.15, ylim = None):
-    #print(att[0,:10,:,0], att[0,:10,:,0])
-    ism = np.copy(att)
-    
-    if center_attribution:
-        att -= (np.sum(att, axis = -1)/4)[...,None]
-        
-    
-    if seq_based:
-        att = seq * att
-        ylabel = 'Attribution\nat ref'
-    if ylabel is None:
-        ylabel = 'Attribution'
-    
-    
-    mina = min(0,np.amin(np.sum(np.ma.masked_greater(att,0), axis = -1)))
-    maxa = np.amax(np.sum(np.ma.masked_less(att,0), axis = -1))
-    attlim = [mina, maxa]
-
-    fig = plt.figure(figsize = (figscale*len(seq), 10*figscale+figscale*5), dpi = 50)
-    
-    ax0 =  fig.add_subplot(211)
-    ax0.set_position([0.1,0.1+(5/15)*0.8,0.8,0.8*(10/15)])
-    ax0.spines['top'].set_visible(False)
-    ax0.spines['right'].set_visible(False)
-    ax0.tick_params(bottom = False, labelbottom = False)
-    att = pd.DataFrame({'A':att[:,0],'C':att[:,1], 'G':att[:,2], 'T':att[:,3]})
-    lm.Logo(att, ax = ax0)
-    ax0.set_ylabel(ylabel)
-    if ylim is not None:
-        ax0.set_ylim(ylim)
-    else:
-        ax0.set_ylim(attlim)
-
-    if motifs is not None:
-        mask = motifs[:,-2] == 0
-        colors = motifs[mask,-1]
-        #print(motifs[mask,1])
-        locations = [ti1[l] for l in motifs[mask,1]]
-        #print(locations)
-        add_frames(att, locations, colors, ax0)
-
-    vlim = np.amax(np.absolute(ism))
-    ax1 =fig.add_subplot(212)
-    ax1.spines['top'].set_visible(False)
-    ax1.spines['right'].set_visible(False)
-    ta_ = ax1.imshow(ism.T, aspect = 'auto', cmap = 'coolwarm', vmin = -vlim, vmax = vlim)
-    ax1.set_ylabel('ISM')
-    ax1.set_yticks(np.arange(4))
-    ax1.set_yticklabels(['A','C','G','T'])
-    ax1.set_position([0.1,0.1,0.8,0.8*(4/15)])
-    
-    axc =fig.add_subplot(991)
-    #axc.spines['top'].set_visible(False)
-    #axc.spines['right'].set_visible(False)
-    axc.imshow(np.linspace(0,1,101).reshape(-1,1), aspect = 'auto', cmap = 'coolwarm', vmin = 0, vmax = 1)
-    axc.set_position([0.9+0.25/len(seq),0.1,1/len(seq),0.8*(4/15)])
-    axc.set_yticks([0,100])
-    axc.set_yticklabels([-round(vlim,2), round(vlim,2)])
-    axc.tick_params(bottom = False, labelbottom = False, labelleft = False, left = False, labelright = True, right = True)
-    
-    return fig
+from drg_tools.plotlib import plot_attribution
 
 
 def isint(x):

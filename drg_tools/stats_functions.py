@@ -11,6 +11,22 @@ import torch
 from sklearn import metrics
 from scipy.stats import ranksums
 
+
+def info_content(pwm, background = 0.25, eps = 1e-16):
+    '''
+    Parameters
+    ---------
+    pwm: np.ndarray
+        position frequency matrix that sums to one at each position of shape
+        (positions, channels)
+    background: float, np.ndarray
+        background frequency
+    '''
+    
+    ic = pwm + eps
+    ic = np.mean(np.sum(-pwm*np.log2(pwm/background) , axis = 1))
+    return ic
+
 def relative_absolute(ypred, ytarget, axis = None):
     '''
     computes the absolute difference between ypred and ytarget in relation to ytarget

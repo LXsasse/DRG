@@ -1,29 +1,20 @@
+'''
+computes p_values based on correlation between motif sets and returns tomtom
+like output 
+'''
+
 import numpy as np
 import sys, os
 from scipy.stats import pearsonr 
 from statsmodels.stats.multitest import multipletests
 from sklearn.cluster import AgglomerativeClustering
 import time
-from cluster_pwms import compare_ppms, read_pwm, read_meme, pfm2iupac, write_pwm, combine_pwms
+from drg_tools.motif_analysis import compare_ppms, pfm2iupac, combine_pwms
 # Can be used in combination with cluster_pwms.py: First cluster a sample of sequences and then compare rest to clusters and assign to cluster based on best match
 
-def write_tomtom(outname, datanames, pwmnames, passed, pvals, qvals, correlation, ofs, revcomp_matrix):
-    obj = open(outname+'.tomtom.tsv', 'w')
-    obj.write('Query_ID\tTarget_ID\tOptimal_offset\tp-value\tCorrelation\tq-value\tOrientation\n')
-    for i,j in zip(passed[0], passed[1]):
-        obj.write(pwmnames[i]+'\t'+datanames[j]+'\t'+str(ofs[i,j])+'\t'+str(pvals[i,j])+'\t'+str(correlation[i,j])+'\t'+str(qvals[i,j])+'\t'+str(revcomp_matrix[i,j])+'\n')
-    
+from drg_tools.io_utils import readin_motif_files as readin
+from drg_tools.io_utils import write_tomtom, write_pwm
 
-def readin(pwmfile):
-    infmt= os.path.splitext(pwmfile)[1]    
-    if infmt == '.meme':
-        pwm_set,pwmnames = read_meme(pwmfile)
-    elif infmt == '.npz':
-        pf = np.load(pwmfile, allow_pickle = True)
-        pwm_set,pwmnames = pf['pwms'] , pf['pwmnames']
-    else:
-        pwm_set,pwmnames = read_pwm(pwmfile, nameline = nameline)
-    return pwm_set, pwmnames
         
 if __name__ == '__main__':
     # Read pwms that need to be assigned

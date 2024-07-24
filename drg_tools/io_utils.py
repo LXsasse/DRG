@@ -6,6 +6,42 @@
 import numpy as np
 import sys, os
 import glob
+import pandas as pd
+from .sequence_utils import quick_onehot, seq_onehot
+
+
+
+def readinlocation(regfile):
+    '''
+    Parameters
+    ----------
+    regfile: txt file
+    Reads in a location file: format is as follows:
+        Gene_name, region_name, location, total_length_of_gene
+    Returns
+    -------
+    genes: np.chararray
+        Unique gene names
+    sequences: np.ndarray
+        one-hot encoded array of regions types for all sequences
+        Pads zeros to end of encoding for shorter sequences
+    possible_regions:
+        Names of regions, each region gets one column in the sequence array
+    '''
+    
+    obj = np.genfromtxt(regfile, dtype = str)
+    possible_regions = list(np.unique(obj[:,1]))
+    genenames = obj[:,0]
+    gsort = np.argsort(genenames)
+    genes = list(np.unique(genenames))
+    sequences = np.zeros((len(genes), np.amax(obj[:,-1].astype(int)), len(possible_regions)), dtype = np.int8)
+    for l, line in enumerate(obj[gsort]):
+        if ',' in line[2]:
+            sequences[genes.index(line[0]), np.array(line[2].split(','), dtype = int), possible_regions.index(line[1])] =1
+        else:
+            sequences[genes.index(line[0]), int(line[2].split('-')[0]):int(line[2].split('-')[1]), possible_regions.index(line[1])] =1
+    return np.array(genes), sequences, np.array(possible_regions)
+
 
 def separate_sys(sysin, delimiter = ',', delimiter_1 = None):
     if delimiter in sysin:
@@ -19,6 +55,58 @@ def separate_sys(sysin, delimiter = ',', delimiter_1 = None):
             else:
                 sysin[s] = [sin]
     return sysin
+
+def find_elements_with_substring_inarray(tocheck, inset):
+    '''
+    return mask for tocheck if a substring of tocheck.element is a substring
+    of an elemment in inset
+    '''
+    tocheck, inset = [t.upper() for t in tocheck], [t.upper() for t in inset]
+    keep = np.zeros(len(tocheck))
+    for t, tc in enumerate(tocheck):
+        for i, ins in enumerate(inset):
+            if tc in ins or ins in tc:
+                keep[t] = 1
+    return keep == 1
+
+def readtomtom(f):
+    obj = open(f,'r').readlines()
+    names = []
+    pvals =[]
+    qvals = []
+    target = []
+    for l, line in enumerate(obj):
+        if l > 0 and line[0] != '#':
+            line = line.strip().split('\t')
+            if len(line) > 5:
+                names.append(line[0])
+                target.append(line[1])
+                pvals.append(line[3])
+                qvals.append(line[5])
+        
+    names = np.array(names)
+    target = np.array(target)
+    pvals = np.array(pvals, dtype = float)
+    qvals = np.array(qvals, dtype = float)
+    return names, target, pvals, qvals
+
+def write_tomtom(outname, datanames, pwmnames, passed, pvals, qvals, correlation, ofs, revcomp_matrix):
+    obj = open(outname+'.tomtom.tsv', 'w')
+    obj.write('Query_ID\tTarget_ID\tOptimal_offset\tp-value\tCorrelation\tq-value\tOrientation\n')
+    for i,j in zip(passed[0], passed[1]):
+        obj.write(pwmnames[i]+'\t'+datanames[j]+'\t'+str(ofs[i,j])+'\t'+str(pvals[i,j])+'\t'+str(correlation[i,j])+'\t'+str(qvals[i,j])+'\t'+str(revcomp_matrix[i,j])+'\n')
+    
+
+def readin_motif_files(pwmfile):
+    infmt= os.path.splitext(pwmfile)[1]    
+    if infmt == '.meme':
+        pwm_set,pwmnames = read_meme(pwmfile)
+    elif infmt == '.npz':
+        pf = np.load(pwmfile, allow_pickle = True)
+        pwm_set,pwmnames = pf['pwms'] , pf['pwmnames']
+    else:
+        pwm_set,pwmnames = read_pwm(pwmfile, nameline = nameline)
+    return pwm_set, pwmnames
 
 
 def readinfasta(fastafile, minlen = 10, upper = True):
@@ -66,7 +154,14 @@ def isfloat(number):
         return False
     else:
         return True
-    
+
+def isint(x):
+    try:
+        int(x) 
+        return True
+    except:
+        return False
+
 # check if string can be integer or float
 def numbertype(inbool):
     try:
@@ -99,7 +194,12 @@ def check(inbool):
     return inbool
 
 
-def read_txt_files(filename, delimiter = ',', header = '#', strip_names = '"', column_name_replace = None, row_name_replace = None, unknown_value = 'NA', nan_value = 0):
+def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_column = 1, value_dtype = float, header = '#', strip_names = '"', column_name_replace = None, row_name_replace = None, unknown_value = 'NA', nan_value = 0):
+    '''
+    Reads in text file and returns names of rows, names of colums and data matrix
+    TODO
+    Use pandas and switch scripts to pandas
+    '''
 
     f = open(filename, 'r').readlines()
     columns, rows, values = None, [], []
@@ -114,9 +214,8 @@ def read_txt_files(filename, delimiter = ',', header = '#', strip_names = '"', c
     for l, line in enumerate(f):
         if l >= start:
             line = line.strip().split(delimiter)
-            rows.append(line[0].strip(strip_names))
-            ival = np.array(line[1:])
-            ival[ival == unknown_value] = 'nan'
+            rows.append(line[name_column].strip(strip_names))
+            ival = np.array(line[data_start_column:])
             values.append(ival)
 
     if column_name_replace is not None:
@@ -127,13 +226,13 @@ def read_txt_files(filename, delimiter = ',', header = '#', strip_names = '"', c
         for r, row in enumerate(rows):
             rows[r] = row.replace(row_name_replace[0], row_name_replace[1])
 
-    values = np.array(values, dtype = float)
+    values = np.array(values, dtype = value_dtype)
     if (values == np.nan).any():
         print('ATTENTION nan values in data matrix.', filename)
         if nan_value is not None:
             print('nan values replaced with', nan_value)
             values = np.nan_to_num(values, nan = nan_value)
-    return np.array(rows), np.array(columns), np.array(values, dtype = float)
+    return np.array(rows), np.array(columns), values
 
 
 
@@ -337,6 +436,68 @@ def readin(inputfile, outputfile, delimiter = ' ', return_header = True, assign_
     return X, Y, inputnames, inputfeatures, header
 
 
+def readin_sequence_return_onehot(seqfile):
+    '''
+    opens the npz for CNN input, or fasta file, and returns onehot encoded
+    list of sequences, or np.ndarray of sequences
+    '''
+    if seqfile.rsplit('.',1)[-1] == 'npz':
+        Xin = np.load(seqfile, allow_pickle = True)
+        names = Xin['genenames'].astype(str)
+        X = Xin['seqfeatures']
+        if len(X) == 2:
+            X, inputfeats = X
+    else:
+        names, seqs = readinfasta(seqfile)
+        X = [seq_onehot(s) for s in seqs]
+    return X, names
+
+
+# TODO
+# Combine read_motifs, read_meme, and read_pwm, and include in readin_motif_files
+
+def read_motifs(pwmlist, nameline = 'Motif', delimiter = '\t', alphabet_line = 'Pos', dtype = 'txt'):
+    names = []
+    pwms = []
+    pwm = []
+    other = []
+    obj = open(pwmlist, 'r').readlines()
+    if dtype == 'meme':
+        nameline = "MOTIF"
+        delimiter = None
+        alphabet_line = 'ALPHABET='
+    for l, line in enumerate(obj):
+        line = line.strip().split(delimiter)
+        if ((len(line) == 0) or (line[0] == '')) and len(pwm) > 0:
+            pwm = np.array(pwm, dtype = float)
+            pwms.append(np.array(pwm))
+            pwm = []
+            names.append(name)
+        elif len(line) > 0:
+            if line[0] == nameline:
+                name = line[1]
+                pwm = []
+            elif line[0][:len(alphabet_line)] == alphabet_line:
+                nts = list(line[1:])
+            elif dtype == 'txt':
+                if isinstance(numbertype(line[0]), int):
+                    pwm.append(line[1:])
+            elif dtype == 'meme':
+                if isinstance(numbertype(line[0]), float):
+                    pwm.append(line)
+                if 'bias=' in line:
+                    other.append(float(line[line.index('bias=')+1]))
+    
+    if len(pwm) > 0:
+        pwms.append(np.array(pwm))
+        names.append(name)
+    if len(other) == 0:
+        other = None
+    else:
+        other = np.array(other)
+    pwms, names = np.array(pwms, dtype = float), np.array(names)
+    return pwms, names, other
+
 
 # Read text files with PWMs
 def read_pwm(pwmlist, nameline = 'Motif'):
@@ -431,7 +592,7 @@ def write_meme_file(pwm, pwmname, alphabet, output_file_path, biases = None):
     print("Saved PWM File as : {}".format(output_file_path))
 
     for i in range(0, n_filters):
-        if np.sum(np.absolute(pwm[i])) > 0:
+        if np.sum(np.absolute(np.nan_to_num(pwm[i]))) > 0:
             meme_file.write("\n")
             meme_file.write("MOTIF %s \n" % pwmname[i])
             if biases is not None:
@@ -447,4 +608,47 @@ def write_meme_file(pwm, pwmname, alphabet, output_file_path, biases = None):
                         meme_file.write(str(pwm[i][ a, j])+ "\n")
 
     meme_file.close()
+
+
+def readgtf(g):
+    '''
+    Reads in GTF file
+    '''
+    if os.path.splitext(g)[1] == '.gz':
+        obj = gzip.open(g, 'rt')
+    else:
+        obj = open(g,'r')
+    fi = obj.readlines()
+    itype = []
+    start, end = [], []
+    chrom = []
+    strand = []
+    gene_id, gene_type, gene_name = [], [], []
+    # TODO
+        # make this a pandas Dataframe
+    for l, line in enumerate(fi):
+        if line[0] != '#':
+            line = line.strip().split('\t')
+            chrom.append(line[0])
+            itype.append(line[2])
+            start.append(int(line[3]))
+            end.append(int(line[4]))
+            strand.append(line[6])
+            info = line[8].split(';')
+            gid, gty, gna = '' ,'', ''
+            for i, inf in enumerate(info):
+                inf = inf.strip()
+                if inf[:7] == 'gene_id':
+                    inf = inf.split()
+                    gid = inf[1].strip('"')
+                if inf[:9] == 'gene_type':
+                    inf = inf.split()
+                    gty = inf[1].strip('"')
+                if inf[:9] == 'gene_name':
+                    inf = inf.split()
+                    gna = inf[1].strip('"')
+            gene_id.append(gid)
+            gene_name.append(gna)
+            gene_type.append(gty)
+    return np.array([chrom, start, end, strand, itype, gene_id, gene_type, gene_name]).T
 

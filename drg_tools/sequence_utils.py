@@ -5,7 +5,20 @@ Most functions work with numpy arrays
 
 '''
 import numpy as np
+from joblib import Parallel, delayed
+import multiprocessing
 
+def split_seqs(seqs, size):
+    '''
+    splits arrays along the first axis and strings into k-mers of size
+    # TODO inlude to k-mer search and integrate axis for arrays
+    '''
+    seqlets = []
+    for s, seq in enumerate(seqs):
+        lseq = len(seq)
+        for l in range(lseq - size + 1):
+            seqlets.append(seq[l:l+size])
+    return np.array(seqlets)
 
 def avgpool(x,window):
     lx = np.shape(x)[-1]
@@ -59,6 +72,12 @@ def check_addonehot(onehotregion, shapeohvec1, selen):
             sys.exit()
     return addonehot
 
+
+
+def seq_onehot(sequence, nucs = 'ACGT'):
+    ohvec = np.array(list(sequence))[:, None] == nucs
+    return ohvec
+
 # generates one-hot encoding by comparing arrays
 def quick_onehot(sequences, nucs = 'ACGT', wildcard = None, onehotregion = None, align = 'left'):
     selen = seqlen(sequences)
@@ -88,8 +107,12 @@ def quick_onehot(sequences, nucs = 'ACGT', wildcard = None, onehotregion = None,
     return ohvec, nucs
 
 
-def reverse_complement(X):
-    X = np.append(X,X[:,::-1], axis = 1)
+def append_reverse_complement(X):
+    '''
+    Reverse complement with X[::-1][:,::-1] only works if order of bases
+    is ACGT, or TGCA.
+    '''
+    X = np.append(X, X[::-1][:,::-1], axis = 1)
     return X
 
 # given a pwm, generate a kmer sequence for largest frequencies along the length of the pwm   
@@ -136,3 +159,351 @@ def kmer_count(onehot, l_kmer, allkmers = None):
 
 
 
+def add_sing(arr, sing):
+    outarr = []
+    for ar in arr:
+        for si in sing:
+            outarr.append(ar+si)
+    return outarr
+
+def def_region(onehotregkmer):
+    region, regionnum = np.unique(np.nonzero(onehotregkmer)[-1], return_counts = True)
+    region = region[np.argmax(regionnum)]
+    return region
+    
+
+
+def make_kmer_representation(sequences, kmertype, kmerlength, gapsize = 0, kmers = None, nucleotides = 'ACGT', onehotregion = None, datatype = np.int8, mprocessing = False, num_cores = 1):
+    genkmers = False
+    if kmers is None:
+        genkmers = True
+        kmers = list(nucleotides)
+    
+    # check conditions if one-hot encoded regions can be added
+    selen = seqlen(sequences)
+    mlenseqs = np.amax(selen) 
+    addonehot = check_addonehot(onehotregion, mlenseqs, selen)
+    ohvec = 0
+    
+    # regular kmer counts of lenght kmerlength
+    if kmertype == 'regular':
+        
+        if genkmers:
+            for i in range(kmerlength-1):
+                kmers = add_sing(kmers, list(nucleotides))
+        
+        
+        features = np.zeros((len(sequences), len(kmers)), dtype = datatype)
+        if addonehot:
+            features = np.zeros((len(sequences), len(kmers))*np.shape(onehotregion)[-1], dtype = datatype)
+            kmers = np.concatenate([[kmer+'_'+greg for kmer in kmers] for greg in gregions])
+        kmers = np.sort(kmers)
+        if mprocessing:
+            if not addonehot:
+                def findkmer(seq, kmerlength,kmers, features, s):
+                    featlist = []
+                    for k in range(len(seq)-kmerlength+1):
+                        featlist.append(seq[k:k+kmerlength])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                    return features, s
+            else:
+                def findkmer(seq, kmerlength,kmers, features, s):
+                    for k in range(len(seq)-kmerlength+1):
+                        region = def_region(onehotregion[s, k+kmerlength])
+                        featlist.append(seq[k:k+kmerlength]+'_'+gregions[region])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                    return features, s
+            
+            results = Parallel(n_jobs=num_cores)(delayed(findkmer)(sequences[i], kmerlength, kmers, features[i], i) for i in range(len(sequences)))
+            
+            for rvec,r in results:
+                features[r] = rvec
+            
+        else:
+            for s, seq in enumerate(sequences):
+                featlist = []
+                if not addonehot:
+                    for k in range(len(seq)-kmerlength+1):
+                        featlist.append(seq[k:k+kmerlength])
+                    featlist, featcount = np.unique(featlist, return_counts = True)
+                    features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+            
+                else:
+                    for k in range(len(seq)-kmerlength+1):
+                        region = def_region(onehotregion[s, k+kmerlength])
+                        rfeatlist.append(seq[k:k+kmerlength]+'_'+gregions[region])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                
+    # all kmers of length 2 to kmerlength
+    elif kmertype == 'decreasing':
+        if genkmers:
+            kmerlist = []
+            for i in range(kmerlength-1):
+                kmers = add_sing(kmers, list(nucleotides))
+                if i + 2 >= gapsize:
+                    kmerlist.append(kmers)
+            
+            kmers = list(np.concatenate(kmerlist))
+        
+        features = np.zeros((len(sequences), len(kmers)), dtype = datatype)
+        if addonehot:
+            features = np.zeros((len(sequences), len(kmers))*np.shape(onehotregion)[-1], dtype = datatype)
+            kmers = np.concatenate([[kmer+'_'+greg for kmer in kmers] for greg in gregions])
+        kmers = np.sort(kmers)
+        if mprocessing:
+            if not addonehot:
+                def findkmer(seq, kmerlength, kmers,features, s):
+                    featlist = []
+                    
+                    for kl in range(2, kmerlength+1):
+                        for k in range(len(seq)-kl+1):
+                            featlist.append(seq[k:k+kl])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]   
+                    return features, s
+            else:
+                def findkmer(seq, kmerlength, kmers, features, s):
+                    featlist = []
+                    for kl in range(2, kmerlength+1):
+                        for k in range(len(seq)-kl+1):
+                            region = def_region(onehotregion[s, k:k+kl])
+                            featlist.append(seq[k:k+kl]+'_'+gregions[region])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                    return features, s
+            
+            results = Parallel(n_jobs=num_cores)(delayed(findkmer)(sequences[i], kmerlength, kmers, features[i], i) for i in range(len(sequences)))
+            
+            for rvec, r in results:
+                features[r] = rvec
+        else:
+            for s, seq in enumerate(sequences):
+                featlist = []
+                if addonehot:
+                    for kl in range(2, kmerlength+1):
+                        for k in range(len(seq)-kl+1):
+                            region = def_region(onehotregion[s, k:k+kl])
+                            featlist.append(seq[k:k+kl]+'_'+gregions[region])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                else:
+                    for kl in range(2, kmerlength+1):
+                        for k in range(len(seq)-kl+1):
+                            featlist.append(seq[k:k+kl])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+        
+    elif kmertype == 'gapped':
+        if genkmers:
+            for i in range(kmerlength-1-gapsize):
+                kmers = add_sing(kmers, list(nucleotides))
+        
+        features = np.zeros((len(sequences), len(kmers)), dtype = datatype)
+        if addonehot:
+            features = np.zeros((len(sequences), len(kmers))*np.shape(onehotregion)[-1], dtype = datatype)
+            kmers = np.concatenate([[kmer+'_'+greg for kmer in kmers] for greg in gregions])
+        kmers = np.sort(kmers)
+        
+        if mprocessing:
+            if not addonehot:
+                def findkmer(seq, kmerlength, kmers,features, s):
+                    featlist = []
+                    for k in range(len(seq)-kmerlength+1):
+                        for g in range(1, kmerlength-gapsize-1):
+                            featlist.append(seq[k:k+g] + seq[k+g+gapsize:k+kmerlength])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]        
+                    return features, s
+            else:
+                def findkmer(seq, kmerlength, kmers, features, s):
+                    featlist= []
+                    for k in range(len(seq)-kmerlength+1):
+                        for g in range(1, kmerlength-gapsize-1):
+                            region = def_region(np.append(onehotregion[s, k:k+g], onehotregion[s, k+g+gapsize:k+kmerlength], axis = 0))
+                            featlist.append(seq[k:k+g] + seq[k+g+gapsize:k+kmerlength]+'_'+gregions[region])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                    return features, s
+            
+            results = Parallel(n_jobs=num_cores)(delayed(findkmer)(sequences[i], kmerlength, kmers, features[i], i) for i in range(len(sequences)))
+            
+            for rvec, r in results:
+                features[r] = rvec
+        
+        else:
+            for s, seq in enumerate(sequences):
+                featlist = []
+                if addonehot:
+                    for k in range(len(seq)-kmerlength+1):
+                        for g in range(1, kmerlength-gapsize-1):
+                            region = def_region(np.append(onehotregion[s, k:k+g], onehotregion[s, k+g+gapsize:k+kmerlength], axis = 0))
+                            featlist.append(seq[k:k+g] + seq[k+g+gapsize:k+kmerlength]+'_'+gregions[region])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                else:
+                    for k in range(len(seq)-kmerlength+1):
+                        for g in range(1, kmerlength-gapsize-1):
+                            featlist.append(seq[k:k+g] + seq[k+g+gapsize:k+kmerlength])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                
+    elif kmertype == 'mismatch':
+        # generate kmerlist
+        if genkmers:
+            print( 'Generate kmer')
+            
+            for i in range(kmerlength-1-gapsize):
+                kmers = add_sing(kmers, list(nucleotides))
+            rkmerfeat = np.copy(kmers)
+            kmers = []
+            for g in range(gapsize):
+                gappedkmerfeat = []
+                for kmer in rkmerfeat:
+                    gkmer = []
+                    for i in range(1,len(kmer)):
+                        gkmer.append(kmer[:i]+'X'+kmer[i:])
+                    gappedkmerfeat.append(gkmer)
+                rkmerfeat = np.unique(np.concatenate(gappedkmerfeat))
+            kmers = list(rkmerfeat)
+            print( 'kmers done ...')
+    
+        # generate masks for wildcard elements:
+        mask = np.zeros(kmerlength) > 0.
+        masks = [mask]
+        for g in range(gapsize):
+            gapmasks = []
+            for mask in masks:
+                for i in range(1,len(mask)-1):
+                    if mask[i] == False:
+                        comask = np.copy(mask)
+                        comask[i] = True
+                        gapmasks.append(comask)
+            masks = list(np.unique(gapmasks, axis = 0))
+        
+        features = np.zeros((len(sequences), len(kmers)), dtype = datatype)
+        if addonehot:
+            features = np.zeros((len(sequences), len(kmers))*np.shape(onehotregion)[-1], dtype = datatype)
+            kmers = np.concatenate([[kmer+'_'+greg for kmer in kmers] for greg in gregions])
+        kmers = np.sort(kmers)
+        if mprocessing:
+            if not addonehot:
+                def findkmer(seq, kmerlength, kmers,features, s):
+                    featlist = []
+                    for k in range(len(seq)-kmerlength+1):
+                        for mask in masks:
+                            mkmer = np.copy(seq[k:k+kmerlength])
+                            mkmer[mask] = 'X'
+                            featlist.append(''.join(mkmer))
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[ np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]  
+                    return features, s
+            else:
+                def findkmer(seq, kmerlength, kmers, features, s):
+                    featlist = []
+                    for k in range(len(seq)-kmerlength+1):
+                        region = def_region(onehotregion[s, k+kmerlength])
+                        for mask in masks:
+                            mkmer = np.copy(seq[k:k+kmerlength])
+                            mkmer[mask] = 'X'
+                            featlist.append(''.join(mkmer)+'_'+gregions[region])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[ np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                    return features, s
+            
+            results = Parallel(n_jobs=num_cores)(delayed(findkmer)(np.array(list(sequences[i])), kmerlength, kmers, features[i], i) for i in range(len(sequences)))
+            
+            for rvec, r in results:
+                features[r] = rvec
+        
+        else:
+            for s, seq in enumerate(sequences):
+                featlist = []
+                seq = np.array(list(seq))
+                if addonehot:
+                    for k in range(len(seq)-kmerlength+1):
+                        region = def_region(onehotregion[s, k+kmerlength])
+                        for mask in masks:
+                            mkmer = np.copy(seq[k:k+kmerlength])
+                            mkmer[mask] = 'X'
+                            featlist.append(''.join(mkmer)+'_'+gregions[region])
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+                else:
+                    for k in range(len(seq)-kmerlength+1):
+                        for mask in masks:
+                            mkmer = np.copy(seq[k:k+kmerlength])
+                            mkmer[mask] = 'X'
+                            featlist.append(''.join(mkmer))
+                    featlist, featcount = np.unique(featlist, return_counts = True)    
+                    features[s, np.isin(kmers, featlist)] = featcount[np.isin(featlist, kmers)]
+        
+    return features, kmers
+
+
+def pwmset(pwms, targetlen):
+    '''
+    Puts the pwms in the middle of an array with length targetlen
+    '''
+    def largerpwm(pwm, targetlen):
+        npwm = np.zeros((np.shape(pwm)[0], targetlen), dtype = np.float32)
+        npwm[:, int((targetlen - np.shape(pwm)[1])/2):int((targetlen - np.shape(pwm)[1])/2)+np.shape(pwm)[1]] = pwm
+        return npwm
+    
+    return np.array([largerpwm(pwm,targetlen) for pwm in pwms])
+        
+
+def pwm_scan(sequences, pwms, targetlen = None, pooling_type = 'Max', pooling_size = None, pooling_steps = None, motif_cutoff = None, set_to = 0., verbose = False, maxscale = False):
+    '''
+    Transforms one-hot encoded sequences into PWM activations
+    TODO switch torch convolutions to do the scanning
+    Can handle PWMs of different sizes. 
+    '''
+    
+    
+    if targetlen is None:
+        pwmlen = np.array([len(pqm.T) for pqm in pwms])
+        targetlen = np.amax(pwmlen)
+    scanlen = np.shape(sequences)[-1]-targetlen+1
+    
+    if pooling_type == 'Max':
+        def combfunc(sca ,axis = -1):
+            return np.amax(sca, axis = axis)
+    if pooling_type == 'Mean':
+        def combfunc(sca ,axis = -1):
+            return np.mean(sca, axis = axis)
+    
+    if pooling_size is None:
+        pooling_size = scanlen
+        pooling_steps = scanlen
+        
+    steps = int((scanlen - pooling_size)/pooling_steps) + 1 + int((scanlen - pooling_size)%pooling_steps > 0)
+    
+    setps = pwmset(pwms, targetlen)
+    outscan = np.zeros((np.shape(sequences)[0],np.shape(setps)[0], steps), dtype = np.float32)
+    
+    if verbose:
+        print('Scanning', len(sequences), 'sequences with', len(pwms), 'PWMs with pooling', pooling_size, pooling_steps)
+   
+    i = 0
+    s = 0
+    outscanmed = np.zeros((np.shape(sequences)[0],np.shape(setps)[0], pooling_size), dtype = np.float32)
+    for l in range(scanlen):
+        outscanmed[:, :, i] = np.sum(sequences[:,None,:,l:l+targetlen] * setps[None, :, :, :], axis = (-1, -2))
+        i += 1
+        if i == pooling_size:
+            if verbose:
+                print(l)
+            outscan[:, :, s] = combfunc(outscanmed)
+            s +=1
+            i -= pooling_steps
+            outscanmed[:, :, :pooling_size-pooling_steps] = outscanmed[:, :, pooling_steps:]
+
+    if maxscale:
+        outscan = outscan/np.amax(outscan, axis = (0,2))[None,:, None]
+    if motif_cutoff is not None:
+        outscan[outscan < motif_cutoff] = set_to
+    return outscan
+    

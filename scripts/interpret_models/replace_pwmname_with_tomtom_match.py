@@ -1,35 +1,10 @@
 import numpy as np
 import sys, os
 
-def readtomtom(f):
-    obj = open(f,'r').readlines()
-    names = []
-    pvals =[]
-    qvals = []
-    target = []
-    for l, line in enumerate(obj):
-        if l > 0 and line[0] != '#':
-            line = line.strip().split('\t')
-            if len(line) > 5:
-                names.append(line[0])
-                target.append(line[1])
-                pvals.append(line[3])
-                qvals.append(line[5])
-        
-    names = np.array(names)
-    target = np.array(target)
-    pvals = np.array(pvals, dtype = float)
-    qvals = np.array(qvals, dtype = float)
-    return names, target, pvals, qvals
+from drg_tools.io_utils import readtomtom, isint
+from drg_tools.io_utils import find_elements_with_substring_inarray as findinstring
 
-def findinstring(tocheck, inset):
-    tocheck, inset = [t.upper() for t in tocheck], [t.upper() for t in inset]
-    keep = np.zeros(len(tocheck))
-    for t, tc in enumerate(tocheck):
-        for i, ins in enumerate(inset):
-            if tc in ins or ins in tc:
-                keep[t] = 1
-    return keep == 1
+
 
 def filtertfset(target, targetnames, tnames, stat, tfset, tffilter, outname):
     if tffilter == 'hardexactfilter':
@@ -98,12 +73,6 @@ def sorttfset(target, targetnames, tnames, stat, tfmetric, tfmetfilter):
     sys.exit()
     return target, targetnames, tnames, stat
 
-def isint(x):
-    try:
-        int(x)
-        return True
-    except:
-        return False
 
 if __name__ == '__main__':
     

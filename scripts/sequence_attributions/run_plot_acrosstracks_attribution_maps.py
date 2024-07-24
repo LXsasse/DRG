@@ -1,129 +1,11 @@
 import numpy as np
 import sys, os
 import matplotlib.pyplot as plt
-import logomaker as lm
-import pandas as pd
 from scipy.stats import pearsonr
 
+from drg_tools.plotlib import plot_attribution
+from drg_tools.io_utils import read_txt_files as read_txt
 
-def add_frames(att, locations, colors, ax):
-    att = np.array(att)
-    cmap = ['purple', 'limegreen']
-    for l, loc in enumerate(locations):
-        mina, maxa = np.amin(np.sum(np.ma.masked_greater(att[loc[0]:loc[1]+1],0),axis = 1)), np.amax(np.sum(np.ma.masked_less(att[loc[0]:loc[1]+1],0),axis = 1))
-        x = [loc[0]-0.5, loc[1]+0.5]
-        ax.plot(x, [mina, mina], c = cmap[colors[l]])
-        ax.plot(x, [maxa, maxa], c = cmap[colors[l]])
-        ax.plot([x[0], x[0]] , [mina, maxa], c = cmap[colors[l]])
-        ax.plot([x[1], x[1]] , [mina, maxa], c = cmap[colors[l]])
-
-
-def logoax(fig, att, ylabel = None, ylim = None, sb = 111, pos = None, labelbottom = True, bottom = True, xticks = None, xticklabels = None):
-    ax0 =  fig.add_subplot(sb[0], sb[1], sb[2])
-    if pos is not None:
-        ax0.set_position(pos)
-    ax0.spines['top'].set_visible(False)
-    ax0.spines['right'].set_visible(False)
-    ax0.tick_params(bottom = bottom, labelbottom = labelbottom)
-    att = pd.DataFrame({'A':att[:,0],'C':att[:,1], 'G':att[:,2], 'T':att[:,3]})
-    lm.Logo(att, ax = ax0)
-    if ylabel is not None:
-        ax0.set_ylabel(ylabel)
-    if ylim is not None:
-        ax0.set_ylim(ylim)
-    if xticks is not None:
-        ax0.set_xticks(xticks)
-    if xticklabels is not None:
-        ax0.set_xticklabels(xticklabels)
-    return ax0
-    
-def heatax(ism, fig, pos = None, sb = 111, cmap = 'coolwarm', ylabel = None, labelbottom = True, bottom = True, vlim = None):
-    if vlim is None:
-        vlim = np.amax(np.absolute(ism))
-    ax1 =fig.add_subplot(sb)
-    if pos is not None:
-        ax1.set_position(pos)
-    ax1.spines['top'].set_visible(False)
-    ax1.spines['right'].set_visible(False)
-    ax1.imshow(ism.T, aspect = 'auto', cmap = cmap, vmin = -vlim, vmax = vlim)
-    if ylabel is not None:
-        ax1.set_ylabel(ylabel)
-    ax1.tick_params(bottom = bottom, labelbottom = labelbottom)
-    ax1.set_yticks(np.arange(4))
-    ax1.set_yticklabels(['A','C','G','T'])
-    return ax1
-
-def activity_plot(values, ylim, xticklabels, ax):
-    ax.bar(np.arange(len(values)), values)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.set_ylim(ylim)
-    if xticklabels is None:
-        ax.tick_params(bottom = False, labelbottom = False)
-    else:
-        ax.set_xticklabels(xticklabels, rotation = 60)
-    return ax
-
-def generate_xticks(start, end, n):
-    possible = np.concatenate([np.array([1,2,5,10])*10**i for i in range(-16,16)])
-    steps=(end-start)/n
-    steps = possible[np.argmin(np.absolute(possible - steps))]
-    ticklabels = np.arange(start, end)
-    ticks = np.where(ticklabels%steps == 0)[0]
-    ticklabels = ticklabels[ticks]
-    return ticks, ticklabels
-    
-    
-
-def plot_attribution(seq, att, motifs = None, seq_based = 1, exp = None, vlim = None, unit = 0.15, ratio = 10, ylabel = None, xtick_range = None, barplot = None):
-    #print(att[0,:10,:,0], att[0,:10,:,0])
-    ism = np.copy(att)
-    if seq_based:
-        att = seq * att
-        ylabel = 'Attribution\nat ref'
-    
-    if ylabel is None:
-        ylabel = 'Attribution'
-    
-    if exp is None:
-        exp = np.arange(len(att), dtype = int).astype(str)
-        
-    if vlim is None:
-        mina = min(0,np.amin(np.sum(np.ma.masked_greater(att,0), axis = -1)))
-        maxa = np.amax(np.sum(np.ma.masked_less(att,0), axis = -1))
-        attlim = [mina, maxa]
-    else:
-        attlim = vlim
-    
-    if xtick_range is not None:
-        xticks, xticklabels = generate_xticks(xtick_range[0], xtick_range[1], 7)
-    else:
-        xticks, xticklabels = None, None
-    
-    fig = plt.figure(figsize = (unit*len(seq), len(att) * ratio*unit), dpi = 50)
-    
-    axs = []
-    for a, at in enumerate(att):
-        axs.append(logoax(fig, at, ylabel = exp[a], ylim = attlim, sb = [len(att), 1, 1+a], pos = [0.1,0.1+(len(att)-1-a)/len(att)*0.8,0.8,0.8*(1/len(att))*0.8], labelbottom = a == len(att)-1, bottom = a == len(att)-1, xticks = xticks, xticklabels = xticklabels))
-    
-    # This is for a barplot on the side of the sequence logo, that shows predicted and/or measured actibity
-    if barplot is not None:
-        ylim = [0, np.amax(barplot)]
-        for b, bp in enumerate(barplot):
-            ax = fig.add_subplot(len(barplot), len(barplot), len(barplot) + b)
-            ax.set_position([0.9 + 2.5*0.8*(1/len(seq)), 0.1+(len(att)-1-b)/len(att)*0.8, 6*0.8*(1/len(seq)), 0.8*(1/len(att))*0.8])
-            axs.append(activity_plot(bp, ylim, None, ax))
-    
-    
-    if motifs is not None:
-        mask = motifs[:,-2] == 0
-        colors = motifs[mask,-1]
-        #print(motifs[mask,1])
-        locations = [ti1[l] for l in motifs[mask,1]]
-        #print(locations)
-        add_frames(att, locations, colors, ax0)
-
-    return fig
 
 
 def isint(x):
@@ -135,6 +17,9 @@ def isint(x):
 
 
 def get_indx(given, target, islist = False):
+    '''
+    Function to determine the indeces of strings in target to elements in given
+    '''
     if islist:
         if given == 'all':
             indx = np.arange(len(target), dtype = int)
@@ -153,24 +38,7 @@ def get_indx(given, target, islist = False):
             indx = list(target).index(given) 
             
     return indx
-    
 
-def read_txt(txtfile, delimiter = None):
-    lines = open(txtfile, 'r').readlines()
-    exp, names, data = None, [],[]
-    for l, line in enumerate(lines):
-        if l ==0 and '#' == line[0]:
-            exp = line.strip('#').strip().split(delimiter)
-        else:
-            line = line.strip().split(delimiter)
-            names.append(line[0])
-            data.append(np.array(line[1:], dtype = float))
-    if exp is not None:
-        exp = np.array(exp)
-    data, names = np.array(data),np.array(names)
-    
-    return names, data, exp
-            
             
             
             
@@ -303,7 +171,7 @@ if __name__ == '__main__':
             measured = np.load(sys.argv[sys.argv.index('--add_measured')+1])
             mnames, mvalues, mcolumns = measured['names'], measured['counts'], measured['celltypes']
         else:
-            mnames, mvalues, mcolumns = read_txt(measured)
+            mnames, columns, mvalues = read_txt(measured)
         if '--add_measured_apendix' in sys.argv:
             appendix = sys.argv[sys.argv.index('--add_measured_apendix')+1]
             mcolumns = np.array([mco + appendix for mco in mcolumns])
