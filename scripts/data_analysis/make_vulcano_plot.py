@@ -2,15 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sys,os
 from scipy.linalg import svd
-from drg_tools.data_utils import read_txt_files as read_file
-from drg_tools.data_plotlib import vulcano 
+from drg_tools.io_utils import read_matrix_files as read_file
+from drg_tools.plotlib import vulcano 
 
 if __name__ == '__main__':
 
     delimiter = ','
     if '--delimiter' in sys.argv:
         delimiter = sys.argv[sys.argv.index('--delimiter')+1]
-
+    ## read FC and p-value files
     expfc, genfc, valfc = read_file(sys.argv[1], expdelim = '.FC', delimiter = delimiter, nan_value = '0')
     exppv, genpv, valpv = read_file(sys.argv[2], expdelim = '.PV', delimiter = delimiter, nan_value = '1')
     valpv[np.isnan(valpv)] = 1
@@ -82,6 +82,7 @@ if __name__ == '__main__':
         pcut = float(sys.argv[sys.argv.index('--onlylist')+2])
 
     siggenes = []
+    # generates vulcano plots for all experiments in matrix file
     for e, exp in enumerate(expfc):
         d = list(exppv).index(exp)
         if '--onlylist' in sys.argv:

@@ -8,7 +8,7 @@ import sys, os
 import gzip
 
 from drg_tools.data_processing import generatetesttrain 
-
+from drg_tools.io_utils import readgtf
 
 
 if __name__ == '__main__':
@@ -31,9 +31,9 @@ if __name__ == '__main__':
         print(np.shape(bed))
         
         if '--usegeneid' in sys.argv:
-            names = bed[:,-3]
+            names = bed[:,-1]
         elif '--usegeneid_noversion':
-            vnames = bed[:,-3]
+            vnames = bed[:,-1]
             names = []
             for v, vn in enumerate(vnames):
                 if '.' in vn:
@@ -41,7 +41,7 @@ if __name__ == '__main__':
                 names.append(vn)
             names = np.array(names)
         else:
-            names = bed[:,-1]
+            names = bed[:,3]
         
     outname = os.path.splitext(sys.argv[1].replace('.gz', ''))[0]+'_tset10.txt'
 

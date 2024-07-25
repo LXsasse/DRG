@@ -108,12 +108,31 @@ def readin_motif_files(pwmfile):
         pwm_set,pwmnames = read_pwm(pwmfile, nameline = nameline)
     return pwm_set, pwmnames
 
+def readgenomefasta(fasta):
+    fasta = gzip.open(fasta, 'rt').readlines()
+    fseq = ''
+    for l, line in enumerate(fasta):
+        if l !=0:
+            line = line.strip('\n').upper()
+            fseq += line
+    return fseq
+
+def reverse_complement_seqstring(seq):
+    rseq = np.array(list(seq))[::-1]
+    nseq = np.copy(rseq)
+    nseq[rseq == 'A'] = 'T'
+    nseq[rseq == 'C'] = 'G'
+    nseq[rseq == 'G'] = 'C'
+    nseq[rseq == 'T'] = 'A'
+    return ''.join(nseq)
+
 
 def readinfasta(fastafile, minlen = 10, upper = True):
     '''
     Reads fastas for which sequence is represented as single line
     TODO: enable function to read old school fastas where sequences is devided into different lines
     '''
+    
     obj = open(fastafile, 'r').readlines()
     genes = []
     sequences = []
@@ -613,6 +632,10 @@ def write_meme_file(pwm, pwmname, alphabet, output_file_path, biases = None):
 def readgtf(g):
     '''
     Reads in GTF file
+    TODO
+        make this a pandas Dataframe
+        should also pick up what kind of transcript it is, primary or secondary
+        predicted or measured
     '''
     if os.path.splitext(g)[1] == '.gz':
         obj = gzip.open(g, 'rt')
@@ -622,14 +645,15 @@ def readgtf(g):
     itype = []
     start, end = [], []
     chrom = []
+    evidence = []
     strand = []
-    gene_id, gene_type, gene_name = [], [], []
-    # TODO
-        # make this a pandas Dataframe
+    gene_id, gene_type, gene_name, trans_id = [], [], [], []
+    
     for l, line in enumerate(fi):
         if line[0] != '#':
             line = line.strip().split('\t')
             chrom.append(line[0])
+            evidence.append(line[1]) # resource from which genes were taken, like Havana or Ensembl
             itype.append(line[2])
             start.append(int(line[3]))
             end.append(int(line[4]))
@@ -641,6 +665,9 @@ def readgtf(g):
                 if inf[:7] == 'gene_id':
                     inf = inf.split()
                     gid = inf[1].strip('"')
+                if inf[:13] == 'transcript_id':
+                    inf = inf.split()
+                    gtr = inf[1].strip('"')
                 if inf[:9] == 'gene_type':
                     inf = inf.split()
                     gty = inf[1].strip('"')
@@ -650,5 +677,5 @@ def readgtf(g):
             gene_id.append(gid)
             gene_name.append(gna)
             gene_type.append(gty)
-    return np.array([chrom, start, end, strand, itype, gene_id, gene_type, gene_name]).T
-
+    return np.array([chrom, start, end, gene_name, itype, strand, gene_type, evidence, gene_id, trans_id]).T
+    # before [chrom, start, end, strand, itype, gene_id, gene_type, gene_name]
