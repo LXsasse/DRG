@@ -1,5 +1,7 @@
 # DRG
 
+This repository is under develpment. The current stage may not be fully functional. Please try to fix small bugs yourself and contribute with pull requests.
+
 This is a repository with code to develop Convolutional Neural Networks (CNNs) for genomic sequence-to-function models that predict molecular phenotypes from genomic sequence, such as gene expression or chromatin accessibility. 
 
 There are also scripts to visualize, compare and assess model performance or to compute and visualize feature importance. 
