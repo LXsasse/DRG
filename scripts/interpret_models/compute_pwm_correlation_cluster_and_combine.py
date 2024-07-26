@@ -4,7 +4,7 @@ import sys, os
 from scipy.stats import pearsonr 
 from sklearn.cluster import AgglomerativeClustering
 
-from drg_tools.motif_analysis import reverse, compare_ppms
+from drg_tools.motif_analysis import reverse, align_compute_similarity_motifs
 from drg_tools.io_utils import read_pwm, read_meme, write_pwm, write_meme
 from drg_tools.motif_analysis import pfm2iupac, combine_pwms
 from drg_tools.plotlib import plot_pwm
@@ -75,35 +75,11 @@ if __name__ == '__main__':
             elif revcomfile == 'all':
                 revcom_array = np.ones(len(pwmnames), dtype = int)
                 
-        
+        njobs = 1
         if '--njobs' in sys.argv:
-            from joblib import Parallel, delayed
-
             njobs = int(sys.argv[sys.argv.index('--njobs')+1])
-            spaces = np.linspace(0,len(pwm_set), njobs + 1, dtype = int)
-            print(spaces)
-            results = Parallel(n_jobs=njobs)(delayed(compare_ppms)(pwm_set[spaces[i]:spaces[i+1]], pwm_set[spaces[j]:spaces[j+1]], find_bestmatch = True, one_half = i == j, fill_logp_self = 1000, min_sim = min_sim, infocont = infocont, reverse_complement = [revcom_array[spaces[i]:spaces[i+1]], revcom_array[spaces[j]:spaces[j+1]]], ctrl = (i,j)) for i in range(0, njobs) for j in range(i,njobs))
-            
-            correlation, logs, ofs, revcomp_matrix = np.ones((len(pwm_set), len(pwm_set)), dtype = np.float32)*2, np.zeros((len(pwm_set), len(pwm_set)), dtype = np.float32), np.zeros((len(pwm_set), len(pwm_set)), dtype = np.int16), np.zeros((len(pwm_set), len(pwm_set)), np.int8)
-                                                                                                                                                                                        
-            for res in results:
-                idx = res[-1]
-                
-                correlation[spaces[idx[0]]:spaces[idx[0]+1], spaces[idx[1]]:spaces[idx[1]+1]] = res[0]
-                logs[spaces[idx[0]]:spaces[idx[0]+1], spaces[idx[1]]:spaces[idx[1]+1]] = res[1]
-                revcomp_matrix[spaces[idx[0]]:spaces[idx[0]+1], spaces[idx[1]]:spaces[idx[1]+1]] = res[3]
-                
-                if idx[0] == idx[1]:
-                    ofs[spaces[idx[0]]:spaces[idx[0]+1], spaces[idx[1]]:spaces[idx[1]+1]] = res[2]
-                else:
-                    correlation[spaces[idx[1]]:spaces[idx[1]+1], spaces[idx[0]]:spaces[idx[0]+1]] = res[0].T
-                    logs[spaces[idx[1]]:spaces[idx[1]+1], spaces[idx[0]]:spaces[idx[0]+1]] = res[1].T
-                    ofs[spaces[idx[0]]:spaces[idx[0]+1], spaces[idx[1]]:spaces[idx[1]+1]] = res[2][0]
-                    ofs[spaces[idx[1]]:spaces[idx[1]+1], spaces[idx[0]]:spaces[idx[0]+1]] = res[2][1].T
-                    revcomp_matrix[spaces[idx[1]]:spaces[idx[1]+1], spaces[idx[0]]:spaces[idx[0]+1]] = res[3].T
-                
-        else:
-            correlation, logs, ofs, revcomp_matrix, best, _ctrl = compare_ppms(pwm_set, pwm_set, find_bestmatch = True, one_half = True, fill_logp_self = 1000, min_sim = min_sim, infocont = infocont, reverse_complement = revcom_array)
+        
+        correlation, logs, ofs, revcomp_matrix= align_compute_similarity_motifs(pwm_set, pwm_set, fill_logp_self = 1000, min_sim = min_sim, infocont = infocont, reverse_complement = revcom_array, njobs = njobs)
         
         if '--save_stats' in sys.argv:
             np.savez_compressed(outname+'_stats.npz', pwmnames = pwmnames, correlation = correlation, logpvalues = logs, offsets = ofs, pwms = pwm_set, revcomp_matrix = revcomp_matrix)
