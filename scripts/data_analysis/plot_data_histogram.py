@@ -2,6 +2,8 @@ import numpy as np
 import sys, os
 import matplotlib.pyplot as plt
 
+from drg_tools.plotlib import plotHist
+
 def read(f, column = 1):
     lines = open(f, 'r').readlines()
     names = []
@@ -15,55 +17,6 @@ def read(f, column = 1):
     data = np.array(data, dtype = float)
     return names, data
 
-def plotHist(x, y = None, xcolor='navy', yaxis = False, xalpha= 0.5, ycolor = 'indigo', yalpha = 0.5, addcumulative = False, bins = None, xlabel = None, title = None, logx = False, logy = False, logdata = False):
-    fig = plt.figure(figsize = (3.5,3.5))
-    axp = fig.add_subplot(111)
-    axp.spines['top'].set_visible(False)
-    axp.spines['right'].set_visible(False)
-    
-    if logdata:
-        x = np.log10(x+1)
-    
-    a,b,c = axp.hist(x, bins = bins, color = xcolor, alpha = xalpha)
-    print(b)
-    print(a)
-    if y is not None:
-        ay,by,cy = axp.hist(y, bins = bins, color = ycolor, alpha = yalpha)
-        print(ay)
-    
-    if addcumulative != False:
-        axp2 = axp.twinx()
-        axp2.spines['top'].set_visible(False)
-        axp2.spines['left'].set_visible(False)
-        axp2.tick_params(bottom = False, labelbottom = False)
-        axp2.set_yticks([0.25,0.5,0.75,1])
-        axp2.set_yticklabels([25,50,75,100])
-        if addcumulative == 2:
-            addcumulative = 1
-            ag_,bg_,cg_ = axp2.hist(x, color = 'maroon', alpha = 1, density = True, bins = bins, cumulative = -1, histtype = 'step')
-        ag,bg,cg = axp2.hist(x, color = xcolor, alpha = 1, density = True, bins = bins, cumulative = addcumulative, histtype = 'step')
-        if y is not None:
-            agy,bgy,cgy = axp2.hist(y, color = ycolor, alpha = 1, density = True, bins = bins, cumulative = addcumulative, histtype = 'step')
-    
-    
-    
-    if yaxis:
-        print('yaxis',np.amax(a))
-        axp.plot([0,0], [0, np.amax(a)], c = 'k', zorder = 5)
-    
-    if logx:
-        if addcumulative:
-            axp2.set_xscale('symlog')
-        axp.set_xscale('symlog')
-        
-    if logy:
-        axp.set_yscale('symlog')
-    
-    if xlabel is not None:
-        axp.set_xlabel(xlabel)
-    if title is not None:
-        axp.set_title(title)
-    return fig
 
 if __name__ == '__main__':
 

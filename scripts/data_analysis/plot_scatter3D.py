@@ -3,49 +3,10 @@ import numpy as np
 import sys, os
 import matplotlib.pyplot as plt 
 from mpl_toolkits import mplot3d
-from matplotlib import cm
-from scipy.stats import gaussian_kde, pearsonr
+
 from functools import reduce 
-from scatter_comparison_plot import readfiles
-
-
-
-def scatter3D(x,y,z, axis = True, color = None, cmap = None, xlabel = None, ylabel = None, zlabel=None, alpha = 0.9, diag = False):
-    fig = plt.figure(figsize = (4,4), dpi = 150)
-    ax = fig.add_subplot(111, projection='3d') #plt.axes(projection='3d')
-    xlim = np.array([np.amin(x), np.amax(x)])
-    ylim = np.array([np.amin(y), np.amax(y)])
-    zlim = np.array([np.amin(z), np.amax(z)])
-    lrat = 0.5
-    if axis:
-        # plot axis in there
-        xlim0, ylim0, zlim0 = xlim * lrat, ylim * lrat, zlim * lrat
-        ax.plot3D(xlim0,[0,0],[0,0], color = 'k', lw = 1)
-        ax.plot3D([0,0],ylim0,[0,0], color = 'k', lw = 1)
-        ax.plot3D([0,0],[0,0],zlim0, color = 'k', lw = 1)
-    if diag:
-        maxlim = np.array([xlim, ylim,zlim])*lrat
-        print(maxlim)
-        maxlim = [np.amax(maxlim[:,0]), np.amin(maxlim[:,1])]
-        print(maxlim)
-        ax.plot3D(maxlim, maxlim, maxlim, color = 'maroon', lw = 1)
-    # plot a scatterplot in 3d
-    ax.scatter3D(x, y, z, c=color, cmap=cmap, lw=0, alpha = alpha, s = 3)
-    if xlabel is not None:
-        ax.set_xlabel(xlabel)
-        
-    if ylabel is not None:
-        ax.set_ylabel(ylabel)
-        
-    if zlabel is not None:
-        ax.set_zlabel(zlabel)
-    lrat = 0.75
-    ax.set_xlim(xlim*lrat)
-    ax.set_xlim(ylim*lrat)
-    ax.set_xlim(zlim*lrat)
-    ax.view_init(elev=25, azim=-49)
-    return fig
-
+from drg_tools.io_utils import read_matrix_files
+from drg_tools.plotlib import plot3d
 
 if __name__ == '__main__':    
     file1 = sys.argv[1]
@@ -63,9 +24,9 @@ if __name__ == '__main__':
     if '--similarity' in sys.argv:
         subt = True
     
-    names1, vals1, header1 = readfiles(file1, subtract = subt, delimiter = delimiter)
-    names2, vals2, header2 = readfiles(file2, subtract = subt, delimiter = delimiter)
-    names3, vals3, header3 = readfiles(file3, subtract = subt, delimiter = delimiter)
+    names1, header1, vals1 = read_matrix_files(file1, subtract = subt, delimiter = delimiter)
+    names2, header2, vals2 = read_matrix_files(file2, subtract = subt, delimiter = delimiter)
+    names3, header3, vals3 = read_matrix_files(file3, subtract = subt, delimiter = delimiter)
     
     scol1, scol2, scol3 = -1, -1, -1
     if '--column' in sys.argv:
@@ -115,7 +76,7 @@ if __name__ == '__main__':
         cdelimiter = None
         if '--colordelimiter' in sys.argv:
             cdelimiter = sys.argv[sys.argv.index('--colordelimiter')+1]
-        cnames, colors, header = readfiles(colorfile, delimiter = cdelimiter)
+        cnames, header, colors = read_matrix_files(colorfile, delimiter = cdelimiter)
         ccol = int(ccol)
         if header is not None:
             print('Color column', header[ccol])

@@ -100,7 +100,8 @@ def plot_seqlogo(att, ax = None, ylabel = None, ylim = None, yticks = None,
     
 def _plot_heatmap(arr, cmap = 'coolwarm', ylabel = None, grid = False, ratio=1,
             labelbottom = True, bottomticks = True, vlim = None, 
-            yticklabels = None, xticklabels = None, unit = 0.25, ax = None):
+            add_text = False, yticklabels = None, xticklabels = None, 
+            unit = 0.25, title = None, ax = None):
     '''
     Plot heatmap
     '''
@@ -110,6 +111,9 @@ def _plot_heatmap(arr, cmap = 'coolwarm', ylabel = None, grid = False, ratio=1,
                                     np.shape(arr)[1] * unit ) )
         ax = fig.add_subplot(111)
     
+    if title is not None:
+        ax.set_title(title)
+        
     if vlim is None:
         vlim = np.amax(np.absolute(arr))
         vlim = [-vlim, vlim]
@@ -119,6 +123,11 @@ def _plot_heatmap(arr, cmap = 'coolwarm', ylabel = None, grid = False, ratio=1,
         ax.set_xticks(np.arange(0.5, np.shape(arr)[1], 1), minor = True)
         ax.set_yticks(np.arange(0.5, np.shape(arr)[0], 1), minor = True)
         ax.grid(which = 'minor')
+    
+    if add_text:
+        for i in range(np.shape(arr)[0]):
+            for j in range(np.shape(arr)[1]):
+                ax.text(j,i,str(arr[i,j]), va = 'center', ha = 'center', fontsize = 6)
     
     if ylabel is not None:
         ax.set_ylabel(ylabel)

@@ -1,7 +1,17 @@
+'''
+Computes performance metrics predicted and measured matrices
+TODO: 
+replace read with drg_tools
+
+'''
+
 import numpy as np
-from output import save_performance, print_averages, plot_scatter
-from combine_output import bestassign
 import sys, os
+from drg_tools.model_output import save_performance, print_averages
+from drg_tools.plotlib import plot_scatter
+from drg_tools.io_utils import return_best_matching_strings_between_sets as bestassign
+
+
 from functions import correlation, mse
 
 def isnum(i):

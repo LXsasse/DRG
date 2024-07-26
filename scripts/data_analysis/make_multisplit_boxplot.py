@@ -1,9 +1,17 @@
+'''
+Create boxplot of different columns in different data matrices
+TODO make it more general
+'''
+
+
 import numpy as np
 import sys, os
 from matplotlib import cm
 from functools import reduce 
 import matplotlib.pyplot as plt
-from matrix_plot import plot_distribution
+from drg_tools.plotlib import plot_distribution
+
+from drg_tools.io_utils import sortnames, isint
 
 def read(fi):
     d = np.load(fi)
@@ -12,19 +20,6 @@ def read(fi):
     n = d['names']
     return n,e,v
 
-def sortnames(ns):
-    co = reduce(np.intersect1d, ns)
-    s = []
-    for n in ns:
-        s.append(np.argsort(n)[np.isin(np.sort(n), co)])
-    return s
-
-def isint(x):
-    try:
-        int(x)
-        return True
-    except:
-        return False
 
 if __name__ == '__main__':
     

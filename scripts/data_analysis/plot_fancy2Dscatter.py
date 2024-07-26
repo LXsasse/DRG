@@ -1,4 +1,9 @@
-#scatter_pv_fc.py
+'''
+Fancy scatter plots with lots of features
+TODO
+Switch to drg_tools.plotlib scatterPlot
+place wrap some of the larger paragraphs in functions and place on top of script
+'''
 import numpy as np
 import sys, os
 import matplotlib.pyplot as plt
@@ -6,69 +11,8 @@ from matplotlib import cm
 from scipy.stats import gaussian_kde, pearsonr
 from matplotlib.colors import ListedColormap
 
-def readfiles(file1, delimiter = None, subtract = False):
-    fi = open(file1, 'r').readlines()
-    if delimiter is None:
-        if os.path.splitext(file1)[-1] == '.txt' or os.path.splitext(file1)[-1] == '.dat':
-            delimiter = ' '
-        elif os.path.splitext(file1)[-1] == '.tsv' or os.path.splitext(file1)[-1] == '.tab':
-            delimiter = '\t'
-        elif os.path.splitext(file1)[-1] == '.csv':
-            delimiter = ','
-        
-    names1, vals1, header = [], [], None
-    for l, line in enumerate(fi):
-        if line[0] != '#':
-            line = line.strip().split(delimiter)
-            names1.append(line[0].replace('.FC.', '.').replace('.PV.', '.'))
-            va = line[1:]
-            if 'NA' in va:
-                ava = []
-                for v in va:
-                    if v == 'NA':
-                        ava.append('nan')
-                    else:
-                        ava.append(v)
-                va = ava
-                
-            vals1.append(va)
-        elif l == 0:
-            header = np.array(line.strip('#').strip().split(delimiter))
-    
-    if header is None and ((len(vals1[0]) != len(vals1[1])) or ( not checknum(vals1[0][0]))):
-        header = [names1[0]] + vals1[0]
-        vals1 = vals1[1:]
-        names1 = names1[1:]
-    vals1 = np.array(vals1)
-    if subtract:
-        vals1 = 1-vals1.astype(float)
-    names1 = np.array(names1)
-    names1, sort = np.unique(names1, return_index = True)
-    vals1 = vals1[sort]
-    if header is not None and len(header) == np.shape(vals1)[1]:
-        header, sort = np.unique(header, return_index = True)
-        vals1 = vals1[:, sort]
-        sort = np.argsort(sort)
-        header = header[sort]
-        vals1 = vals1[:, sort]
-    return names1, vals1, header 
+from drg_tools.io_utils import read_matrix_files, checkint, checknum, 
 
-def checkint(i):
-    try:
-        int(i)
-    except:
-        return False
-    return True
-
-def checknum(i):
-    try:
-        int(i)
-    except:
-        try: 
-            float(i)
-        except:
-            return False
-    return True
 
 def find_in_list(target, thelist):
     for l, lo in enumerate(thelist):
@@ -101,8 +45,8 @@ if __name__ == '__main__':
     
         
         
-    names1, vals1, header1 = readfiles(file1, subtract = subtA, delimiter = delimiter1)
-    names2, vals2, header2 = readfiles(file2, subtract = subtB, delimiter = delimiter2)
+    names1, header1, vals1 = read_matrix_files(file1, subtract = subtA, delimiter = delimiter1)
+    names2, header2, vals2 = read_matrix_files(file2, subtract = subtB, delimiter = delimiter2)
     print(names1, names2)
     
     #print(names1, names2)
@@ -215,7 +159,7 @@ if __name__ == '__main__':
         sizefile = sys.argv[sys.argv.index('--sizefile')+1]
         scol = int(sys.argv[sys.argv.index('--sizefile')+2])
         sqrt = sys.argv[sys.argv.index('--sizefile')+3] == 'True'
-        snames, sizes, header = readfiles(sizefile)
+        snames, header, sizes = read_matrix_files(sizefile)
         sizes = sizes[:,scol]
         sort = np.argsort(snames)[np.isin(np.sort(snames), names)]
         snames, sizes = snames[sort], sizes[sort]
@@ -239,7 +183,7 @@ if __name__ == '__main__':
         cdelimiter = None
         if '--colordelimiter' in sys.argv:
             cdelimiter = sys.argv[sys.argv.index('--colordelimiter')+1]
-        cnames, colors, header = readfiles(colorfile, delimiter = cdelimiter)
+        cnames, header, colors = read_matrix_files(colorfile, delimiter = cdelimiter)
         if ccol == 'find' and header1 is not None:
             ccol = find_in_list(header1[scol1], header)
             if ccol is None:

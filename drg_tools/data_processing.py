@@ -7,8 +7,10 @@ Contains functions to modify the content of data matrices
 
 import sys, os 
 import numpy as np
-
-
+import umap
+from scipy.linalg import svd
+import sklearn.manifold as skm
+from sklearn.decomposition import TruncatedSVD, NMF, PCA
 
 def _groupings(tlen, groupsizes, kfold):
     groups = []
@@ -143,6 +145,83 @@ class embedding():
 
 
 
+def getcentroids(labels, distmat):
+    '''
+    Use distance matrix and group labels to determine the centroid of the group
+    '''
+    
+    clust = np.unique(labels)
+    print(len(clust), 'centroids in', len(labels))
+    centroids = []
+    maxdist = []
+    for c, cl in enumerate(clust):
+        mask = np.where(labels == cl)[0]
+        mdist = distmat[mask][:,mask]
+        argmin = np.argmin(np.sum(mdist, axis = 1))
+        cent = mask[argmin]
+        centroids.append(cent)
+        maxdist.append(np.amax(mdist[argmin]))
+    
+    return np.array(centroids), np.array(maxdist)
+    
+
+def determine_cluster(X, distance, clustering, clustpar, cparams, maxsize = 10000):
+    '''
+    Cluster X on distance metric with clustering algorithm
+    Only cluster maxsize data points, and aligns other data points to cluster centroids
+    TODO
+    Currently only agglomerative clustering implemented
+    
+    Parameters
+    ----------
+    clustpar : int, float
+        if float, clustpar is distance threshold
+        if int, clustpar is number of clusters
+    cparams : dictionary
+        with parameters for clustering algorithm
+    maxsize : int 
+        max number of data points for which distance matrix should be computed
+    '''
+    if type(clustpar) == int:
+        n_clusters = clustpar
+        distance_threshold = None
+    else:
+        n_clusters = None
+        distance_threshold = clustpar
+    
+    Xold = None
+    if len(X) > maxsize:
+        mask = np.zeros(len(X)) # select random set of maxsize data points for clustering
+        mask[np.random.permutation(len(X))[:maxsize]] = 1
+        mask = mask == 1
+        Xold = np.copy(X) # copy original X for assigning rest of data points later
+        X= X[mask] # compute distance matrix only for maxsize data points
+    distmat = cdist(X, X, distance)
+    
+    if clustering == 'agglomerative' or clustering == 'Agglomerative' or clustering == 'AgglomerativeClustering':
+        ca = AgglomerativeClustering(n_clusters=n_clusters, affinity='precomputed', distance_threshold = distance_threshold, **cparams)
+    ca.fit(distmat)
+    labels = ca.labels_
+    
+    # possible changes:
+        # add option to compare to the mean of clusters instead of centroid
+        # add option to compare data points to other clusters if they were set to -1 because of cluster specific threshold.
+    if Xold is not None:
+        centroids, distcentroid = getcentroids(labels, distmat) # determine the centroids of all clusters to assign leftover data points by measuring the distance to them
+        adjust = np.median(distcentroid[distcentroid != 0])# adjust centroid dists for single clusters to the median of distances of other clusters
+        distcentroid[distcentroid == 0] = adjust # distcentroid contains the max distance of the centroid to other data points in the same cluster
+        ndist = cdist(Xold, X[centroids], distance)
+        argmins = np.argmin(ndist, axis = 1) # determine which centroid is closest for all data points
+        amins = np.amin(ndist, axis = 1)
+        nlabels = -np.ones(len(ndist), dtype = int) # new labels for all data points, intialized as -1
+        nlabels = labels[centroids][argmins] # quickly assign all data points the closest cluster
+        for l, lab in enumerate(np.unique(labels)): # set cluster labels back to -1 if distance to centroid does not fulfill distance threshold
+            mask = np.where(nlabels == lab)[0]
+            nlabels[mask[amins[mask] > distcentroid[l]]] = -1
+        #nlabels[amins > distance_threshold] = -1 # alternatively one could simply check if it is closer than the original cut-off to the centroid. That would make it less likely that all other data points are within that distance
+        print(int(np.sum(nlabels == -1)), 'not assigned out of', len(nlabels))
+        labels = nlabels
+    return labels
 
 
 def manipulate_input(X, features, sysargv):

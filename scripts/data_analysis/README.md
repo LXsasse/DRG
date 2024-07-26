@@ -1,1 +1,1 @@
-Contains scripts to analyze regulatory genomics data
+Contains scripts to visualize data and results

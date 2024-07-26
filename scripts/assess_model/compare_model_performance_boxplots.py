@@ -1,62 +1,27 @@
+'''
+Plots boxplots for model performance, for different models, celltypes, or data 
+modalities. 
+Can also plot a heatmap instead of a boxplots to determine if individual
+data points have different performance for different models
+TODO
+Clean up matrix part and write large blocks as functions. 
+'''
+
 import numpy as np
 import sys, os
 import matplotlib.pyplot as plt
 from functools import reduce
 import glob
-import seaborn as sns
-from matrix_plot import plot_heatmap, plot_distribution
+
+from drg_tools.plotlib import plot_heatmap, plot_distribution
 from matplotlib import cm
 from scipy.stats import skew, wilcoxon, mannwhitneyu, ranksums
 
-from data_processing import check
+
+from drg_tools.io_utils import check, read_matrix_file, sortafter
 
 
-def read_in(files, reverse = False, replacenan = 1., allthesame = False, valcol= 1):
-    rnames, values = [], []
-    for f, fi in enumerate(files):
-        print('READ', fi)
-        fi = open(fi, 'r').readlines()
-        names, vals = [], []
-        for l, line in enumerate(fi):
-            if line[0] != '#':
-                line = line.strip().split()
-                names.append(line[0])
-                vals.append(line[valcol])
-        sortnames = np.argsort(names)
-        values.append(np.array(vals, dtype = float)[sortnames])
-        print(np.shape(values[-1]))
-        rnames.append(np.sort(names))
-    allnames = reduce(np.intersect1d, rnames)
-    print('Intersect', len(allnames))
-    if allthesame:
-        for r, rname in enumerate(rnames):
-            if not np.array_equal(allnames,rname):
-                mask = np.argsort(rname)[np.isin(np.sort(rname), allnames)]
-                print(files[r], len(rname[~mask]), 'not in all sets', len(rname))
-                values[r] = values[r][mask]
-        values = np.array(values)
-        values[np.isnan(values)] = replacenan
-        if reverse:
-            values = 1. - values
-        print('Combined', len(allnames), np.shape(values))
-    else:
-        for i in range(len(values)):
-            values[i] = np.array(values[i])
-            values[i][np.isnan(values[i])] = replacenan
-            if reverse:
-                values[i] = 1. - values[i]
-        allnames = rnames
-        values = values
-    
-    return allnames, values
-    
-def sortafter(array, target):
-    array = list(array)
-    sorta = []
-    for t, tar in enumerate(target):
-        if tar in array:
-            sorta.append([array.index(tar), t])
-    return np.array(sorta, dtype = int).T
+
         
 if __name__ == '__main__':    
     files = sys.argv[1]
@@ -84,7 +49,7 @@ if __name__ == '__main__':
     if '--ylabel' in sys.argv:
         ylabel = sys.argv[sys.argv.index('--ylabel')+1]
     
-    classname, classvalue = read_in(files, reverse = reverse, allthesame = ats, valcol = valcol)
+    classname, classcolumn, classvalue = read_matrix_file(files, reverse = reverse, allthesame = ats, valcol = valcol)
     
     if '--additional_data' in sys.argv:
         nadd = sys.argv[sys.argv.index('--additional_data')+1]
@@ -95,7 +60,7 @@ if __name__ == '__main__':
         for n in nadd:
             afiles = np.sort(glob.glob(n.replace('^', '*')))
             print(len(afiles))
-            aclassname, aclassvalue = read_in(afiles, reverse = reverse, allthesame = ats, valcol = valcol)
+            aclassname, aclasscolumn, aclassvalue = read_in(afiles, reverse = reverse, allthesame = ats, valcol = valcol)
             files = np.append(files, afiles)
             for f in range(len(afiles)):
                 if ats:

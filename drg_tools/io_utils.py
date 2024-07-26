@@ -8,7 +8,7 @@ import sys, os
 import glob
 import pandas as pd
 from .sequence_utils import quick_onehot, seq_onehot
-
+from functools import reduce
 
 
 def readinlocation(regfile):
@@ -43,6 +43,124 @@ def readinlocation(regfile):
     return np.array(genes), sequences, np.array(possible_regions)
 
 
+
+
+def string_features(string1, string2, placeholder = ['_', '-', '.'], case = False, k = 4, mink=2, ossplit = True, emphasizeto =2, emphasizelast = 2):
+    '''
+    generates a feature vector for two strings
+    TODO
+    Clean up and make more general
+    '''
+    if ossplit:
+        string1, string2 = os.path.split(string1)[1], os.path.split(string2)[1]
+    
+    if case == False:
+        string1, string2 = string1.upper(), string2.upper()
+    if placeholder is not None:
+        for p, pl in enumerate(placeholder):
+            string1, string2 = string1.replace(pl, '.'), string2.replace(pl, '.')
+        string1, string2 = string1.split('.'), string2.split('.')
+    
+    addstring = []
+    for s, st in enumerate(string1):
+        if (s < emphasizeto) or ((len(string1)-s) <= emphasizelast):
+            addstring.append(st)
+    string1 = np.append(string1, addstring)
+
+    addstring = []
+    for s, st in enumerate(string2):
+        if (s < emphasizeto) or ((len(string2)-s) <= emphasizelast):
+            addstring.append(st)
+    string2 = np.append(string2, addstring)        
+    
+    if mink is None:
+        ks = [k]
+    else:
+        ks = np.arange(mink, k+1)
+    
+    feats = [[],[]]
+    for k in ks:
+        for s, st in enumerate(string1):
+            if len(st)>= k:
+                for l in range(len(st)-k+1):
+                    feats[0].append(st[l:l+k])
+        for s, st in enumerate(string2):
+            if len(st)>= k:
+                for l in range(len(st)-k+1):
+                    feats[1].append(st[l:l+k])
+    commonfeats = np.unique(np.concatenate(feats))
+    feat1, nf1 = np.unique(feats[0], return_counts = True)
+    feat2, nf2 = np.unique(feats[1], return_counts = True)
+    sf1, sf2 = np.zeros(len(commonfeats)), np.zeros(len(commonfeats))
+    sf1[np.isin(commonfeats, feat1)] = nf1
+    sf2[np.isin(commonfeats, feat2)] = nf2
+    return commonfeats, sf1, sf2
+
+
+strlen = np.vectorize(len)
+
+def get_most_unique_substr(stringset):
+    '''
+    Returns the most unique substrings for strings in a list
+    '''
+    nameset = []
+    for s, string in enumerate(stringset):
+        weight, commons =[],[] 
+        for t, tring in enumerate(stringset):
+            if t != s:
+                co, sf1, sf2 = string_features(string, tring)
+                weight.append(sf1 - sf2)
+                commons.append(co)
+        comb = np.unique(np.concatenate(commons))
+        wcomb = np.zeros(len(comb))
+        for c, com in enumerate(commons):
+            wcomb[np.isin(comb, com)] += weight[c]
+        amax = np.amax(wcomb)
+        mask = wcomb == amax
+        best = comb[mask]
+        plen=strlen(best)
+        best = best[np.argmax(plen)]
+        nameset.append(best)
+    return nameset
+
+def _compute_string_jaccard_similarity(string1, string2, **kwargs):
+    '''
+    Computes jaccard similarity between two strings
+    '''
+    commonfeats, sf1, sf2 = string_features(string1, string2, **kwargs)
+    shared = np.sum(np.amin([sf1,sf2], axis = 0))/np.sum(np.amax([sf1,sf2], axis = 0))
+    return shared
+
+
+def return_best_matching_strings_between_sets(searchset, targetset):
+    '''
+    return the indices to match best match two list of strings
+    '''
+    sim = np.zeros((len(targetset), len(searchset)))
+    for s, se1 in enumerate(targetset):
+        for t, se2 in enumerate(searchset):
+            sim[s,t] = _compute_string_jaccard_similarity(se1, se2)
+    best = -np.ones(len(targetset), dtype = int)
+    '''
+    sort = np.argsort(sim, axis = 1)
+    for i in range(len(targetset)):
+        print(targetset[i])
+        for j in range(3):
+            print(j, sort[i,-1-j], searchset[sort[i,-1-j]], sim[i,sort[i,-1-j]])
+    sys.exit()
+    '''
+    order = np.argsort(sim, axis = None)[::-1]
+    j = 0
+    while True:
+        p0 = int(order[j]/len(searchset))
+        p1 = int(order[j]%len(searchset))
+        if best[p0] == -1 and p1 not in best:
+            best[p0] = p1
+        j += 1
+        if not (best == -1).any():
+            break
+    return best
+
 def separate_sys(sysin, delimiter = ',', delimiter_1 = None):
     if delimiter in sysin:
         sysin = sysin.split(delimiter)
@@ -68,6 +186,21 @@ def find_elements_with_substring_inarray(tocheck, inset):
             if tc in ins or ins in tc:
                 keep[t] = 1
     return keep == 1
+
+def sortafter(given, target):
+    sort = []
+    given = list(given)
+    for t, tar in enumerate(target):
+        sort.append(given.index(tar))
+    return np.array(sort)
+
+def sortnames(ns):
+    co = reduce(np.intersect1d, ns)
+    s = []
+    for n in ns:
+        s.append(np.argsort(n)[np.isin(np.sort(n), co)])
+    return s
+
 
 def readtomtom(f):
     obj = open(f,'r').readlines()
@@ -218,6 +351,17 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
     Reads in text file and returns names of rows, names of colums and data matrix
     TODO
     Use pandas and switch scripts to pandas
+    
+    Parameters
+    ----------
+    filename : string
+        Location of file
+    delimiter : string
+        Delimiter between columns
+    name_column: int    
+        Column in which name is placed, None means that no names are given
+    data_start_column:
+        Column 
     '''
 
     f = open(filename, 'r').readlines()
@@ -229,7 +373,11 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
     start = 0
     if columns is not None:
         start = 1
-
+    
+    if name_column is None:
+        nc = 0
+    else:
+        nc = name_column
     for l, line in enumerate(f):
         if l >= start:
             line = line.strip().split(delimiter)
@@ -237,6 +385,8 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
             ival = np.array(line[data_start_column:])
             values.append(ival)
 
+    if name_column is None:
+        rows = np.arange(len(rows)).astype(str)
     if column_name_replace is not None:
         for c, col in enumerate(columns):
             columns[c] = col.replace(column_name_replace[0], row_name_replace[1])
@@ -253,6 +403,59 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
             values = np.nan_to_num(values, nan = nan_value)
     return np.array(rows), np.array(columns), values
 
+
+def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_columns = False):
+    if os.path.isfile(matrixfiles):
+        if os.path.splitext(matrixfiles)[1] == '.npz':
+            Yin = np.load(matrixfiles, allow_pickle = True)
+            if 'counts' in Yin.files:
+                Y = Yin['counts']
+            elif 'values' in Yin.files:
+                Y = Yin['values']
+            rownames = Yin['names'] 
+        else:
+            rownames, columnnames, Y = read_matrix_file(matrixfiles, delimiter = delimiter)
+    elif split in matrixfiles:
+        Y, rownames, columnnames = [], [], []
+        for putfile in matrixfiles.split(split):
+            if os.path.splitext(putfile)[1] == '.npz':
+                Yin = np.load(putfile, allow_pickle = True)
+                onames = Yin['names']
+                # need to sort to use isin for removing names taht are not shared
+                sort = np.argsort(onames)
+                if 'counts' in Yin.files:
+                    yname = 'counts'
+                elif 'values' in Yin.files:
+                    yname = 'values'
+                Y.append(Yin[yname][sort])
+                rownames.append(onames[sort])
+            else:
+                onames, cnames, Yin = read_matrix_file(matrixfiles, delimiter = delimiter)
+                sort = np.argsort(onames)
+                Y.append(Yin.astype(float)[sort]) 
+                rownames.append(onames[sort])
+                columnnames.append(cnames)
+        
+        comnames = reduce(np.intersect1d, rownames)
+        for i, yi in enumerate(Y):
+            Y[i] = yi[np.isin(rownames[i], comnames)]
+        
+        if align_columns: 
+            rownames = comnames
+            comcolumnnames = reduce(np.intersect1d, columnnames)
+            sorting = [np.argsort(coln)[np.isin(np.sort(coln), comcolumnnames)] for coln in columnnames]
+            Y = [y[:, sorting[s]] for s, y in enumerate(Y)]
+            columnnames = comcolumnnames
+            u_, sort = np.unique(rownames, return_index = True)
+            rownames, Y = rownames[sort], [y[sort] for y in Y]
+        else:
+            rownames = comnames
+            columnnames = np.concatenate(columnnames)
+            Y = np.concatenate(Y, axis = 1)
+            u_, sort = np.unique(rownames, return_index = True)
+            rownames, Y = rownames[sort], Y[sort]
+    
+    return rownames, columnnames, Y
 
 
 

@@ -1,75 +1,19 @@
 import numpy as np
 import matplotlib.pyplot as plt 
 import sys, os
-from matrix_plot import plot_heatmap
-from data_processing import check 
+from drg_tools.plotlib import plot_heatmap
+from drg_tools.io_utils import check, readalign_matrix_files, sortafter
 from functools import reduce 
 
-def read(outputfile, delimiter = None):
-    celltypes = None
-    if os.path.isfile(outputfile):
-        if os.path.splitext(outputfile)[1] == '.npz':
-            Yin = np.load(outputfile, allow_pickle = True)
-            if 'values' in Yin.files:
-                Y = Yin['values']
-            else:
-                Y = Yin['counts']
-            outputnames = Yin['names'] # Y should of shape (nexamples, nclasses, l_seq/n_resolution)
-            if 'celltypes' in Yin.files:
-                celltypes = Yin['celltypes']
-            elif 'columns' in Yin.files:
-                celltypes = Yin['columns']
-        else:
-            Yin = np.genfromtxt(outputfile, dtype = str, delimiter = delimiter)
-            Y, outputnames = Yin[:, 1:].astype(float), Yin[:,0]
-            Yf = open(outputfile).readline()
-            if Yf[0] == '#':
-                celltypes = np.array(Yf.strip('#').strip().split())
-    elif ',' in outputfile:
-        Y, outputnames, celltypes = [], [], []
-        for putfile in outputfile.split(','):
-            if os.path.splitext(putfile)[1] == '.npz':
-                Yin = np.load(putfile, allow_pickle = True)
-                onames = Yin['names']
-                sort = np.argsort(onames)
-                Y.append(Yin['counts'][sort])
-                outputnames.append(onames[sort])
-                if 'celltypes' in Yin.files:
-                    celltypes.append(Yin['celltypes'])
-            else:
-                Yin = np.genfromtxt(putfile, dtype = str, delimiter = delimiter)
-                onames = Yin[:,0]
-                sort = np.argsort(onames)
-                Y.append(Yin[:, 1:].astype(float)[sort]) 
-                outputnames.append(onames[sort])
-                Yf = open(outputfile).readline()
-                if Yf[0] == '#':
-                    celltypes.append(np.array(Yf.strip('#').strip().split()))
-            
-        comnames = reduce(np.intersect1d, outputnames)
-        for i, yi in enumerate(Y):
-            Y[i] = yi[np.isin(outputnames[i], comnames)]
-        outputnames = comnames
-        if len(celltypes) == 0:
-            celltypes = None
-        else:
-            celltypes = np.concatenate(celltypes)
-        Y = np.concatenate(Y, axis = 1)
-    print(len(outputnames), np.shape(Y))
-    return outputnames, Y, celltypes
 
-def sortafter(given, target):
-    sort = []
-    given = list(given)
-    for t, tar in enumerate(target):
-        sort.append(given.index(tar))
-    return np.array(sort)
+
+
 
 if __name__ == '__main__': 
     
     data = sys.argv[1]
     
-    ynames, X, xnames = read(data)
+    ynames, xnames, X = readalign_matrix_files(data)
     
     if '--list' in sys.argv:
         tlist = np.genfromtxt(sys.argv[sys.argv.index('--list')+1], dtype = str)
@@ -96,13 +40,13 @@ if __name__ == '__main__':
                 cparms[clp[0]] = check(clp[1])
             
     if '--ydistmat' in sys.argv:
-        ydnames, ydistmat, xdnames = read(sys.argv[sys.argv.index('--ydistmat')+1])
+        ydnames, xdnames, ydistmat = readalign_matrix_files(sys.argv[sys.argv.index('--ydistmat')+1])
         ysort = sortafter(ydnames, ynames)
         ydistmat = ydistmat[ysort]
         cparms['ydistmat'] = ydistmat
     
     if '--xdistmat' in sys.argv:
-        dnames, xdistmat, xdnames = read(sys.argv[sys.argv.index('--xdistmat')+1])
+        dnames, xdnames, xdistmat = readalign_matrix_files(sys.argv[sys.argv.index('--xdistmat')+1])
         xsort = sortafter(xdnames, xnames)
         xdistmat = xdistmat[:, xsort]
         cparms['xdistmat'] = xdistmat

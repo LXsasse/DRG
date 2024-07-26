@@ -1,114 +1,16 @@
 # combine_output.py
-# combines outputs from different output files, 
-# and potentially filters data points based on a list or a list of lists
-# rescales outputs according to a scalar
-
+'''
+Writes list outputs (first row is name, second value) from different output
+files into a single file and attaches identifier for each individual file to
+the names
+Can filters data points based on a list or a list of lists
+Can rescale outputs according to a scalar
+'''
 import numpy as np
 import sys, os
 import glob
 
-
-def string_features(string1, string2, placeholder = ['_', '-', '.'], case = False, k = 4, mink=2, ossplit = True, emphasizeto =2, emphasizelast = 2):
-    if ossplit:
-        string1, string2 = os.path.split(string1)[1], os.path.split(string2)[1]
-    
-    if case == False:
-        string1, string2 = string1.upper(), string2.upper()
-    if placeholder is not None:
-        for p, pl in enumerate(placeholder):
-            string1, string2 = string1.replace(pl, '.'), string2.replace(pl, '.')
-        string1, string2 = string1.split('.'), string2.split('.')
-    
-    addstring = []
-    for s, st in enumerate(string1):
-        if (s < emphasizeto) or ((len(string1)-s) <= emphasizelast):
-            addstring.append(st)
-    string1 = np.append(string1, addstring)
-
-    addstring = []
-    for s, st in enumerate(string2):
-        if (s < emphasizeto) or ((len(string2)-s) <= emphasizelast):
-            addstring.append(st)
-    string2 = np.append(string2, addstring)        
-    
-    if mink is None:
-        ks = [k]
-    else:
-        ks = np.arange(mink, k+1)
-    
-    feats = [[],[]]
-    for k in ks:
-        for s, st in enumerate(string1):
-            if len(st)>= k:
-                for l in range(len(st)-k+1):
-                    feats[0].append(st[l:l+k])
-        for s, st in enumerate(string2):
-            if len(st)>= k:
-                for l in range(len(st)-k+1):
-                    feats[1].append(st[l:l+k])
-    commonfeats = np.unique(np.concatenate(feats))
-    feat1, nf1 = np.unique(feats[0], return_counts = True)
-    feat2, nf2 = np.unique(feats[1], return_counts = True)
-    sf1, sf2 = np.zeros(len(commonfeats)), np.zeros(len(commonfeats))
-    sf1[np.isin(commonfeats, feat1)] = nf1
-    sf2[np.isin(commonfeats, feat2)] = nf2
-    return commonfeats, sf1, sf2
-
-
-strlen = np.vectorize(len)
-
-def most_unique_feature(stringset):
-    nameset = []
-    for s, string in enumerate(stringset):
-        weight, commons =[],[] 
-        for t, tring in enumerate(stringset):
-            if t != s:
-                co, sf1, sf2 = string_features(string, tring)
-                weight.append(sf1 - sf2)
-                commons.append(co)
-        comb = np.unique(np.concatenate(commons))
-        wcomb = np.zeros(len(comb))
-        for c, com in enumerate(commons):
-            wcomb[np.isin(comb, com)] += weight[c]
-        amax = np.amax(wcomb)
-        mask = wcomb == amax
-        best = comb[mask]
-        plen=strlen(best)
-        best = best[np.argmax(plen)]
-        nameset.append(best)
-    return nameset
-
-def string_similarity(string1, string2, **kwargs):
-    commonfeats, sf1, sf2 = string_features(string1, string2, **kwargs)
-    shared = np.sum(np.amin([sf1,sf2], axis = 0))/np.sum(np.amax([sf1,sf2], axis = 0))
-    return shared
-
-
-def bestassign(searchset, targetset):
-    sim = np.zeros((len(targetset), len(searchset)))
-    for s, se1 in enumerate(targetset):
-        for t, se2 in enumerate(searchset):
-            sim[s,t] = string_similarity(se1, se2)
-    best = -np.ones(len(targetset), dtype = int)
-    '''
-    sort = np.argsort(sim, axis = 1)
-    for i in range(len(targetset)):
-        print(targetset[i])
-        for j in range(3):
-            print(j, sort[i,-1-j], searchset[sort[i,-1-j]], sim[i,sort[i,-1-j]])
-    sys.exit()
-    '''
-    order = np.argsort(sim, axis = None)[::-1]
-    j = 0
-    while True:
-        p0 = int(order[j]/len(searchset))
-        p1 = int(order[j]%len(searchset))
-        if best[p0] == -1 and p1 not in best:
-            best[p0] = p1
-        j += 1
-        if not (best == -1).any():
-            break
-    return best
+from drg_tools.io_utils import return_best_matching_strings_between_sets, get_most_unique_substr, string_features
     
     
     
@@ -156,7 +58,7 @@ if __name__ == '__main__':
                 setfiles = setfiles.split(',')
             elif '+' in setfiles:
                 setfiles = np.array(glob.glob(setfiles.replace('+', '*')))
-                setfiles = setfiles[bestassign(setfiles, results)]
+                setfiles = setfiles[return_best_matching_strings_between_sets(setfiles, results)]
             for s, da in enumerate(data):
                 print(s, 'Selection', setfiles[s],'in\n', results[s])
                 se = np.genfromtxt(setfiles[s], dtype = str)
@@ -180,7 +82,7 @@ if __name__ == '__main__':
                 setfiles = setfiles.split(',')
             elif '+' in setfiles:
                 setfiles = np.array(glob.glob(setfiles.replace('+', '*')))
-                setfiles = setfiles[bestassign(setfiles, results)]
+                setfiles = setfiles[return_best_matching_strings_between_sets(setfiles, results)]
             
             for s, da in enumerate(data):
                 print(s, 'Selection', setfiles[s],'in\n', results[s])
@@ -214,7 +116,7 @@ if __name__ == '__main__':
                 scalefiles = scalefiles.split(',')
             elif '+' in scalefiles:
                 scalefiles = np.array(glob.glob(scalefiles.replace('+', '*')))
-                scalefiles = scalefiles[bestassign(scalefiles, results)]
+                scalefiles = scalefiles[return_best_matching_strings_between_sets(scalefiles, results)]
         
             for s, da in enumerate(data):
                 print(s, 'Scaling', scalefiles[s], 'in\n', results[s])
@@ -245,11 +147,11 @@ if __name__ == '__main__':
         if '--nameadds' in sys.argv:
             nameadds = sys.argv[sys.argv.index('--nameadds')+1]
             if nameadds == 'auto':
-                nameadds = most_unique_feature(results)
+                nameadds = get_most_unique_substr(results)
                 print(nameadds)
             else:
                 nameadds = np.array(nameadds.split(','))
-                nameadds = nameadds[bestassign(nameadds, results)]
+                nameadds = nameadds[return_best_matching_strings_between_sets(nameadds, results)]
                 
         else:
             nameadds = [str(i) for i in range(len(results))]

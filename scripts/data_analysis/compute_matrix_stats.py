@@ -2,28 +2,14 @@ import numpy as np
 import sys, os 
 from scipy.stats import skew
 
-def read_file(f, expdelim = None, replace = '_', delimiter = None):
-    f = open(f, 'r').readlines()
-    
-    experiments = None
-    genes = []
-    values = []
-    for l, line in enumerate(f):
-        if l == 0 and line[0] == '#':
-            experiments = line.strip('#').strip().split(delimiter)
-        else:
-            line = line.strip().split(delimiter)
-            genes.append(line[0].strip('"'))
-            values.append(line[1:])
-            
-    if experiments is not None:
-        for e, exp in enumerate(experiments):
-            experiments[e] = exp.strip('"')
-            if expdelim is not None:
-                experiments[e] = exp.replace(expdelim, replace)
-    
-    return np.array(experiments), np.array(genes), np.array(values, dtype = float)
+'''
+computes statistics for data matrix
+TODO 
+Enable selection of matrix axis 
+'''
 
+
+from drg_tools.io_utils import read_matrix_file
 
 if __name__ == '__main__':
     
@@ -31,8 +17,7 @@ if __name__ == '__main__':
     if '--delimiter' in sys.argv:
         delimiter = sys.argv[sys.argv.index('--delimiter')+1]
     
-    exp, genes, values = read_file(sys.argv[1], expdelim = None, replace = '.FC.', delimiter = delimiter)
-    print(exp, genes, np.shape(values))
+    genes, exp, values = read_matrix_file(sys.argv[1], row_name_replace = '.FC.', delimiter = delimiter)
     
     outname = os.path.splitext(sys.argv[1])[0]
     if '--filterclass' in sys.argv:
