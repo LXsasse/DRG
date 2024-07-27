@@ -79,7 +79,7 @@ def seq_onehot(sequence, nucs = 'ACGT'):
     return ohvec
 
 # generates one-hot encoding by comparing arrays
-def quick_onehot(sequences, nucs = 'ACGT', wildcard = None, onehotregion = None, align = 'left'):
+def quick_onehot(sequences, nucs = 'ACGT', wildcard = None, onehotregion = None, region_names = None, align = 'left'):
     selen = seqlen(sequences)
     nucs = np.array(list(nucs))
     if align == 'bidirectional':
@@ -100,12 +100,16 @@ def quick_onehot(sequences, nucs = 'ACGT', wildcard = None, onehotregion = None,
     if align == 'right' or align == 'bidirectional':
         for s, sequence in enumerate(sequences):
             ohvec[s][-len(sequence):] = np.array(list(sequence))[:, None] == nucs
+    if align == 'center':
+        for s, sequence in enumerate(sequences):
+            ohvec[s][(mlenseqs-len(sequence))//2:(mlenseqs-len(sequence))//2+len(sequence)] = np.array(list(sequence))[:, None] == nucs
     ohvec = ohvec.astype(np.int8)
     
     if addonehot:
         ohvec = np.append(ohvec, onehotregion, axis = -1)
+        nucs = np.append(nucs, region_names)
+        print(nucs)
     return ohvec, nucs
-
 
 def append_reverse_complement(X):
     '''

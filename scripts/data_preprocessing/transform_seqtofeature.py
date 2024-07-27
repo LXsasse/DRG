@@ -10,10 +10,9 @@ import numpy as np
 import sys, os
 import time
 
-from drg_tools.io_utils import readinfasta, readinlocation, quick_onehot
+from drg_tools.io_utils import readinfasta, readinlocation
 from drg_tools.sequence_utils import make_kmer_representation as kmer_rep
-
-
+from drg_tools.sequence_utils import seqlen, quick_onehot
     
 
 
