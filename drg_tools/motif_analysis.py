@@ -48,7 +48,7 @@ def determine_best_unique_matches(similarity):
 def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_sim = 5, padding = 0.25,
                                      infocont = False, bk_freq = 0.25, 
                                      non_zero_elements = False, reverse_complement
-                                     = None, njobs = 1, verbose = False):
+                                     = False, njobs = 1, verbose = False):
     '''
     Wrapper function for _align_compute_similarity_motifs that uses joblib to 
     parallize the computation of the similarity matrix
@@ -90,11 +90,12 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
     '''
     
     # reverse_complement array determines if one should also compare the reverse complement of the pwms to all other pwms
-    if reverse_complement == False:
-        reverse_complement = np.array([np.zeros(len(ppms), dtype = int), 
+    if isinstance(reverse_complement, bool):
+        if reverse_complement == False:
+            reverse_complement = np.array([np.zeros(len(ppms), dtype = int), 
                                        np.zeros(len(ppms_ref), dtype = int)])
-    if reverse_complement == True:
-        reverse_complement = np.array([np.ones(len(ppms), dtype = int), 
+        elif reverse_complement == True:
+            reverse_complement = np.array([np.ones(len(ppms), dtype = int), 
                                        np.ones(len(ppms_ref), dtype = int)])
     elif len(reverse_complement) != 2:
         reverse_complement = np.array([reverse_complement, 
@@ -107,24 +108,17 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
         all_the_same = []
         for p in range(len(ppms)):
             all_the_same.append(np.array_equal(ppms[p], ppms_ref[p]))
-        is_the_same = all_the_same.all()
+        is_the_same = np.array(all_the_same).all()
     
     one_half = is_the_same
     
     if njobs == 1:
-        correlation, log_pvalues, offsets, revcomp_matrix, _ctrl = 
-        _align_compute_similarity_motifs(ppms, ppms_ref, one_half = one_half,
-                                         fill_logp_self = 1000, 
-                                         min_sim = min_sim, 
-                                         infocont = infocont, 
-                                         reverse_complement=reverse_complement,
-                                         verbose = verbose)
+        correlation, log_pvalues, offsets, revcomp_matrix, _ctrl = _align_compute_similarity_motifs(ppms, ppms_ref, one_half = one_half,                                          fill_logp_self = 1000, min_sim = min_sim, infocont = infocont, reverse_complement=reverse_complement, verbose = verbose)
     else:
-        correlation, log_pvalues, offsets, revcomp_matrix = 
-        2*np.ones((l_in, l_ref), dtype = np.float32), 
-        np.zeros((l_in, l_ref), dtype = np.float32), 
-        100*np.ones((l_in, l_ref), dtype = np.int16), 
-        -np.ones((l_in, l_ref), dtype = np.int8)
+        correlation = 2*np.ones((l_in, l_ref), dtype = np.float32)
+        log_pvalues = np.zeros((l_in, l_ref), dtype = np.float32)
+        offsets = 100*np.ones((l_in, l_ref), dtype = np.int16)
+        revcomp_matrix = -np.ones((l_in, l_ref), dtype = np.int8)
         
         spacesi = np.linspace(0,np.shape(ppms)[0], njobs + 1, dtype = int)
         spacesj = np.linspace(0,np.shape(ppms)[0], njobs*int(one_half)+1,
@@ -202,12 +196,16 @@ def _align_compute_similarity_motifs(ppms, ppms_ref, one_half = False,
     '''
     
     # reverse_complement array determines if one should also compare the reverse complement of the pwms to all other pwms
-    if reverse_complement == False:
-        reverse_complement = np.array([np.zeros(len(ppms), dtype = int), np.zeros(len(ppms_ref), dtype = int)])
-    if reverse_complement == True:
-        reverse_complement = np.array([np.ones(len(ppms), dtype = int), np.ones(len(ppms_ref), dtype = int)])
+    if isinstance(reverse_complement, bool):
+        if reverse_complement == False:
+            reverse_complement = np.array([np.zeros(len(ppms), dtype = int), 
+                                       np.zeros(len(ppms_ref), dtype = int)])
+        elif reverse_complement == True:
+            reverse_complement = np.array([np.ones(len(ppms), dtype = int), 
+                                       np.ones(len(ppms_ref), dtype = int)])
     elif len(reverse_complement) != 2:
-        reverse_complement = np.array([reverse_complement, np.ones(len(ppms_ref), dtype = int)])
+        reverse_complement = np.array([reverse_complement, 
+                                       np.ones(len(ppms_ref), dtype = int)])
     
     if ctrl is not None and verbose:
         print('Computing', ctrl, 'part of matrix')

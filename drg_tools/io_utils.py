@@ -368,7 +368,7 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
     columns, rows, values = None, [], []
     if header is not None:
         if f[0][:len(header)] == header:
-            columns = line.strip(header).strip().replace(strip_names,'').split(delimiter)
+            columns = f[0].strip(header).strip().replace(strip_names,'').split(delimiter)
 
     start = 0
     if columns is not None:
@@ -401,6 +401,11 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
         if nan_value is not None:
             print('nan values replaced with', nan_value)
             values = np.nan_to_num(values, nan = nan_value)
+    
+    if columns is not None:
+        if len(columns) > np.shape(values)[1]:
+            columns = columns[-np.shape(values)[1]:]
+    
     return np.array(rows), np.array(columns), values
 
 

@@ -8,7 +8,7 @@ import sys, os
 import matplotlib.pyplot as plt 
 
 from drg_tools.plotlib import plot_heatmap
-from drg_tools.motif_analysis import compare_ppms, reverse, combine_pwms
+from drg_tools.motif_analysis import align_compute_similarity_motifs, reverse, combine_pwms
 from drg_tools.io_utils import read_pwm, read_meme, write_pwm, check
 
 from scipy.spatial.distance import cdist
@@ -195,7 +195,7 @@ if __name__ == '__main__':
         correlation = cdist(heatmap, heatmap, heatdist)
         outname += heatdist[:3]
     else:
-        correlation, logs, ofs, revcomp_matrix, best, _ctrl = compare_ppms(pwms, pwms, find_bestmatch = True, one_half = True, fill_logp_self = 1000, min_sim = min_sim, infocont = False, reverse_complement = revcom_array)
+        correlation, logs, ofs, revcomp_matrix = align_compute_similarity_motifs(pwms, pwms, fill_logp_self = 1000, min_sim = min_sim, infocont = False, reverse_complement = revcom_array)
         if '--joinpwms' in sys.argv:
             distance_threshold=float(sys.argv[sys.argv.index('--joinpwms')+1])
             newclustering = AgglomerativeClustering(n_clusters = None, affinity = 'precomputed', linkage = 'average', distance_threshold = distance_threshold).fit(correlation)
@@ -203,7 +203,7 @@ if __name__ == '__main__':
             clusterpwms = combine_pwms(np.array(pwms, dtype = object), newclusters, logs, ofs, revcomp_matrix)
             clusternames = [';'.join(np.array(yticklabels)[newclusters == i]) for i in np.unique(newclusters)]
             yticklabels, pwms = np.array(clusternames), clusterpwms
-            correlation, logs, ofs, revcomp_matrix, best, _ctrl = compare_ppms(pwms, pwms, find_bestmatch = True, one_half = True, fill_logp_self = 1000, min_sim = min_sim, infocont = False, reverse_complement = revcom_array)
+            correlation, logs, ofs, revcomp_matrix = align_compute_similarity_motifs(pwms, pwms, fill_logp_self = 1000, min_sim = min_sim, infocont = False, reverse_complement = revcom_array)
             if pwmfeatures is not None:
                 additive = False
                 unclusters = np.unique(newclusters)
@@ -233,15 +233,23 @@ if __name__ == '__main__':
                 if revcomp_matrix[p,best] == 1:
                     pwms[p] = reverse(pwm)
     
+    sortx = 'ward'
     if '--sortx' in sys.argv:
         sortx = check(sys.argv[sys.argv.index('--sortx')+1])
-        
+    
+    sorty = 'ward'
+    if '--sorty' in sys.argv:
+        sorty = check(sys.argv[sys.argv.index('--sorty')+1])
+    
+    if '--measure' in sys.argv:
+        measurex = sys.argv[sys.argv.index('--measure')+1]
+    
     plot_heatmap(heatmap, # matrix that is plotted with imshow
                  ydistmat = correlation,
                  measurex = measurex, # if matrix is not a symmetric distance matrix then measurex define distannce metric for linkage clustering 
-                 measurey = None, # same as measurex just for y axic
+                 measurey = measurex, # same as measurex just for y axic
                  sortx = sortx, # agglomerative clustering algorith used in likage, f.e average, or single
-                 sorty = 'average', # same as above but for y axis
+                 sorty = sorty, # same as above but for y axis
                  x_attributes = None, # additional heatmap with attributes of columns
                  y_attributes = None, # same as above for y axis
                  xattr_name = None, # names of attributes for columns

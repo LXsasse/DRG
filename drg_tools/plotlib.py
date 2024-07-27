@@ -16,7 +16,7 @@ import logomaker
 import pandas as pd
 from scipy.stats import gaussian_kde, pearsonr
 from sklearn import linear_model
-from .motif_analysis import compare_ppms
+from .motif_analysis import align_compute_similarity_motifs
 
 
 
@@ -44,8 +44,7 @@ def _add_frames(att, locations, ax, color = 'k', cmap = None):
     att = np.array(att)
     for l, loc in enumerate(locations):
         # Determine height of box
-        mina, maxa = np.amin(np.sum(np.ma.masked_greater(att[loc[0]:loc[1]+1],0),axis = 1))
-        , np.amax(np.sum(np.ma.masked_less(att[loc[0]:loc[1]+1],0),axis = 1))
+        mina, maxa = np.amin(np.sum(np.ma.masked_greater(att[loc[0]:loc[1]+1],0),axis = 1)), np.amax(np.sum(np.ma.masked_less(att[loc[0]:loc[1]+1],0),axis = 1))
         x = [loc[0]-0.5, loc[1]+0.5]
         ax.plot(x, [mina, mina], c = color)
         ax.plot(x, [maxa, maxa], c = color)
@@ -137,7 +136,7 @@ def _plot_heatmap(arr, cmap = 'coolwarm', ylabel = None, grid = False, ratio=1,
         ax.set_yticks(np.arange(len(yticklabels)))
         ax.set_yticklabels(list(yticklabels))
    
-   if xticklabels is not None:
+    if xticklabels is not None:
         ax.set_xticks(np.arange(len(xticklabels)))
         ax.set_xticklabels(list(xticklabels))
     
@@ -177,7 +176,7 @@ def _generate_xticks(start, end, n):
     
     
 
-def plot_attribution_maps(att, seq = None, motifs = None, experiments = None, vlim = None, unit = 0.15, ratio = 10, ylabel = None, xtick_range = None, barplot = None, heatmap = False, center_attribution = False, channels = list('ACGT'), ylabel = None):
+def plot_attribution_maps(att, seq = None, motifs = None, experiments = None, vlim = None, unit = 0.15, ratio = 10, ylabel = None, xtick_range = None, barplot = None, heatmap = False, center_attribution = False, channels = list('ACGT')):
     '''
     Plots single or multiple attribution maps above each other. 
     Parameters
@@ -219,14 +218,14 @@ def plot_attribution_maps(att, seq = None, motifs = None, experiments = None, vl
     for a, at in enumerate(att):
         ax = fig.add_subplot(len(att)*_heat, 1, 1+(a*_heat))
         ax.set_positions([0.1, 0.1+(len(att)-1-(a*_heat))/len(att)/_heat*0.8, 0.8, 0.8*(1/len(att)/_heat)*0.8])
-        axs.append(plot_seqlogo(at, ax = ax, ylabel = experiments[a], labelbottom = (a == len(att)-1) & (~heatmap), bottomticks = (a == len(att)-1)& (~heatmap), ylim = attlim, , xticks = xticks, xticklabels = xticklabels))
+        axs.append(plot_seqlogo(at, ax = ax, ylabel = experiments[a], labelbottom = (a == len(att)-1) & (~heatmap), bottomticks = (a == len(att)-1)& (~heatmap), ylim = attlim, xticks = xticks, xticklabels = xticklabels))
         if motifs is not None:
             _add_frames(at, locations[a], ax, color = motifcolors)
         if heatmap:
             _vlim = np.amax(np.absolute(attlim))
             ax = fig.add_subplot(len(att)*_heat, 1, 2+(a*_heat))
             ax.set_positions([0.1, 0.1+(len(att)-2-(a*_heat))/len(att)/_heat*0.8, 0.8, 0.8*(1/len(att)/_heat)*0.8])
-            axs.append(_plot_heatmap(ism, ax = ax, ylim = attlim, labelbottom = (a == len(att)-1), bottomticks = (a == len(att)-1), xticks = xticks, xticklabels = xticklabels), cmap = 'coolwarm', ylabel = None, vlim = [-_vlim, _vlim]))
+            axs.append(_plot_heatmap(ism, ax = ax, ylim = attlim, labelbottom = (a == len(att)-1), bottomticks = (a == len(att)-1), xticks = xticks, xticklabels = xticklabels), cmap = 'coolwarm', ylabel = None, vlim = [-_vlim, _vlim])
             
     
     # This is for a barplot on the side of the sequence logo, that shows predicted and/or measured actibity
@@ -280,8 +279,7 @@ def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('AC
             min_sim = min(min_sim, np.shape(pw)[0])
             if (pw<0).any():
                 ifcont = False
-        correlation, log_pvalues, offsets, revcomp_matrix, bestmatch, ctrl_ = 
-        compare_ppms(pwm, pwm, one_half = True, fill_logp_self = 1000, 
+        correlation, log_pvalues, offsets, revcomp_matrix = align_compute_similarity_motifs(pwm, pwm, fill_logp_self = 1000, 
                      min_sim = min_sim, infocont = ifcont, 
                      reverse_complement = np.ones(len(pwm), dtype = int))
         
@@ -328,7 +326,7 @@ def _check_symmetric_matrix(distmat):
     else:
         return True
 
-def _transform_similarity_to_distance(distmat)
+def _transform_similarity_to_distance(distmat):
     # checks if similarity matrix or distance matrix
     issimilarity = np.all(np.amax(distmat) == np.diag(distmat))
     heatmax, heatmin = np.amax(distmat), np.amin(distmat)
@@ -579,12 +577,16 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
             pwm_min, pwm_max = 0, int(np.ceil(np.amax([np.amax(pwm) for pwm in pwms])))
         for s, si in enumerate(sorty[::-1]):
             axpwm = fig.add_subplot(len(sorty),1,s+1)
-            axpwm.set_position([0.1+before-pwmsize*width/fullw, 0.1+beneath+mfac-mfac*(s+0.9)/len(sorty), (pwmsize-0.25)*width/fullw, mfac/len(sorty) *0.8])
+            axpwm.set_position([0.1+before-pwmsize*width/fullw, 
+                                0.1+beneath+mfac-mfac*(s+0.9)/len(sorty),
+                                (pwmsize-0.25)*width/fullw, 
+                                mfac/len(sorty) *0.8])
             pwm = pwms[si]
             if infocont:
                 pwm = np.log2((pwms[si]+1e-16)/0.25)
                 pwm[pwm<0] = 0
-            logomaker.Logo(pd.DataFrame(pwm, columns = list('ACGT')), ax = axpwm, color_scheme = 'classic')
+            logomaker.Logo(pd.DataFrame(pwm, columns = list('ACGT')),
+                           ax = axpwm, color_scheme = 'classic')
             axpwm.set_ylim([pwm_min, pwm_max])
             
             axpwm.spines['top'].set_visible(False)
@@ -592,7 +594,8 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
             axpwm.spines['left'].set_visible(False)
             axpwm.tick_params(labelleft = False, labelbottom = False, bottom = False)
             if noheatmap and row_distributions is None and yticklabels is not None:
-                axpwm.tick_params(labelleft = False, labelright = True, labelbottom = False, bottom = False)
+                axpwm.tick_params(labelleft = False, labelright = True, 
+                                  labelbottom = False, bottom = False)
                 axpwm.set_yticks([(pwm_max+pwm_min)/2])
                 axpwm.set_yticklabels(yticklabels[[-s-1]])
     
@@ -603,25 +606,31 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
         if vmax is None:
             vmax = np.amax(heatmat)
         
-        ax.imshow(heatmat, aspect = 'auto', cmap = heatmapcolor, vmin = vmin, vmax = vmax, origin = 'lower')
+        ax.imshow(heatmat, aspect = 'auto', cmap = heatmapcolor, vmin = vmin, 
+                  vmax = vmax, origin = 'lower')
         ax.set_yticks(np.arange(len(heatmat)))
         ax.set_xticks(np.arange(len(heatmat[0])))
        
         # add colorbar
         axcol = fig.add_subplot(999)  
         print(vmin, vmax)
-        axcol.set_position([0.1+before+wfac+width*0.25/fullw, 0.1+beneath+mfac+height*0.25/fullh, width*5/fullw, height*1/fullh])
-        axcol.tick_params(bottom = False, labelbottom = False, labeltop = True, top = True, left = False, labelleft = False)
-        axcol.imshow(np.linspace(0,1,101).reshape(1,-1), aspect = 'auto', cmap = heatmapcolor)
+        axcol.set_position([0.1+before+wfac+width*0.25/fullw, 
+                            0.1+beneath+mfac+height*0.25/fullh, 
+                            width*5/fullw, 
+                            height*1/fullh])
+        axcol.tick_params(bottom = False, labelbottom = False, labeltop = True,
+                          top = True, left = False, labelleft = False)
+        axcol.imshow(np.linspace(0,1,101).reshape(1,-1), aspect = 'auto', 
+                     cmap = heatmapcolor)
         axcol.set_xticks([0,101])
         
         colormapresolution = 1
         colormapresolution = ['Repressive', 'Activating']
         
-        if isinstance(heatmapresolution, int):
-            axcol.set_xticklabels([round(vmin,heatmapresolution), round(vmax,heatmapresolution)], rotation = 60)
-        elif isinstance(heatmapresolution,list):
-            axcol.set_xticklabels([heatmapresolution[0], heatmapresolution[-1]], rotation = 60)
+        if isinstance(colormapresolution, int):
+            axcol.set_xticklabels([round(vmin,colormapresolution), round(vmax,colormapresolution)], rotation = 60)
+        elif isinstance(colormapresolution,list):
+            axcol.set_xticklabels([colormapresolution[0], colormapresolution[-1]], rotation = 60)
             
         #Add text to heatmap if true
         if plot_value:
@@ -951,7 +960,7 @@ def _colorbar(cmap, ticklabels = None, vert = True, ratio = 3, tickpositions = N
         else:
             ax.set_xticklabels(ticklabels, rotation = 90)
     
-    if return_fig
+    if return_fig:
         return fig
 
 def plot_distribution(
@@ -1517,11 +1526,11 @@ def BoxPlotfromBins(X, Y, start=None, end=None, bins=10, axis = 'x', ax = None, 
         return_fig = True
         fig = plt.figure(figsize = (3.8,3.8), dpi = dpi)
         ax.add_subplot(111)
-    if axis = 'x':
+    if axis == 'x':
         vert = True
         maskdata = X
         valuedata = Y
-    if axis = 'y':
+    if axis == 'y':
         vert = False
         maskdata = Y
         valuedata = X
@@ -1545,7 +1554,7 @@ def BoxPlotfromBins(X, Y, start=None, end=None, bins=10, axis = 'x', ax = None, 
     if return_fig:
         return fig
 
-def scatterPlot(X, Y, title = None, xlabel = None, ylabel = None, include_fit = True, include_mainvar = True, diagonal = False, plot_axis = None , boxplot_x = None, boxplot_y = None, contour = False, pos_neg_contour = False, color=None, edgecolor = 'silver', cmap = None, sort_color = 'abshigh', color_density = False, vlim = None, sizes = None, alpha = None, lw = None, xlabel = None, ylabel = None, yticklabels = None, yticks = None, xticklabels = None, xticks = None, grid = False, xlim = None, ylim =None, xscale = None, legend = False, add_text = None, yscale = None, ax = None, dpi = 200):
+def scatterPlot(X, Y, title = None, xlabel = None, ylabel = None, include_fit = True, include_mainvar = True, diagonal = False, plot_axis = None , boxplot_x = None, boxplot_y = None, contour = False, pos_neg_contour = False, color=None, edgecolor = 'silver', cmap = None, sort_color = 'abshigh', color_density = False, vlim = None, sizes = None, alpha = None, lw = None, yticklabels = None, yticks = None, xticklabels = None, xticks = None, grid = False, xlim = None, ylim =None, xscale = None, legend = False, add_text = None, yscale = None, ax = None, dpi = 200):
     '''
     Creates fancy scatterplot with additional features
     
@@ -1614,11 +1623,11 @@ def scatterPlot(X, Y, title = None, xlabel = None, ylabel = None, include_fit = 
                 vlim = [-vlim, vlim]
             else:
                 vlim = [0, np.amax(color)]
-        if sort_color = 'high':
+        if sort_color == 'high':
             sort = np.argsort(color)
-        elif sort_color = 'low':
+        elif sort_color == 'low':
             sort = np.argsort(-color)
-        elif sort_color = 'abshigh':
+        elif sort_color == 'abshigh':
             sort = np.argsort(np.absolute(color))
         else:
             sort = np.arange(len(color))
