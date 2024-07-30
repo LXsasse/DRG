@@ -3,6 +3,7 @@
 '''
 Contains some functions to compute metrics that are often needed for model evaluations. 
 Most functions handle np.ndarrays
+
 '''
 
 
@@ -10,7 +11,8 @@ import numpy as np
 import torch
 from sklearn import metrics
 from scipy.stats import ranksums
-
+from scipy.stats import t
+import scipy.special as special
 
 def info_content(pwm, background = 0.25, eps = 1e-16):
     '''
@@ -149,12 +151,14 @@ def dist_measures(x1, x2, distance, similarity = False, axis = 1, summary = None
 def correlation2pvalue(r, n):
     
     '''
+    
     Under the assumption that x and y are drawn from
-    independent normal distributions (so the population correlation coefficient
-    is 0), the probability density function of the sample correlation
+    independent normal distributions (so the population correlation coefficient is 0), the probability density function of the sample correlation
     coefficient r is ([1]_, [2]_):
     .. math::
-        f(r) = \frac{{(1-r^2)}^{n/2-2}}{\mathrm{B}(\frac{1}{2},\frac{n}{2}-1)}
+    
+    f(r) = "\frac{{(1-r^2)}^{n/2-2}}{\athrm{B}(\frac{1}{2},\frac{n}{2}-1)}"
+    
     where n is the number of samples, and B is the beta function.  This
     is sometimes referred to as the exact distribution of r.  This is
     the distribution that is used in `pearsonr` to compute the p-value.
@@ -180,7 +184,9 @@ def correlation2pvalue(r, n):
     assuming x1 != x2 and y1 != y2, the only possible values for r are 1
     and -1.  Because abs(r') for any sample x' and y' with length 2 will
     be 1, the two-sided p-value for a sample of length 2 is always 1.
+    
     '''
+    
     # As explained in the docstring, the p-value can be computed as
     #     p = 2*dist.cdf(-abs(r))
     # where dist is the beta distribution on [-1, 1] with shape parameters
@@ -206,3 +212,5 @@ def pvalue_to_correlation(pval,n):
     tt = t.isf(pval/2, n-1)
     r = np.sqrt(tt**2/(n-2+tt**2))
     return r
+
+

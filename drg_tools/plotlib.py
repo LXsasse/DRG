@@ -17,7 +17,7 @@ import pandas as pd
 from scipy.stats import gaussian_kde, pearsonr
 from sklearn import linear_model
 from .motif_analysis import align_compute_similarity_motifs
-
+import matplotlib.patches as mpatches
 
 
 def _add_frames(att, locations, ax, color = 'k', cmap = None):
@@ -246,19 +246,21 @@ def plot_single_pwm(pwm, log = False, showaxes = False, channels = list('ACGT'),
     '''
     Plots single PWM, determines figsize based on length of pwm
     pwm : 
-        shape=(channels, length_logo)
+        shape=(length_logo, channels)
     '''
     if ax is None:
-        fig = plt.figure(figsize = (np.shape(pwm)[-1]*unit,np.shape(pwm)[0]*unit), dpi = 300)
+        fig = plt.figure(figsize = (np.shape(pwm)[0]*unit,np.shape(pwm)[1]*unit), dpi = 300)
         ax = fig.add_subplot(111)
     
-    lim = [min(0, -np.ceil(np.amax(-np.sum(np.ma.masked_array(pwm, pwm >0),axis = 1)))), 
-           np.ceil(np.amax(np.sum(np.ma.masked_array(pwm, pwm <0),axis = 1)))]
+    lim = [min(0, -np.ceil(np.around(np.amax(-np.sum(np.ma.masked_array(pwm, pwm >0),axis = 1)),2))), 
+           np.ceil(np.around(np.amax(np.sum(np.ma.masked_array(pwm, pwm <0),axis = 1)),2))]
+    
     if log:
         pwm = np.log2((pwm+1e-16)/0.25)
         pwm[pwm<0] = 0
         lim = [0,2]
-    logomaker.Logo(pd.DataFrame(pwm, indices = channels), ax = ax, color_scheme = 'classic')
+    
+    logomaker.Logo(pd.DataFrame(pwm, columns = channels), ax = ax, color_scheme = 'classic')
     ax.set_ylim(lim)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -308,9 +310,10 @@ def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('AC
             pw = pw0
             plot_single_pwm(pw, log=log, showaxes = showaxes, channels = channels, ax = ax)
     else:
-        fig = plt.figure(figsize = (np.shape(pwm)[-1]*unit,np.shape(pwm)[0]*unit), dpi = 300)
+        
+        fig = plt.figure(figsize = (np.shape(pwm)[0]*unit,np.shape(pwm)[1]*unit), dpi = 300)
         ax = fig.add_subplot(111)
-        plot_single_pwm(pwm, log = log, showxes = showaxes, channels = channels, ax = ax)
+        plot_single_pwm(pwm, log = log, showaxes = showaxes, channels = channels, ax = ax)
         
     return fig
 
@@ -1744,4 +1747,99 @@ def plot_scatter(X, Y, titles = None, xlabel = None, ylabel = None, outname = No
         print('SAVED as', outname)
         fig.savefig(outname, dpi = 200, bbox_inches = 'tight')
     else:
+        return fig
+
+
+def plot_lines(y, x = None, xticks = None, xticklabels = None, color = None,
+               cmap = 'Set1', marker = None, ylabel = None, grid = False,
+               legend_names = None, legend_outside = False, figsize = None,
+               unit = 0.3, yscale = None, ax = None, ylim = None, plot_xaxis=True):
+    
+    '''
+    Plots lines with markers
+    Parameters
+    ----------
+    y : np.ndarray or list
+        if list of lists each one will be plotted separately
+    '''
+    
+    if not isinstance(y[0],list):
+        y = [y]
+    leny = [len(yi) for yi in y]
+    
+    legend = True
+    if legend_names is None:
+        legend = False
+        legend_names = [None for i in range(len(y))]
+    
+    if x is None:
+        x = [np.arange(len(yi)) for yi in y]
+    
+    if color is not None:
+        if not isinstance(color,list):
+            color = [color for c in range(len(y))]
+    else:
+        cmap = mpl.colormaps.get_cmap(cmap)
+        color = [cmap(c) for c in np.linspace(0,1,len(y))]
+    
+    if marker is not None:
+        if not isinstance(marker,list):
+            marker = [marker for c in range(len(y))]
+    
+    if xticklabels is not None:
+        if xticks is None:
+            xticks = np.arange(len(xticklabels))
+    elif x is not None:
+        if xticks is None:
+            xticks = np.unique(np.concatenate(x))
+            if (np.diff(xticks) != np.diff(xticks)[0]).any(): 
+                xticks = np.linspace(xticks[0], xticks[-1], 5)
+    
+    if figsize is None:
+        if xticks is not None:
+            figsize = ((xticks[-1]-xticks[0])*unit, 3.5)
+    return_fig = False
+    if ax is None:
+        return_fig = True
+        fig = plt.figure(figsize = figsize)
+        ax = fig.add_subplot(111)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    
+    for i, xi in enumerate(x):
+        ax.plot(xi, y[i], color = color[i], marker = marker[i], ls = '-', lw = 1)
+    
+    if grid:
+        ax.grid()
+    
+    if legend:
+        handles = []
+        for f, fcol in enumerate(color):
+            patch = mpatches.Patch(color=fcol, label=legend_names[f])
+            handles.append(patch)
+        if legend_outside:
+            ax.legend(handles = handles,bbox_to_anchor=(0, 1.02, 1, 0.2), loc="lower left", mode="expand", borderaxespad=0, ncol=4)
+        else:
+            ax.legend(handles = handles)
+        
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    
+    if xticks is not None:
+        ax.set_xticks(xticks)
+        if xticklabels is not None:
+            ax.set_xticklabels(xticklabels, rotation = 90)
+    
+    xlim = [np.amin(np.concatenate(x))-0.5, np.amax(np.concatenate(x))+0.5]
+    if plot_xaxis: 
+        ax.plot(xlim,[0,0], color = 'grey')
+        ax.set_xlim(xlim)
+    
+    if ylim is not None:
+        ax.set_ylim(ylim)
+        
+    if yscale is not None:
+        ax.set_yscale(yscale)
+   
+    if return_fig:
         return fig

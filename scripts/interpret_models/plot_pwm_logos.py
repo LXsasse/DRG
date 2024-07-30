@@ -4,9 +4,9 @@ import matplotlib as mpl
 import logomaker
 import pandas as pd
 import matplotlib.pyplot as plt
-from drg_tools.motif_analysis import compare_ppms, reverse, combine_pwms
+from drg_tools.motif_analysis import align_compute_similarity_motifs, reverse, combine_pwms
 from drg_tools.io_utils import numbertype, isint, read_pwm, read_meme
-from drg_tools.plotlib import plot_pwm
+from drg_tools.plotlib import plot_pwms
 
 
     
@@ -48,13 +48,17 @@ if __name__ == '__main__':
         else:
             collect = 10
     
+    log = False
+    if '--infocont' in sys.argv:
+        outname += 'ic'
+        log = True
+    
     for p in select:
         name = pwmnames[p]
+        
         pwm = pwm_set[p]
-        log = False
-        if '--infocont' in sys.argv:
-            outname += 'ic'
-            log = True
+        
+        
         
         outadd = ''
         if '--basepwms' in sys.argv:
@@ -77,18 +81,20 @@ if __name__ == '__main__':
         
         if '--recluster' in sys.argv and '--clusterfile' in sys.argv:
             pwm_len = np.array([len(pw) for pw in pwm])
-            correlation, log_pvalues, offsets, revcomp_matrix, bestmatch, ctrl_ = compare_ppms(pwm[1:], pwm[1:], one_half = True, fill_logp_self = 1000, min_sim = np.amin(pwm_len), infocont = log, reverse_complement = np.ones(len(pwm)-1, dtype = int))
+            correlation, log_pvalues, offsets, revcomp_matrix= align_compute_similarity_motifs(pwm[1:], pwm[1:], one_half = True, fill_logp_self = 1000, min_sim = np.amin(pwm_len), infocont = log, reverse_complement = np.ones(len(pwm)-1, dtype = int))
             combpwm = combine_pwms(np.array(pwm[1:], dtype = object), np.zeros(len(pwm)-1, dtype = int), log_pvalues, offsets, revcomp_matrix)
             pwm[0] = combpwm[0]
             pwm = pwm[:11]
-            
-        fig = plot_pwm(pwm, log = log, axes = True)
+        if '--replace_name_with_id' in sys.argv:
+            name = str(p)
+        fig = plot_pwms(pwm, log = log, showaxes = True)
         fig.savefig(outname+'.'+name+outadd+'.jpg', bbox_inches = 'tight', dpi = 300)
         if '--save_reversecomplement' in sys.argv:
-            figr = plot_pwm([reverse(pw) for pw in pwm], log = log, axes = True)
+            figr = plot_pwm([reverse(pw) for pw in pwm], log = log, showaxes = True)
             figr.savefig(outname+'.'+name+outadd+'_r.jpg', bbox_inches = 'tight', dpi = 300)
         print(outname+'.'+name+'.jpg')
-        plt.show()
+        plt.close()
+        #plt.show()
 
 
     
