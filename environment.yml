@@ -1,0 +1,21 @@
+name: drgenv
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - joblib
+  - matplotlib>=3.8
+  - numpy>=1.26
+  - pandas>=2.2.2
+  - pip>=24.0
+  - python>=3.12
+  - scikit-learn>=1.4.2
+  - scipy>=1.13
+  - seaborn>=0.13.2
+  - setuptools>=69.5
+  - umap-learn>=0.5.6
+  - pip:
+      - einops==0.8.0
+      - fft-conv-pytorch==1.2.0
+      - logomaker==0.8
+      - torch==2.3.1
