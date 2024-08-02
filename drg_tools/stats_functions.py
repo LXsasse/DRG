@@ -14,6 +14,34 @@ from scipy.stats import ranksums
 from scipy.stats import t
 import scipy.special as special
 
+#copied from https://github.com/oliviaguest/gini/blob/master/gini.py
+def gini(array, axis = None, eps = 1e-16):
+    """Calculate the Gini coefficient of a numpy array."""
+    # based on bottom eq:
+    # http://www.statsdirect.com/help/generatedimages/equations/equation154.svg
+    # from:
+    # http://www.statsdirect.com/help/default.htm#nonparametric_methods/gini.htm
+    if axis is None:
+        array = array.flatten()
+        n = len(array)
+    amin = np.amin(array, axis = axis)
+    if axis is not None:
+        amin = np.expand_dims(amin,axis = axis)
+        n = array.shape[axis]
+    array -= amin
+    # Values cannot be 0:
+    array += eps
+    # Values must be sorted:
+    array = np.sort(array, axis = axis)
+    # Index per array element:
+    index = np.arange(1, n+1)
+    if axis is not None:
+        index = np.expand_dims(index, axis = 1-axis)
+    # Gini coefficient:
+    gini = (np.sum((2 * index - n  - 1) * array, axis = axis))/ (n * np.sum(array, axis = axis))
+    return gini
+
+
 def info_content(pwm, background = 0.25, eps = 1e-16):
     '''
     Parameters

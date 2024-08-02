@@ -3,8 +3,8 @@
 ## Repository organization
 
 ```[tasklist]
-- [ ] Split code between drg_tools and scripts that use these tools
-- [ ] Write short tutorials on how to use objects in drg_tools
+- [x] Split code between drg_tools and scripts that use these tools
+- [ ] Write short tutorials on how to use modules in drg_tools
 ```
 
 ## Model training
@@ -38,5 +38,8 @@ Introduce learnable cell type and data modality vector.
 ```[tasklist]
 - [ ] Enable DeepLIFT for multiple sequence inputs
 - [ ] DeepLIFT to multiple random seeds
+- [ ] Find motifs in attributions with sequence specific cut off from dinuc shuffle
+- [ ] Write module that combines ISM, tism, and deepshap
+- [ ] Write module that can extract sequences from 'sparse'-attribution maps with positions
 ```
 

@@ -283,16 +283,30 @@ def readinfasta(fastafile, minlen = 10, upper = True):
 
 
 # Combine filenames to a new output file name, removing text that is redundant in both filenames    
-def create_outname(name1, name2, lword = 'on'):
-    name1s = os.path.split(name1)[1].replace('.dat','').replace('.hmot','').replace('.txt','').replace('.npz','').replace('.list','').replace('.csv','').replace('.tsv','').replace('.tab','').replace('-', "_").replace('.fasta','').replace('.fa','').replace('.','_').split('_')
-    name2s = name2.replace('-', "_").replace('.','_').split('_')
-    diffmask = np.ones(len(name1s)) == 1
-    for n, na1 in enumerate(name1s):
-        for m, na2 in enumerate(name2s):
+def create_outname(name1, name2, lword = 'on', replace_suffixes = ['.dat', '.hmot', '.txt', '.npz', '.list', '.tab', '.tsv', '.csv', '.fasta', '.fa', '.bed'], suffix = '', split_characters = ['.', '_', '-', ',']):
+    nameset1 = os.path.split(name1)[1]
+    for rep in replace_suffixes:
+        nameset1 = nameset1.replace(rep,suffix)
+    for s in split_characters:   
+        nameset1 = nameset1.replace(s, "_")
+    nameset1 = nameset1.split('_')
+    
+    
+    nameset2 = os.path.split(name2)[1]
+    for rep in replace_suffixes:
+        nameset2 = nameset2.replace(rep,suffix)
+    name2 = nameset2
+    for s in split_characters:
+        nameset2.replace(s, "_")
+    nameset2 = nameset2.split('_')
+    
+    diffmask = np.ones(len(nameset1)) == 1
+    for n, na1 in enumerate(nameset1):
+        for m, na2 in enumerate(nameset2):
             if na1 in na2:
                 diffmask[n] = False
-    diff = np.array(name1s)[diffmask]
-    outname = os.path.split(name2)[1].replace('.dat','').replace('.hmot','').replace('.txt','').replace('.npz','').replace('.list','').replace('.csv','').replace('.tsv','').replace('.tab','').replace('.fasta','').replace('.fa','')
+    diff = np.array(nameset1)[diffmask]
+    outname = name2
     if len(diff) > 0:
         outname+=lword+'_'.join(diff)
     return outname
@@ -409,7 +423,23 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
     return np.array(rows), np.array(columns), values
 
 
-def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_columns = False):
+def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_columns = False, **kwargs):
+    
+    '''
+    Reads in one or several files and sorts and aligns rows to each other if 
+    more than one file. Reads .npz and all sorts of txt files
+    
+    Parameters
+    ----------
+    matrixfile : String, list
+        if string, individual files should be separated by 'split'
+    delimiter : str 
+        for txt file
+    align_columns: 
+        if True, columns of files will be aligned as well, and files will not be concatenated
+        
+    '''
+    
     if os.path.isfile(matrixfiles):
         if os.path.splitext(matrixfiles)[1] == '.npz':
             Yin = np.load(matrixfiles, allow_pickle = True)
@@ -417,15 +447,19 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_col
                 Y = Yin['counts']
             elif 'values' in Yin.files:
                 Y = Yin['values']
-            rownames = Yin['names'] 
+            rownames = Yin['names']
+            columnnames = Yin['celltypes']
         else:
-            rownames, columnnames, Y = read_matrix_file(matrixfiles, delimiter = delimiter)
-    elif split in matrixfiles:
+            rownames, columnnames, Y = read_matrix_file(matrixfiles, delimiter = delimiter, **kwargs)
+    elif split in matrixfiles or isinstance(matrixfiles,list):
         Y, rownames, columnnames = [], [], []
-        for putfile in matrixfiles.split(split):
+        if not isinstance(matrixfiles, list):
+            matrixfiles = matrixfiles.split(split) 
+        for putfile in matrixfiles:
             if os.path.splitext(putfile)[1] == '.npz':
                 Yin = np.load(putfile, allow_pickle = True)
                 onames = Yin['names']
+                ocolumns = Yin['celltypes']
                 # need to sort to use isin for removing names taht are not shared
                 sort = np.argsort(onames)
                 if 'counts' in Yin.files:
@@ -434,8 +468,9 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_col
                     yname = 'values'
                 Y.append(Yin[yname][sort])
                 rownames.append(onames[sort])
+                columnames.append()
             else:
-                onames, cnames, Yin = read_matrix_file(matrixfiles, delimiter = delimiter)
+                onames, cnames, Yin = read_matrix_file(putfile, delimiter = delimiter, **kwargs)
                 sort = np.argsort(onames)
                 Y.append(Yin.astype(float)[sort]) 
                 rownames.append(onames[sort])

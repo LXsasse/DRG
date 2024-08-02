@@ -13,6 +13,7 @@ from drg_tools.model_output import add_params_to_outname
 from drg_tools.motif_analysis import pfm2iupac
 from drg_tools.interpret_cnn import takegrad, ism, deeplift, indiv_network_contribution, kernel_assessment
 from drg_tools.cnn_model import cnn
+from drg_tools.model_utils import get_device
 
 
 
@@ -38,12 +39,7 @@ if __name__ == '__main__':
     
     # Whether to combine input files into a single input or keep them split as input for multiple networks
     combinput = True
-    
-    # select output tracks to refine network or only train on a specific track from the beginning
-    select_track = None
-    if '--select_tracks' in sys.argv:
-        select_track = sys.argv[sys.argv.index('--select_tracks')+1]
-        select_track, select_test = read_separated(select_track)
+
         
     X, Y, names, features, experiments = readin(inputfile, outputfile, delimiter = delimiter,return_header = True, assign_region = aregion, mirrorx = mirror, combinex = combinput)
     
@@ -94,6 +90,32 @@ if __name__ == '__main__':
                 Y = [y[mask] for y in Y]
             else:
                 Y = Y[mask]
+    # select output tracks to refine network or only train on a specific track from the beginning
+    select_track = None
+    if '--select_tracks' in sys.argv:
+        selfile = sys.argv[sys.argv.index('--select_tracks')+1]
+        if ',' in selfile:
+            sel = selfile.split(',')
+        elif os.path.isfile(selfile):
+            sel = np.genfromtxt(sys.argv[sys.argv.index('--select_tracks')+1], dtype = str)
+        
+        if isinstance(experiments, list):
+            select_track = []
+            for e, exp in enumerate(experiments):
+                select_track.append(np.isin(exp, sel))
+                experiments[e] = exp[select_track[-1]]
+                if np.sum(select_track[-1]) < 1:
+                    print('Selected list of tracks do not match the names in the data')
+                    sys.exit()
+            if isinstance(Y, list):
+                Y = [y[:, select_track[yi]] for yi, y in enumerate(Y)]
+        else:
+            select_track = np.isin(experiments, sel)
+            Y = Y[:, select_track]
+            if np.sum(select_track) < 1:
+                print('Selected list of tracks do not match the names in the data')
+                sys.exit()
+        
     
     # Don't use with multiple Y
     if '--remove_allzero' in sys.argv and Y is not None:
@@ -386,16 +408,23 @@ if __name__ == '__main__':
             obj.close()
     
     # Only use with one output file
-    if select_track is not None:
-        if select_track[0] in experiments:
-            select_track = [list(experiments).index(st) for st in select_track]
-                
-        model.classifier.Linear.weight = nn.Parameter(model.classifier.Linear.weight[select_track])
-        model.classifier.Linear.bias = nn.Parameter(model.classifier.Linear.bias[select_track])
-        model.n_classes = len(select_track)
-        Y = Y[:,select_track]
-        experiments = experiments[select_track]
-        print(len(select_track), '('+','.join(experiments)+')', 'tracks selected')
+    if select_track is not None and parameterfile:
+        if isinstance(experiments,list):
+            n_classes = []
+            for m, mask in enumerate(select_track):
+                if len(mask) == model['classifier.'+str(m)+'.classifier.Linear.weight'].size(dim = 0):
+                    model['classifier.'+str(m)+'.classifier.Linear.weight'] = nn.Parameter(model['classifier.'+str(m)+'.classifier.Linear.weight'][mask])
+                    model['classifier.'+str(m)+'.classifier.Linear.bias'] = nn.Parameter(model['classifier.'+str(m)+'.classifier.Linear.bias'][mask])
+                    n_classes.append(np.sum(mask))
+                else:
+                    n_classes.append(model['classifier.'+str(m)+'.classifier.Linear.weight'].size(dim = 0))
+            model.n_classes = n_classes
+                    
+        else:
+            model.classifier.Linear.weight = nn.Parameter(model.classifier.Linear.weight[select_track])
+            model.classifier.Linear.bias = nn.Parameter(model.classifier.Linear.bias[select_track])
+            model.n_classes = len(select_track)
+            print(len(select_track), '('+','.join(experiments)+')', 'tracks selected')
         
     # pre-loaded pwms are loaded into the model as convolutional weights
     if pwmusage == 'initialize':
