@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn as nn
 import torch
 
-from drg_tools.io_utils import readin, check, numbertype, isfloat, create_outname, write_meme_file
+from drg_tools.io_utils import readin, check, numbertype, isfloat, create_outname, write_meme_file, separate_sys
 from drg_tools.model_training import create_sets
 from drg_tools.data_processing import manipulate_input
 from drg_tools.model_output import print_averages, save_performance
@@ -13,7 +13,7 @@ from drg_tools.model_output import add_params_to_outname
 from drg_tools.motif_analysis import pfm2iupac
 from drg_tools.interpret_cnn import takegrad, ism, deeplift, indiv_network_contribution, kernel_assessment
 from drg_tools.cnn_model import cnn
-from drg_tools.model_utils import get_device
+from drg_tools.model_utils import get_device, load_parameters
 
 
 
@@ -98,25 +98,30 @@ if __name__ == '__main__':
             sel = selfile.split(',')
         elif os.path.isfile(selfile):
             sel = np.genfromtxt(sys.argv[sys.argv.index('--select_tracks')+1], dtype = str)
-        
         if isinstance(experiments, list):
             select_track = []
             for e, exp in enumerate(experiments):
                 select_track.append(np.isin(exp, sel))
-                experiments[e] = exp[select_track[-1]]
                 if np.sum(select_track[-1]) < 1:
                     print('Selected list of tracks do not match the names in the data')
                     sys.exit()
-            if isinstance(Y, list):
-                Y = [y[:, select_track[yi]] for yi, y in enumerate(Y)]
         else:
             select_track = np.isin(experiments, sel)
-            Y = Y[:, select_track]
             if np.sum(select_track) < 1:
                 print('Selected list of tracks do not match the names in the data')
                 sys.exit()
         
-    
+        if not '--load_parameters' in sys.argv:
+            if isinstance(experiments, list):
+                for e, exp in enumerate(experiments):
+                    experiments[e] = exp[select_track[e]]
+                if isinstance(Y, list):
+                    Y = [y[:, select_track[yi]] for yi, y in enumerate(Y)]
+            else:
+                Y = Y[:, select_track]
+                experiments = experiments[select_track]
+                
+        
     # Don't use with multiple Y
     if '--remove_allzero' in sys.argv and Y is not None:
         mask = np.sum(Y==0, axis = 1) != np.shape(Y)[1]
@@ -412,19 +417,28 @@ if __name__ == '__main__':
         if isinstance(experiments,list):
             n_classes = []
             for m, mask in enumerate(select_track):
-                if len(mask) == model['classifier.'+str(m)+'.classifier.Linear.weight'].size(dim = 0):
-                    model['classifier.'+str(m)+'.classifier.Linear.weight'] = nn.Parameter(model['classifier.'+str(m)+'.classifier.Linear.weight'][mask])
-                    model['classifier.'+str(m)+'.classifier.Linear.bias'] = nn.Parameter(model['classifier.'+str(m)+'.classifier.Linear.bias'][mask])
-                    n_classes.append(np.sum(mask))
-                else:
-                    n_classes.append(model['classifier.'+str(m)+'.classifier.Linear.weight'].size(dim = 0))
+                model.classifier[m].classifier.Linear.weight = nn.Parameter(model.classifier[m].classifier.Linear.weight[mask])
+                model.classifier[m].classifier.Linear.bias = nn.Parameter(model.classifier[m].classifier.Linear.bias[mask])
+                n_classes.append(np.sum(mask))
+                
             model.n_classes = n_classes
-                    
+            
         else:
-            model.classifier.Linear.weight = nn.Parameter(model.classifier.Linear.weight[select_track])
-            model.classifier.Linear.bias = nn.Parameter(model.classifier.Linear.bias[select_track])
+            model.classifier.classifier.Linear.weight = nn.Parameter(model.classifier.classifier.Linear.weight[select_track])
+            model.classifier.classifier.Linear.bias = nn.Parameter(model.classifier.classifier.Linear.bias[select_track])
             model.n_classes = len(select_track)
-            print(len(select_track), '('+','.join(experiments)+')', 'tracks selected')
+        
+        if '--load_parameters' in sys.argv:
+            if isinstance(experiments, list):
+                for e, exp in enumerate(experiments):
+                    experiments[e] = exp[select_track[e]]
+                    print('From total', len(select_track[e]), len(experiments[e]), '('+','.join(experiments[e])+')', 'tracks selected', e)
+                if isinstance(Y, list):
+                    Y = [y[:, select_track[yi]] for yi, y in enumerate(Y)]
+            else:
+                Y = Y[:, select_track]
+                experiments = experiments[select_track]
+                print('From total', len(select_track), len(experiments), '('+','.join(experiments)+')', 'tracks selected')
         
     # pre-loaded pwms are loaded into the model as convolutional weights
     if pwmusage == 'initialize':
@@ -513,8 +527,8 @@ if __name__ == '__main__':
 
         # USE: --aurocaverage --auprcaverage --mseaverage --correlationaverage
         print_averages(Y_pred, Y[testset], testclasses, sys.argv)
-        
-        # USE: --save_correlation_perclass --save_auroc_perclass --save_auprc_perclass --save_mse_perclass --save_correlation_pergene '--save_mse_pergene --save_auroc_pergene --save_auprc_pergene --save_topdowncorrelation_perclass
+        # USE: --save_correlation_perclass --save_auroc_perclass --save_auprc_perclass --save_mse_perclass --save_correlation_perpoint '--save_mse_perpoint --save_auroc_perpoint --save_auprc_perpoint --save_topdowncorrelation_perclass
+       
         save_performance(Y_pred, Y[testset], testclasses, experiments, names[testset], outname, sys.argv, compare_random = True, meanclasses = meanclasses)
         
     if '--save_predictions' in sys.argv:
