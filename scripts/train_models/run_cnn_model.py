@@ -4,14 +4,14 @@ import numpy as np
 import torch.nn as nn
 import torch
 
-from drg_tools.io_utils import readin, check, numbertype, isfloat, create_outname, write_meme_file, separate_sys
+from drg_tools.io_utils import readin, check, numbertype, isfloat, create_outname, write_meme_file, separate_sys, inputkwargs_from_string, add_name_from_dict, get_index_from_string
 from drg_tools.model_training import create_sets
 from drg_tools.data_processing import manipulate_input
 from drg_tools.model_output import print_averages, save_performance
 from drg_tools.plotlib import plot_scatter
 from drg_tools.model_output import add_params_to_outname
 from drg_tools.motif_analysis import pfm2iupac
-from drg_tools.interpret_cnn import takegrad, ism, deeplift, indiv_network_contribution, kernel_assessment
+from drg_tools.interpret_cnn import takegrad, ism, deeplift, indiv_network_contribution, kernel_assessment, kernels_to_pwms_from_seqlets,  kernel_to_ppm,extract_kernelweights_from_state_dict, captum_sequence_attributions
 from drg_tools.cnn_model import cnn
 from drg_tools.model_utils import get_device, load_parameters
 
@@ -178,7 +178,7 @@ if __name__ == '__main__':
         fileclass = []
         for e, exps in enumerate(experiments):
             fileclass.append([addclasses[e] for i in range(len(exps))])
-        fileclass = np.concatenate(fileclass)
+        #fileclass = np.concatenate(fileclass)
     
     if '--addname' in sys.argv:
         outname += '_'+sys.argv[sys.argv.index('--addname')+1]
@@ -414,24 +414,32 @@ if __name__ == '__main__':
     
     # Only use with one output file
     if select_track is not None and parameterfile:
+        
         if isinstance(experiments,list):
             n_classes = []
             for m, mask in enumerate(select_track):
-                model.classifier[m].classifier.Linear.weight = nn.Parameter(model.classifier[m].classifier.Linear.weight[mask])
-                model.classifier[m].classifier.Linear.bias = nn.Parameter(model.classifier[m].classifier.Linear.bias[mask])
-                n_classes.append(np.sum(mask))
+                # if loaded model with '--cnn' has already reduced tracks, don't perform reduction
+                if np.sum(mask) != model.classifier[m].classifier.Linear.weight.size(0):
+                    model.classifier[m].classifier.Linear.weight = nn.Parameter(model.classifier[m].classifier.Linear.weight[mask])
+                    model.classifier[m].classifier.Linear.bias = nn.Parameter(model.classifier[m].classifier.Linear.bias[mask])
+                    n_classes.append(np.sum(mask))
+                else:
+                    n_classes.append(np.sum(mask))
                 
             model.n_classes = n_classes
             
         else:
-            model.classifier.classifier.Linear.weight = nn.Parameter(model.classifier.classifier.Linear.weight[select_track])
-            model.classifier.classifier.Linear.bias = nn.Parameter(model.classifier.classifier.Linear.bias[select_track])
-            model.n_classes = len(select_track)
+            if np.sum(select_track) != model.classifier.classifier.Linear.weight.size(0):
+                model.classifier.classifier.Linear.weight = nn.Parameter(model.classifier.classifier.Linear.weight[select_track])
+                model.classifier.classifier.Linear.bias = nn.Parameter(model.classifier.classifier.Linear.bias[select_track])
+                model.n_classes = len(select_track)
         
         if '--load_parameters' in sys.argv:
             if isinstance(experiments, list):
                 for e, exp in enumerate(experiments):
                     experiments[e] = exp[select_track[e]]
+                    if fileclass is not None:
+                        fileclass[e] = np.array(fileclass[e])[select_track[e]]
                     print('From total', len(select_track[e]), len(experiments[e]), '('+','.join(experiments[e])+')', 'tracks selected', e)
                 if isinstance(Y, list):
                     Y = [y[:, select_track[yi]] for yi, y in enumerate(Y)]
@@ -500,6 +508,7 @@ if __name__ == '__main__':
             testclasses = np.zeros(len(Y[0]), dtype = np.int8).astype(str)
         
         if fileclass is not None:
+            fileclass = np.concatenate(fileclass)
             testclasses = testclasses.astype('<U20')
             for tclass in np.unique(testclasses):
                 mask = np.where(testclasses == tclass)[0]
@@ -530,196 +539,96 @@ if __name__ == '__main__':
         # USE: --save_correlation_perclass --save_auroc_perclass --save_auprc_perclass --save_mse_perclass --save_correlation_perpoint '--save_mse_perpoint --save_auroc_perpoint --save_auprc_perpoint --save_topdowncorrelation_perclass
        
         save_performance(Y_pred, Y[testset], testclasses, experiments, names[testset], outname, sys.argv, compare_random = True, meanclasses = meanclasses)
-        
-    if '--save_predictions' in sys.argv:
-        print('SAVED', outname+'_pred.npz')
-        #np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
-        np.savez_compressed(outname+'_pred.npz', names = names[testset], values = Y_pred, columns = experiments)
     
-    topattributions = None
-    if '--topattributions' in sys.argv:
-        topattributions = int(sys.argv[sys.argv.index('--topattributions')+1])
-    
-    if '--ism' in sys.argv:
-        ismtrack = sys.argv[sys.argv.index('--ism')+1]
-        if ',' in ismtrack:
-            itrack = np.array(ismtrack.split(','), dtype = int)
-        elif ismtrack == 'all' or ismtrack == 'complete':
-            itrack = np.arange(len(Y_pred[0]), dtype = int)
-        elif 'to' in ismtrack:
-            itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
-        else:
-            itrack = [int(ismtrack)]
-        ismarray = ism(X[testset], model, itrack)
-        if '--gradname' in sys.argv:
-            ismtrack = sys.argv[sys.argv.index('--gradname')+1]
-        print('Saved ism with', np.shape(ismarray))
-        if experiments is not None:
-            itrack = experiments[itrack]
-        np.savez_compressed(outname + '_ism'+ismtrack.replace(',', '-') + '.npz', names = names[testset], values = ismarray, experiments = itrack)
-    
-    if '--grad' in sys.argv:
-        gradtrack = sys.argv[sys.argv.index('--grad')+1]
-        if ',' in gradtrack:
-            gradtracksplit = gradtrack.split(',')
-            itrack = []
-            for g,gt in enumerate(gradtracksplit):
-                gt = numbertype(gt)
-                if not isinstance(gt, int):
-                    gt = list(experiments).index(gt)
-                itrack.append(gt)
-            itrack = np.array(itrack)
-            gradtrack = ','.join(itrack.astype(str))
-        elif gradtrack == 'all' or gradtrack == 'complete':
-            itrack = np.arange(len(Y_pred[0]), dtype = int)
-        elif 'to' in gradtrack:
-            itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
-        else:
-            itrack = [int(gradtrack)]
-        if '--gradname' in sys.argv:
-            gradtrack = sys.argv[sys.argv.index('--gradname')+1]
-        gradarray = takegrad(X[testset], model, itrack, top = topattributions)
-        print('Saved grad with', np.shape(gradarray))
-        if experiments is not None:
-            itrack = experiments[itrack]
-        np.savez_compressed(outname + '_grad'+gradtrack.replace(',', '_') + '.npz', names = names[testset], values = gradarray, experiments = itrack)
-    
-    # implement also integrated gradients and others
-    # Does not work yet, potentially because it dislikes some programming choices. 
-    if '--deeplift' in sys.argv:
-        gradtrack = sys.argv[sys.argv.index('--deeplift')+1]
-        deepshap = False
-        add = '_deeplift'
-        if len(sys.argv) > sys.argv.index('--deeplift')+2:
-            if sys.argv[sys.argv.index('--deeplift')+2] in ['DeepShap', 'deepshap', 'Deepshap', 'DEEPSHAP']:
-                deepshap = True
-                add = '_deepshap'
-        if ',' in gradtrack:
-            gradtracksplit = gradtrack.split(',')
-            itrack = []
-            for g,gt in enumerate(gradtracksplit):
-                gt = numbertype(gt)
-                if not isinstance(gt, int):
-                    gt = list(experiments).index(gt)
-                itrack.append(gt)
-            itrack = np.array(itrack)
-            gradtrack = ','.join(itrack.astype(str))
-        elif gradtrack == 'all' or gradtrack == 'complete':
-            itrack = np.arange(len(Y_pred[0]), dtype = int)
-        elif 'to' in gradtrack:
-            itrack = np.arange(int(gradtrack.split('to')[0]), int(gradtrack.split('to')[1])+1, dtype = int)
-        else:
-            itrack = [int(gradtrack)]
-        if '--gradname' in sys.argv:
-            gradtrack = sys.argv[sys.argv.index('--gradname')+1]
-        gradarray = deeplift(X[testset], model, itrack)
-        print('Saved deeplift with', np.shape(gradarray), deepshap)
-        if experiments is not None:
-            itrack = experiments[itrack]
-        np.savez_compressed(outname + add+gradtrack.replace(',', '-') + '.npz', names = names[testset], values = gradarray, experiments = itrack)
-    
-    if '--ismgrad' in sys.argv:
-        todo=1
-        # compute ISMs and take grad for every variant
-        # then basically approximate ism of ism with grad after ism.
-        # Either save the lxl x 4x4 tensor, or summarize to lxl x 4x3x2, or to lxl x 1, or only keep significant interactions between positions (define significant based on fraction of linear effects)
-        # come up with new way to visualize, f.e. positive and negative effect arches between locations. 
-        
-    
-   # Generate PPMs for kernels
-    # Generate PWMs from activation of sequences
-    # Generate global importance for every output track
-    # Generate mean direction of effect from kernel
-    # Generate global importance of kernel for each gene and testclasses
-    if '--convertedkernel_ppms' in sys.argv:
-        # stppm determines the start index of the ppms that should be looked at and Nppm determines the number of ppms for which the operations is performed. only compute the correlation for the pwms from stppm up to stppm + Nppm
-        
-        kerkwargs = {}
-        addppmname = ''
-        if len(sys.argv) > sys.argv.index('--convertedkernel_ppms')+2:
-            # define stppm : first kernel to be collected, 
-            # Nppm : number of kernels to be selected, 
-            # kactivation_cut = 1.64 : cutoff for kernelactivations to generate pwms from sequences,
-            # kactivation_selection = True : if kernel activation should be transformed by z-score before cutoff determines selected set  
-            # activate_kernel = False # if kernel activation are tranformed before sequences are selected based on activations
-            if '=' in sys.argv[sys.argv.index('--convertedkernel_ppms')+1]:
-                if '+' in sys.argv[sys.argv.index('--convertedkernel_ppms')+1]:
-                    adjpar = sys.argv[sys.argv.index('--convertedkernel_ppms')+1].split('+')
-                else:
-                    adjpar = [sys.argv[sys.argv.index('--convertedkernel_ppms')+1]]
-                for p in adjpar:
-                    p = p.split('=',1)
-                    kerkwargs[p[0]] = check(p[1])
-                    if '_' in str(p[0]):
-                        appmname = str(p[0]).split('_')
-                        apname = ''
-                        for ap in appmname:
-                            apname += ap[0]
-                    else:
-                        apname = str(p[0])[:2]
-                    addppmname += apname+str(p[1][:3])
-        
-        onlyppms = False
-        #if true only pwms and ppms will be generated, no activation matrices that take a long time to compute
-        if '--onlyppms' in sys.argv:
-            onlyppms = True
+        # Generate PWMs from activation of sequences
+        # Generate global importance for every output track
+        # Generate mean direction of effect from kernel
+        # Generate global importance of kernel for each gene and testclasses
+        if '--kernel_analysis' in sys.argv:
+            # stppm determines the start index of the ppms that should be looked at and Nppm determines the number of ppms for which the operations is performed. only compute the correlation for the pwms from stppm up to stppm + Nppm
             
-        genewise = False
-        #this generates a large npz file that contains the kernel importance for every data point for every data type
-        if '--genewise_kernel_impact' in sys.argv:
-            genewise = True
+            kerkwargs = {}
+            addppmname = ''
+            if len(sys.argv) > sys.argv.index('--kernel_analysis')+1:
+                # define stppm : first kernel to be collected, 
+                # Nppm : number of kernels to be selected, 
+                # nullify : mean, median, or zero
+                # kernel_layer_name: name to detect kernel layer in state_dict
+                # creates dict from '=' seperated item in string, items are separated by '+'
+                kerkwargs = inputkwargs_from_string(sys.argv[sys.argv.index('--kernel_analysis')+1], definer='=', separater = '+')
+                addppmname = add_name_from_dict(kerkwargs, cutkey = 2, cutitem = 3, keysep = '_')
+                
+            ppms, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, **kerkwargs)
             
-        ppms, pwms, weights, biases, iupacmotifs, motifnames, importance, mseimportance, effect, abseffect, geneimportance, genetraincorr = kernel_assessment(model, X, Y, testclasses = testclasses, genewise = genewise, onlyppms = onlyppms, **kerkwargs)
-        
-        write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms'+addppmname+'.meme')
-        write_meme_file(pwms, motifnames, 'ACGT', outname+'_kernel_pwms'+addppmname+'.meme')
-        write_meme_file(weights, motifnames, 'ACGT', outname+'_kernelweights'+addppmname+'.meme', biases = biases)
-        
-        if not onlyppms:
-            importance = np.array(importance)
-            mseimportance = np.array(mseimportance)
-            effect = np.array(effect)
-            abseffect = np.array(abseffect)
+            # Generate PPMs for kernels
+            min_nonrand_freq = 0.3
+            iupacmotifs = pfm2iupac(ppms, bk_freq = min_nonrand_freq)
             
+            write_meme_file(ppms, motifnames, 'ACGT', outname+'_kernel_ppms.meme')
+            
+            print(np.shape(motifnames), np.shape(iupacmotifs), np.shape(importance))
             np.savetxt(outname+'_kernattrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), importance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments)) # change in correlation for each class
             np.savetxt(outname+'_kernmsetrack'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), mseimportance], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments)) # change in mse for each class
             np.savetxt(outname+'_kernimpact'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), effect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments)) # weighted effect by the change in mse for each gene
             np.savetxt(outname+'_kerneffct'+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), abseffect], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(experiments)) # directly computed effect for each cell type
             
-            if '--genewise_kernel_impact' in sys.argv:
-                # summarize the correlation change of all genes that are predicted better than corrcut
-                corrcut = 1.-float(sys.argv[sys.argv.index('--genewise_kernel_impact')+1])
-                geneimportance = np.array(geneimportance)
-                uclasses, nclasses = np.unique(testclasses, return_counts = True)
-                # save all the impacts of all kernels on all genes in all testclasses
-                np.savez_compressed(outname+'_kernatgene'+addppmname+'.npz', motifnames = motifnames, importance = geneimportance, base_correlation=genetraincorr, classes = uclasses, nclasses=nclasses, names = names)
-                # shape(geneimportance) = (testclasses, kernels, genes)
-                meangeneimp = []
-                for t, testclass in enumerate(np.unique(testclasses)):
-                    consider = np.where(testclasses == testclass)[0]
-                    if len(consider) > 1:
-                        meangeneimp.append(np.mean(geneimportance[t][:,genetraincorr[t] <= corrcut], axis = 1))
-                meangeneimp = np.around(np.array(meangeneimp).T,4)
-                np.savetxt(outname+'_kernattmeantestclass'+str(corrcut)+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), meangeneimp], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(np.unique(testclasses)))
-        
+            # summarize the correlation change of all genes that are predicted better than corrcut
+            corrcut = 0.3 # minimum prediction correlation of data points to 
+            # be considered
+            if 'corrcut' in kerkwargs:
+                corrcut = kerkwargs['corrcut']
+            # correlation is returned as distance 1-R
+            ccut = 1.-corrcut
             
-            
-
-
-    # plots scatter plot for each output class
-    if '--plot_correlation_perclass' in sys.argv:
-        plot_scatter(Y[testset], Y_pred, xlabel = 'Measured', ylabel = 'Predicted', titles = experiments, include_lr = False, outname = outname + '_class_scatter.jpg')
+            uclasses, nclasses = np.unique(testclasses, return_counts = True)
+            # shape(geneimportance) = (testclasses, kernels, genes)
+            meangeneimp = []
+            for t, testclass in enumerate(np.unique(testclasses)):
+                consider = np.where(testclasses == testclass)[0]
+                if len(consider) > 1:
+                    meangeneimp.append(np.mean(geneimportance[testclass][:,genetraincorr[testclass] <= ccut], axis = 1))
+            meangeneimp = np.around(np.array(meangeneimp).T,6)
+            # this is a measure on how important the kernel is for differences
+            # tracks within a group, for example different B-cells
+            np.savetxt(outname+'_kernattmeantestclass'+str(corrcut)+addppmname+'.dat', np.concatenate([motifnames.reshape(-1,1), iupacmotifs.reshape(-1,1), meangeneimp], axis = 1).astype(str), fmt = '%s', header = 'Kernel IUPAC '+' '.join(np.unique(testclasses)))
+            # save all the impacts of all kernels on all genes in all testclasses
+            if '--save_pointwise_kernel_correlation_importance' in sys.argv:
+                np.savez_compressed(outname+'_kernattperpnt'+addppmname+'.npz', motifnames = motifnames, importance = geneimportance, base_correlation=genetraincorr, classes = uclasses, nclasses=nclasses, names = names)
+    
+    
+    if '--save_predictions' in sys.argv:
+        print('SAVED', outname+'_pred.npz')
+        #np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
+        np.savez_compressed(outname+'_pred.npz', names = names[testset], values = Y_pred, columns = experiments)
+    
+    
+    if '--save_kernel_filters' in sys.argv:
+        weights, biases, motifnames = extract_kernelweights_from_state_dict(model.state_dict(), kernel_layer_name = 'convolutions.conv1d')
+        write_meme_file(weights, motifnames, 'ACGT', outname+'_kernelweights.meme', biases = biases)
+    
+    if '--sequence_attributions' in sys.argv:
+        attribution_type = sys.argv[sys.argv.index('--sequence_attributions')+1]
+        selected_tracks = sys.argv[sys.argv.index('--sequence_attributions')+2]
+        track_indeces = get_index_from_string(selected_tracks, experiments, delimiter = ',')
+    
+        topattributions = None
+        if '--topattributions' in sys.argv:
+            topattributions = int(sys.argv[sys.argv.index('--topattributions')+1])
+        if '--seqattribution_name' in sys.argv:
+            selected_tracks = sys.argv[sys.argv.index('--gradname')+1]
         
-    # plots scatter plot fo n_genes that within the n_genes quantile
-    if '--plot_correlation_pergene' in sys.argv:
-        n_genes = int(sys.argv['--plot_correlation_pergene'])
-        for tclass in np.unique(testclasses):
-            correlation_genes = correlation(Ytest[np.random.permutation(len(Ytest))][:,consider], Y_pred[:,consider], axis = 1)
-            sort = np.argsort(correlation_genes)
-            posi = np.linspace(0,len(correlation_genes), n_genes).astype(int)
-            i = sort[posi] 
-            plot_scatter(Y[test][i].T, Ypred[i].T, xlabel = 'Measured', ylabel = 'Predicted', titles = names[testset][i], outname = outname + '_gene_scatter.jpg')
-         
+        if attribution_type == 'ism':
+            attarray = ism(X[testset], model, track_indeces)
+        elif attribution_type == 'grad':
+            attarray = takegrad(X[testset], model, track_indeces, top = topattributions)
+        elif attribution_type == 'deepshap': 
+            attarray = deeplift(X[testset], model, track_indeces, top = topattributions)
+        else:
+            attarray = captum_sequence_attributions(X[testset], model, track_indeces, attribution_method = attribution_type)
+        if experiments is not None:
+            track_indeces = experiments[track_indeces]
+        np.savez_compressed(outname + '_'+attribution_type+selected_tracks.replace(',', '-') + '.npz', names = names[testset], values = attarray, experiments = track_indeces)
+    
 
     
     

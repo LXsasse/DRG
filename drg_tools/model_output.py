@@ -62,19 +62,21 @@ def print_averages(Y_pred, Ytest, testclasses, sysargv):
 
             
 def shuffle_along_axis(array, axis = 0):
+    '''
+    Shuffle elements in a multi-D array along the given axis
+    '''
     if axis != 0:
+        # if axis is negative make it positive, otherwise keep
         axis = int(axis < 0)*len(np.shape(array))+axis
+        # number of all axes in array
         axes = [i for i in range(len(np.shape(array)))]
         del axes[axis]
+        # rearrange axis so that given axis is first
         axes = [axis] + axes
         array = np.transpose(array, axes = axes)
     rng = np.random.default_rng()
     shuf = np.arange(len(array))
-    while True:
-        rng.shuffle(shuf)
-        if not np.array_equal(shuf, np.arange(len(array))):
-            print('Shuffling of array went wrong')
-            break
+    rng.shuffle(shuf)
     array = array[shuf]
     if axis != 0:
         axes = np.argsort(axes)

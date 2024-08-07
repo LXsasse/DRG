@@ -43,6 +43,39 @@ def readinlocation(regfile):
     return np.array(genes), sequences, np.array(possible_regions)
 
 
+def inputkwargs_from_string(string, definer='=', separater = '+'):
+    '''
+    Takes long string as input and seperates it at "separater"
+    Returns dictionary with keys from before definer and values after definer
+    '''
+    kwargs = {}
+    if definer in string:
+        if separater in string:
+            adjpar = string.split(separater)
+        else:
+            adjpar = [string]
+        for p in adjpar:
+            p = p.split(definer,1)
+            kwargs[p[0]] = check(p[1])
+    return kwargs
+
+def add_name_from_dict(dictionary, cutkey = 2, cutitem = 3, keysep = None):
+    addname = ''
+    for key in dictionary:
+        if keysep is not None:
+            if keysep in str(key):
+                keyd = str(key).split('_')
+                apname = ''
+                for ap in keyd:
+                    apname += ap[0]
+            else:
+                apname = str(key)[:cutkey]
+        else:
+            apname = str(key)[:cutkey]
+        
+        addname += apname+str(dictionary[key])[:cutitem]
+    return addname
+    
 
 
 def string_features(string1, string2, placeholder = ['_', '-', '.'], case = False, k = 4, mink=2, ossplit = True, emphasizeto =2, emphasizelast = 2):
@@ -186,6 +219,31 @@ def find_elements_with_substring_inarray(tocheck, inset):
             if tc in ins or ins in tc:
                 keep[t] = 1
     return keep == 1
+
+def get_index_from_string(string, alist, delimiter = ','):
+    '''
+    Give a string of names separated by ',' or other arguments to get indexes
+    '''
+    if delimiter in string:
+        split = string.split(delimiter)
+        itrack = []
+        for g,gt in enumerate(split):
+            gt = numbertype(gt)
+            if not isinstance(gt, int):
+                gt = list(alist).index(gt)
+            itrack.append(gt)
+        itrack = np.array(itrack)
+    elif string == 'all' or string == 'complete':
+        itrack = np.arange(len(alist), dtype = int)
+    elif '-to-' in string:
+        itrack = np.arange(int(string.split('-to-')[0]), int(string.split('-to-')[1])+1, dtype = int)
+    elif isint(string):
+        itrack = [int(string)]
+    else:
+        if string in alist:
+            itrack = [list(alist).index(string)]
+    return itrack
+    
 
 def sortafter(given, target):
     sort = []

@@ -16,7 +16,7 @@ from drg_tools.io_utilis import read_motifs, readinfasta, write_meme_file
 from drg_tools.io_utils import readin_sequence_return_onehot as readinseqs
 from drg_tools.sequence_utils import split_seqs, generate_random_onehot
 from drg_tools.interpret_cnn import kernels_to_pwms_from_seqlets as kernels_to_pwms
-from .motif_analysis import pfm2iupac
+
 
 if __name__ == '__main__':
 

@@ -320,7 +320,7 @@ def pfm2iupac(pwms, bk_freq = None):
     Parameters
     ----------
     pwms: 
-        list of pfms
+        list of pfms of shape=(l,4) or (4,l), representing A,C,G,T in this order
     bk_freq:
         cut_off when to consider a chance for base to appear position
     '''
@@ -333,10 +333,18 @@ def pfm2iupac(pwms, bk_freq = None):
     if bk_freq is None:
         bk_freq = (1./float(n_nts))*np.ones(n_nts)
     else:
-
         bk_freq = bk_freq*np.ones(n_nts)
+    # determine the axis with the channels
+    shapes = []
+    for pwm in pwms:
+        shapes.append(np.shape(pwm))
+    maxshape = np.amax(shapes, axis = 0)
+    axis = np.where(maxshape == 4)[0][0]
+   
     motifs = []
     for pwm in pwms:
+        if axis == 0:
+            pwm = pwm.T
         m = ''
         for p in pwm:
             score = 0 # score to look up ipac in 'res'
@@ -345,7 +353,7 @@ def pfm2iupac(pwms, bk_freq = None):
                     score += list(hash.values())[i]
             m += res[score]
         motifs.append(m)
-    return motifs
+    return np.array(motifs)
           
 
 
