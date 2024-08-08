@@ -94,7 +94,7 @@ if __name__ == '__main__':
     if '--logdata' in sys.argv:
         logdata = True
 
-    fig = plotHist(data, y = altdata, bins = bins, xlabel = xlabel, addcumulative = addcumul, yaxis = ploty, logx = logx, logy = logy, logdata = logdata)
+    fig = plotHist(data, y = altdata, bins = bins, xlabel = xlabel, addcumulative = addcumul, add_yaxis = ploty, logx = logx, logy = logy, logdata = logdata)
 
 
 

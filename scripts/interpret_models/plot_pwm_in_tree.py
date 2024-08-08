@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 from drg_tools.plotlib import plot_heatmap
 from drg_tools.motif_analysis import align_compute_similarity_motifs, reverse, combine_pwms
-from drg_tools.io_utils import read_pwm, read_meme, write_pwm, check
+from drg_tools.io_utils import readin_motif_files, write_pwm, check
 
 from scipy.spatial.distance import cdist
 from sklearn.cluster import AgglomerativeClustering
@@ -24,11 +24,8 @@ if __name__ == '__main__':
     if '--nameline' in sys.argv:
         nameline = sys.argv[sys.argv.index('--nameline')+1]
         
-    if infmt == '.meme':
-        pwms,pwmnames = read_meme(pwmfile)
-    else:
-        pwms,pwmnames = read_pwm(pwmfile, nameline = nameline)
-
+    pwms,pwmnames,nts = readin_motif_files(pwmfile)
+    
     min_sim = 4
     
     if '--usepwmid' in sys.argv:

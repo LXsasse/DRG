@@ -28,7 +28,7 @@ if __name__ == '__main__':
     if '--tfassignment_file' in sys.argv:
         
         meme = sys.argv[sys.argv.index('--tfassignment_file')+1]
-        pwms, pwmnames = read_meme(meme)
+        pwms, pwmnames, nts = read_meme(meme)
         pwmnames = np.array(pwmnames, dtype = utnames.dtype)
         hastf=np.isin(pwmnames, utnames)
         np.savetxt(os.path.splitext(tomtom)[0]+'.assign.txt', np.array([np.arange(len(pwmnames)), hastf.astype(int)]).T.astype(str), fmt = '%s')

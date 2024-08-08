@@ -12,7 +12,7 @@ from drg_tools.modules import func_dict_single as func_dict
 
 import time
 
-from drg_tools.io_utilis import read_motifs, readinfasta, write_meme_file
+from drg_tools.io_utils import read_motifs, readinfasta, write_meme_file
 from drg_tools.io_utils import readin_sequence_return_onehot as readinseqs
 from drg_tools.sequence_utils import split_seqs, generate_random_onehot
 from drg_tools.interpret_cnn import kernels_to_pwms_from_seqlets as kernels_to_pwms
@@ -37,7 +37,7 @@ if __name__ == '__main__':
         # one-hot encoded or fasta file
         outname += '_seqset'
         seqfile = sys.argv[sys.argv.index('--sequences')+1]
-        seqfullseqs = readinseqs(seqfile)
+        seqfullseqs, seqnames = readinseqs(seqfile)
         if '--nrandom' in sys.argv:
             nseq = int(sys.argv[sys.argv.index('--nrandom')+1])
             outname += str('{:.1f}'.format(nseq/1000)+'K')

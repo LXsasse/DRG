@@ -5,11 +5,8 @@ from scipy.stats import pearsonr
 from sklearn.cluster import AgglomerativeClustering
 
 from drg_tools.motif_analysis import reverse, align_compute_similarity_motifs
-from drg_tools.io_utils import read_pwm, read_meme, write_pwm, write_meme
+from drg_tools.io_utils import read_pwm, read_meme, write_pwm, write_meme_file
 from drg_tools.motif_analysis import pfm2iupac, combine_pwms
-from drg_tools.plotlib import plot_pwm
-
-
 
 
 if __name__ == '__main__':
@@ -29,10 +26,7 @@ if __name__ == '__main__':
         pwm_set = pf['pwms']
         revcomp_matrix = pf['revcomp_matrix']
         outname = outname.split('_stats')[0]
-        #print(outname)
-        #print(correlation[0])
-        #print(logs[0])
-        #sys.exit()
+       
     else:
         nameline = 'TF Name'
         if '--nameline' in sys.argv:
@@ -90,6 +84,8 @@ if __name__ == '__main__':
     linkage = sys.argv[2]
     if os.path.isfile(linkage):
         outname = os.path.splitext(linkage)[0]
+        if '--outname' in sys.argv:
+            outname = sys.argv[sys.argv.index('--outname')+1]
         clusters = np.genfromtxt(linkage, dtype = str)
         if not np.array_equal(pwmnames, clusters[:,0]):
             sort = []
@@ -127,7 +123,7 @@ if __name__ == '__main__':
     #clusterpwms_sing = combine_pwms_single(pwm_set, clusters, logs, ofs)
         
     if '--clusternames' in sys.argv:
-        clusternames = ['Cluster_'+str(i) for i in np.unique(clusters)]
+        clusternames = [str(i) for i in np.unique(clusters)]
     else:
         clusternames = [';'.join(np.array(pwmnames)[clusters == i]) for i in np.unique(clusters)]
      
@@ -145,16 +141,6 @@ if __name__ == '__main__':
             print(nh, yhist[n])
 
 
-
-    #for c, clname in enumerate(clusternames):
-        #print(clname, iupac[c])
-        #mask = np.where(clusters == c)[0]
-        #print(revcomp_matrix[mask][:,mask])
-        #fig = plot_pwm(clusterpwms[c], log = True, axes = True)
-        #fig2 = plot_pwm(clusterpwms_sing[c], log = True, axes = True)
-        #for m in mask:
-            #nf = plot_pwm(pwm_set[m], log = True, axes = True)
-        #plt.show()
     
     
     

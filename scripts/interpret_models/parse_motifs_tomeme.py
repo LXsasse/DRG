@@ -5,22 +5,16 @@ then write output in meme file.
 
 import numpy as np
 import sys, os
-from drg_tools.io_utils import numbertype, read_motif_files, write_meme_file
+from drg_tools.io_utils import numbertype, readin_motif_files, write_meme_file
     
     
 if __name__ == '__main__':
     
     pwmfile = sys.argv[1]
-    pwms, names, nts = read_motif_files(pwmfile)
+    pwms, names, nts = readin_motif_files(pwmfile)
     outname = os.path.splitext(pwmfile)[0]
     
-    if '--filtersize' in sys.argv:
-        sizefile = np.genfromtxt(sys.argv[sys.argv.index('--filtersize')+1], dtype = str)
-        minsize = int(sys.argv[sys.argv.index('--filtersize')+2])
-        cl, ncl = np.unique(sizefile[:,1].astype(int), return_counts = True)
-        mask = np.where(ncl >= minsize)[0]
-        outname += 'ms'+str(minsize)
-        pwms, names = [pwms[i] for i in mask], [names[i] for i in mask]
+    pwms = [pwm.T for pwm in pwms]
     
     if '--set' in sys.argv:
         setfile = sys.argv[sys.argv.index('--set')+1]
@@ -65,7 +59,7 @@ if __name__ == '__main__':
     else:
         clusters = names
     outname += '.meme'
-    write_meme_file(pwms, clusters, ''.join(nts), outname)
+    write_meme_file(pwms, clusters, ''.join(nts), outname, round = 3)
     
     
     

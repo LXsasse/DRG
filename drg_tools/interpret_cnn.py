@@ -43,13 +43,13 @@ def kernel_to_ppm(kernels, kernel_bias = None, bk_freq = None):
 def kernels_to_pwms_from_seqlets(weights, seqlet_set, maxact, biases = None, activation_func = None, zscore = False, device = 'cpu', batchsize = None):
     if batchsize is not None:
         pwms = []
-        for i in range(0, len(weights), bsize):
+        for i in range(0, len(weights), batchsize):
             if biases is not None:
-                bias = bias[i:i+bsize]
+                bias = biases[i:i+batchsize]
             else:
                 bias = None
             
-            seqactivations = kernels_seqactivations_from_seqlets(weights[i:i+bsize], seqlet_set[i:i+bsize], biases = bias, activation_func=activation_func, device = device)
+            seqactivations = kernels_seqactivations_from_seqlets(weights[i:i+batchsize], seqlet_set, biases = bias, activation_func=activation_func, device = device)
             pwm = pwms_from_seqs(seqlet_set, seqactivations, maxact, z_score = zscore)
         
             pwms.append(pwm)

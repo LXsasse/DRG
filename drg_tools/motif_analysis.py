@@ -128,16 +128,19 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
             print('Computation split into', spaces)
         if one_half:
             results = Parallel(n_jobs=njobs)(delayed(_align_compute_similarity_motifs)
-                                             (ppps[spacesi[i]:spacesi[i+1]], 
+                                             (ppms[spacesi[i]:spacesi[i+1]], 
                                               ppms_ref[spacesj[j]:spacesj[j+1]], 
                                               one_half = (i == j) & one_half, 
                                               fill_logp_self = fill_logp_self, 
                                               min_sim = min_sim, 
                                               infocont = infocont, 
-                                              reverse_complement = [reverse_complement[0][spacesi[i]:spacesi[i+1]], reverse_complement[1][spacesj[j]:spacesj[j+1]]],
-                                              ctrl = (i,j)) 
-                                             for i in range(0, njobs) 
-                                             for j in range(i*int(one_half), njobs*int(one_half)+1)
+                                              reverse_complement = [reverse_complement[0][spacesi[i]:spacesi[i+1]], 
+                                                                    reverse_complement[1][spacesj[j]:spacesj[j+1]]],
+                                              ctrl = (i,j),
+                                              verbose = verbose
+                                              ) 
+                                              for i in range(0, njobs) 
+                                              for j in range(i*int(one_half), (njobs-1)*int(one_half)+1)
                                              )
                                                                                                        
             for res in results:
@@ -359,8 +362,8 @@ def pfm2iupac(pwms, bk_freq = None):
 
 
 
-def combine_pwms(pwms, clusters, similarity, offsets, orientation, maxnorm = True,
-                 remove_low = 0.45, method = 'mean', minlen = 4):
+def combine_pwms(pwms, clusters, similarity, offsets, orientation, norm = 'max',
+                 remove_low = 0.45, minlen = 4):
     
     '''
     Combine set of pwms based on their cluster assignments
@@ -409,21 +412,21 @@ def combine_pwms(pwms, clusters, similarity, offsets, orientation, maxnorm = Tru
                 seed[center + centeroffsets[o]: center +centeroffsets[o] + len(pwm0)] += pwm0.astype(float)
                 seedcount[center + centeroffsets[o]: center +centeroffsets[o] + len(pwm0)] += 1
                 
-            if method == 'mean':
+            if norm == 'mean':
                 seed = seed/seedcount[:,None]
-            elif method == 'sum':
-                seed = seed/np.amax(seedcount)
+
         else:
             seed = pwms[mask[0]]
             seedcount = np.ones(len(seed))
 
-        if maxnorm:
+        if norm == 'max':
             seed = seed/np.amax(seedcount)
-        else:
+        elif norm == 'sum':
             seed = seed/np.sum(np.absolute(seed),axis = 1)[:, None]
         
         if remove_low > 0:
-            edges = np.where(np.sum(np.absolute(seed), axis = 1)>remove_low)[0]
+            sumseed = np.sum(np.absolute(seed), axis = 1)
+            edges = np.where(sumseed/np.amax(sumseed)>remove_low)[0]
             if len(edges) > 0:
                 if edges[-1]-edges[0]>= minlen:
                     seed = seed[edges[0]:edges[-1]+1]

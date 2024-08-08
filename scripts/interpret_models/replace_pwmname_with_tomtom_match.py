@@ -88,7 +88,10 @@ if __name__ == '__main__':
     cut = float(sys.argv[3]) # determine cutoff for q of p-value
     
     pwms = open(sys.argv[4], 'r').readlines() # pwm file that contains the same names as 
-    outname = os.path.splitext(sys.argv[4])[0] + vals + str(cut)
+    outname = os.path.splitext(sys.argv[4])[0]
+    if '--outname' in sys.argv:
+        outname = sys.argv[sys.argv.index('--outname')+1]
+    outname += vals + str(cut)
     
     # mask all values with too high statistics
     mask = stat <= cut

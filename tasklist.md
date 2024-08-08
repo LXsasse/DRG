@@ -5,6 +5,7 @@
 ```[tasklist]
 - [x] Split code between drg_tools and scripts that use these tools
 - [ ] Write short tutorials on how to use modules in drg_tools
+- [ ] Write example .mds on how to use scripts
 ```
 
 ## Model training
@@ -36,10 +37,9 @@ Introduce learnable cell type and data modality vector.
 ## Model interpretation 
 
 ```[tasklist]
-- [ ] Enable DeepLIFT for multiple sequence inputs
-- [ ] DeepLIFT to multiple random seeds
+- [x] Enable DeepLIFT for multiple sequence inputs
+- [x] DeepLIFT to multiple random seeds
 - [ ] Find motifs in attributions with sequence specific cut off from dinuc shuffle
-- [ ] Write module that combines ISM, tism, and deepshap
 - [ ] Write module that can extract sequences from 'sparse'-attribution maps with positions
 ```
 

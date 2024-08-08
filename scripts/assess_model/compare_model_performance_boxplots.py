@@ -18,7 +18,7 @@ from matplotlib import cm
 from scipy.stats import skew, wilcoxon, mannwhitneyu, ranksums
 
 
-from drg_tools.io_utils import check, read_matrix_file, sortafter
+from drg_tools.io_utils import check, readalign_matrix_files, sortafter
 
 
 
@@ -40,16 +40,20 @@ if __name__ == '__main__':
     if '--data_column' in sys.argv:
         valcol = int(sys.argv[sys.argv.index('--data_column')+1])
     
-    reverse = False
+    
+    
+    classname, classcolumn, classvalue = readalign_matrix_files(files, align_rows = ats, concatenate_axis = None)
+    
+    classvalue = [clv[:,valcol] for clv in classvalue]
+    
     ylabel = 'Distance'
     if '--similarity' in sys.argv:
-        reverse = True
+        classvalue = [1.-clv for clv in classvalue]
         ylabel = 'Similarity'
     
     if '--ylabel' in sys.argv:
         ylabel = sys.argv[sys.argv.index('--ylabel')+1]
     
-    classname, classcolumn, classvalue = read_matrix_file(files, reverse = reverse, allthesame = ats, valcol = valcol)
     
     if '--additional_data' in sys.argv:
         nadd = sys.argv[sys.argv.index('--additional_data')+1]

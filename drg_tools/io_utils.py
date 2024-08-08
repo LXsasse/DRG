@@ -288,16 +288,20 @@ def write_tomtom(outname, datanames, pwmnames, passed, pvals, qvals, correlation
         obj.write(pwmnames[i]+'\t'+datanames[j]+'\t'+str(ofs[i,j])+'\t'+str(pvals[i,j])+'\t'+str(correlation[i,j])+'\t'+str(qvals[i,j])+'\t'+str(revcomp_matrix[i,j])+'\n')
     
 
-def readin_motif_files(pwmfile):
+def readin_motif_files(pwmfile, nameline = 'Motif'):
     infmt= os.path.splitext(pwmfile)[1]    
     if infmt == '.meme':
-        pwm_set,pwmnames = read_meme(pwmfile)
+        pwm_set, pwmnames, nts = read_meme(pwmfile)
     elif infmt == '.npz':
         pf = np.load(pwmfile, allow_pickle = True)
-        pwm_set,pwmnames = pf['pwms'] , pf['pwmnames']
+        pwm_set, pwmnames = pf['pwms'] , pf['pwmnames']
+        nts = None
+        if 'nts' in pf:
+            nts = pf['nts']
     else:
-        pwm_set,pwmnames = read_pwm(pwmfile, nameline = nameline)
-    return pwm_set, pwmnames
+        pwm_set,pwmnames,nts = read_pwm(pwmfile, nameline = nameline)
+        # Returns them shape=(L,4)
+    return pwm_set, pwmnames, nts
 
 def readgenomefasta(fasta):
     fasta = gzip.open(fasta, 'rt').readlines()
@@ -481,7 +485,7 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
     return np.array(rows), np.array(columns), values
 
 
-def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_columns = False, **kwargs):
+def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_rows = True, concatenate_axis = 1, align_columns = False, return_unique_names = True, **kwargs):
     
     '''
     Reads in one or several files and sorts and aligns rows to each other if 
@@ -497,8 +501,17 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_col
         if True, columns of files will be aligned as well, and files will not be concatenated
         
     '''
-    
-    if os.path.isfile(matrixfiles):
+    islist = False
+    if isinstance(matrixfiles,list):
+        islist = True
+    elif isisntance(matrixfiles, str):
+        if split in matrixfiles:
+            islist = True
+        elif not os.path.isfile(matrixfiles):
+            print('matrixfiles need to be list of files, file names separated by split, or a single file name')
+            sys.exit()
+        
+    if not islist:
         if os.path.splitext(matrixfiles)[1] == '.npz':
             Yin = np.load(matrixfiles, allow_pickle = True)
             if 'counts' in Yin.files:
@@ -509,7 +522,7 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_col
             columnnames = Yin['celltypes']
         else:
             rownames, columnnames, Y = read_matrix_file(matrixfiles, delimiter = delimiter, **kwargs)
-    elif split in matrixfiles or isinstance(matrixfiles,list):
+    elif islist:
         Y, rownames, columnnames = [], [], []
         if not isinstance(matrixfiles, list):
             matrixfiles = matrixfiles.split(split) 
@@ -526,33 +539,41 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_col
                     yname = 'values'
                 Y.append(Yin[yname][sort])
                 rownames.append(onames[sort])
-                columnames.append()
+                columnnames.append(ocolumns)
             else:
                 onames, cnames, Yin = read_matrix_file(putfile, delimiter = delimiter, **kwargs)
                 sort = np.argsort(onames)
                 Y.append(Yin.astype(float)[sort]) 
                 rownames.append(onames[sort])
                 columnnames.append(cnames)
-        
-        comnames = reduce(np.intersect1d, rownames)
-        for i, yi in enumerate(Y):
-            Y[i] = yi[np.isin(rownames[i], comnames)]
-        
-        if align_columns: 
+       
+        if align_rows:
+            comnames = reduce(np.intersect1d, rownames)
+            for i, yi in enumerate(Y):
+                Y[i] = yi[np.isin(rownames[i], comnames)]
             rownames = comnames
+            
+        if align_columns and not None in columnnames: 
             comcolumnnames = reduce(np.intersect1d, columnnames)
             sorting = [np.argsort(coln)[np.isin(np.sort(coln), comcolumnnames)] for coln in columnnames]
             Y = [y[:, sorting[s]] for s, y in enumerate(Y)]
             columnnames = comcolumnnames
-            u_, sort = np.unique(rownames, return_index = True)
-            rownames, Y = rownames[sort], [y[sort] for y in Y]
-        else:
-            rownames = comnames
+            
+        if concatenate_axis == 0 and align_columns:
+            rownames = np.concatenate(rownames)
+            Y = np.concatenate(Y, axis = 0)
+        
+        if concatenate_axis == 1 and align_rows:
             columnnames = np.concatenate(columnnames)
             Y = np.concatenate(Y, axis = 1)
+        
+        if return_unique_names and align_rows:
             u_, sort = np.unique(rownames, return_index = True)
-            rownames, Y = rownames[sort], Y[sort]
-    
+            if isinstance(Y, list):
+                rownames, Y = rownames[sort], [y[sort] for y in Y]
+            else:
+                rownames, Y = rownames[sort], Y[sort]
+        
     return rownames, columnnames, Y
 
 
@@ -840,7 +861,7 @@ def read_pwm(pwmlist, nameline = 'Motif'):
                 nts = line[1:]
             elif isinstance(numbertype(line[0]), int):
                 pwm.append(line[1:])
-    return pwms, names
+    return pwms, names, nts
 
 def read_meme(pwmlist, nameline = 'MOTIF'):
     names = []
@@ -866,7 +887,7 @@ def read_meme(pwmlist, nameline = 'MOTIF'):
         pwm = np.array(pwm, dtype = float)
         pwms.append(np.array(pwm))
         names.append(name)
-    return pwms, names
+    return pwms, names, nts
 
 def write_pwm(file_path, pwms, names):
     obj = open(file_path, 'w')
@@ -895,7 +916,7 @@ def rescale_pwm(pfms, infcont = False, psam = False, norm = False):
     return pwms
 
     
-def write_meme_file(pwm, pwmname, alphabet, output_file_path, biases = None):
+def write_meme_file(pwm, pwmname, alphabet, output_file_path, round = None, biases = None):
     """[summary]
     write the pwm to a meme file
     Args:
@@ -913,6 +934,8 @@ def write_meme_file(pwm, pwmname, alphabet, output_file_path, biases = None):
 
     for i in range(0, n_filters):
         if np.sum(np.absolute(np.nan_to_num(pwm[i]))) > 0:
+            if round is not None:
+                pwm[i] = np.around(pwm[i],round)
             meme_file.write("\n")
             meme_file.write("MOTIF %s \n" % pwmname[i])
             if biases is not None:

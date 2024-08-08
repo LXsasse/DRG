@@ -24,8 +24,9 @@ if __name__ == '__main__':
             pwms, names = read_meme(fi)
         else:
             pwms, names = read_pwms(fi)
-        
-        pwms = np.array([pwm.T for pwm in pwms])
+        print(len(pwms), np.shape(pwms[0]))
+        print(np.shape(pwms))
+        pwms = [pwm.T for pwm in pwms]
         names = np.array([n+'_'+addons[f] for n in names])
         fnames.append(names)
         fpwms.append(pwms)
