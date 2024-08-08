@@ -1,6 +1,6 @@
 import numpy as np
 import sys,os
-from drg_tools.io_utils import read_pwm, read_meme, write_pwm, write_meme_file
+from drg_tools.io_utils import readin_motif_files, write_pwm, write_meme_file
 
 if __name__ == '__main__':
 
@@ -20,10 +20,7 @@ if __name__ == '__main__':
 
     fnames, fpwms = [], []
     for f, fi in enumerate(files):
-        if os.path.splitext(fi)[-1] == '.meme':
-            pwms, names = read_meme(fi)
-        else:
-            pwms, names = read_pwms(fi)
+        pwms, names, nts = readin_motif_files(fi)
         print(len(pwms), np.shape(pwms[0]))
         print(np.shape(pwms))
         pwms = [pwm.T for pwm in pwms]

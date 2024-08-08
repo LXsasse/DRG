@@ -5,7 +5,7 @@ from scipy.stats import pearsonr
 from sklearn.cluster import AgglomerativeClustering
 
 from drg_tools.motif_analysis import reverse, align_compute_similarity_motifs
-from drg_tools.io_utils import read_pwm, read_meme, write_pwm, write_meme_file
+from drg_tools.io_utils import readin_motif_files, write_pwm, write_meme_file
 from drg_tools.motif_analysis import pfm2iupac, combine_pwms
 
 
@@ -32,13 +32,7 @@ if __name__ == '__main__':
         if '--nameline' in sys.argv:
             nameline = sys.argv[sys.argv.index('--nameline')+1]
         
-        if infmt == '.meme':
-            pwm_set,pwmnames = read_meme(pwmfile)
-        elif infmt == '.npz':
-            pf = np.load(pwmfile, allow_pickle = True)
-            pwm_set,pwmnames = pf['pwms'] , pf['pwmnames']
-        else:
-            pwm_set,pwmnames = read_pwm(pwmfile, nameline = nameline)
+        pwm_set, pwmnames, nts = readin_motif_files(pwmfile)
         
         if '--randomset' in sys.argv:
             np.random.seed(1)

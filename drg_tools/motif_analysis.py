@@ -112,6 +112,7 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
     
     one_half = is_the_same
     
+    
     if njobs == 1:
         correlation, log_pvalues, offsets, revcomp_matrix, _ctrl = _align_compute_similarity_motifs(ppms, ppms_ref, one_half = one_half,                                          fill_logp_self = 1000, min_sim = min_sim, infocont = infocont, reverse_complement=reverse_complement, verbose = verbose)
     else:
@@ -125,7 +126,7 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
                               dtype = int)
     
         if verbose:
-            print('Computation split into', spaces)
+            print('Computation split into', spacesi, spacesj)
         if one_half:
             results = Parallel(n_jobs=njobs)(delayed(_align_compute_similarity_motifs)
                                              (ppms[spacesi[i]:spacesi[i+1]], 
@@ -155,9 +156,9 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
                 else:
                     correlation[spacesj[idx[1]]:spacesj[idx[1]+1], spacesi[idx[0]]:spacesi[idx[0]+1]] = res[0].T
                     log_pvalues[spacesj[idx[1]]:spacesj[idx[1]+1], spacesi[idx[0]]:spacesi[idx[0]+1]] = res[1].T
-                    revcomp_matrix[spaces[idx[1]]:spacesj[idx[1]+1], spacesi[idx[0]]:spacesi[idx[0]+1]] = res[3].T
+                    revcomp_matrix[spacesj[idx[1]]:spacesj[idx[1]+1], spacesi[idx[0]]:spacesi[idx[0]+1]] = res[3].T
                     offsets[spacesi[idx[0]]:spacesi[idx[0]+1], spacesj[idx[1]]:spacesj[idx[1]+1]] = res[2][0]
-                    offset[spacesj[idx[1]]:spacesj[idx[1]+1], spacesi[idx[0]]:spacesi[idx[0]+1]] = res[2][1].T
+                    offsets[spacesj[idx[1]]:spacesj[idx[1]+1], spacesi[idx[0]]:spacesi[idx[0]+1]] = res[2][1].T
                     
     return correlation, log_pvalues, offsets, revcomp_matrix
 
@@ -195,6 +196,14 @@ def _align_compute_similarity_motifs(ppms, ppms_ref, one_half = False,
         one of the sets should be compared with its reverse complement
     ctrl: tuple
         if not None, return this tuple for joblib
+    
+    TODO
+        Replace the individual alignments with torch.conv1d:
+        Normalize values in pwms, so that dot product is correlation
+        Either make all PWMs the same length with padding, or split into
+        groups by size and use the larger one as weights. 
+        Issue: Some parts of the pwms that is used as sequence will not be 
+        considered in this correlation. 
     
     '''
     

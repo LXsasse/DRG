@@ -434,6 +434,16 @@ if __name__ == '__main__':
                 model.classifier.classifier.Linear.bias = nn.Parameter(model.classifier.classifier.Linear.bias[select_track])
                 model.n_classes = len(select_track)
         
+        if model.generate_paramfile:
+            lines = open(model.outname+'_model_params.dat', 'r').readlines()
+            obj = open(model.outname+'_model_params.dat', 'w')
+            for line in enumerate(lines):
+                if line[:len('n_classes')] == 'n_classes':
+                    obj.write('n_classes : '+str(model.n_classes))
+                else:
+                    obj.write(line)
+            obj.close()
+        
         if '--load_parameters' in sys.argv:
             if isinstance(experiments, list):
                 for e, exp in enumerate(experiments):

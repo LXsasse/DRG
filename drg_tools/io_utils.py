@@ -499,7 +499,15 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_row
         for txt file
     align_columns: 
         if True, columns of files will be aligned as well, and files will not be concatenated
-        
+    
+    Returns
+    -------
+    rownames :
+        Single array or list of multiple arrays
+    columnnames : 
+        Single array or list of multiple arrays
+    Y : 
+        Data matrix or data matrices
     '''
     islist = False
     if isinstance(matrixfiles,list):
