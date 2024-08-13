@@ -11,7 +11,7 @@ from matplotlib import cm
 from scipy.stats import gaussian_kde, pearsonr
 from matplotlib.colors import ListedColormap
 
-from drg_tools.io_utils import read_matrix_files, checkint, checknum, 
+from drg_tools.io_utils import read_matrix_file, isint
 
 
 def find_in_list(target, thelist):
@@ -34,37 +34,19 @@ if __name__ == '__main__':
     if '--delimiter2' in sys.argv:
         delimiter2 = sys.argv[sys.argv.index('--delimiter2')+1]
     
-    subtA = False
-    subtB = False
-    if '--similarity' in sys.argv:
-        subtA = subtB = True
-    if '--similarityA' in sys.argv:
-        subtA = True
-    if '--similarityB' in sys.argv:
-        subtB = True
+    names1, header1, vals1 = read_matrix_file(file1, delimiter = delimiter1)
+    names2, header2, vals2 = read_matrix_file(file2, delimiter = delimiter2)
     
-        
-        
-    names1, header1, vals1 = read_matrix_files(file1, subtract = subtA, delimiter = delimiter1)
-    names2, header2, vals2 = read_matrix_files(file2, subtract = subtB, delimiter = delimiter2)
-    print(names1, names2)
-    
-    #print(names1, names2)
-    #print(np.shape(vals1), np.shape(vals2))
-    #print(header1, header2)
-    #sys.exit()
-    # Sorting is further down
-    #sort1 = np.isin(names1,names2)
-    #names1, vals1 = names1[sort1], vals1[sort1]
-    #sort2 = np.isin(names2,names1)
-    #names2, vals2 = names2[sort2], vals2[sort2]
-    
+    sort1 = np.argsort(names1)[np.isin(np.sort(names1), names2)]
+    sort2 = np.argsort(names2)[np.isin(np.sort(names2), names1)]
+    names1, vals1 = names1[sort1], vals1[sort1]
+    names2, vals2 = names2[sort2], vals2[sort2]
     
     scol1, scol2 = -1, -1
     if '--column' in sys.argv:
         scol1 = sys.argv[sys.argv.index('--column')+1]
         scol2 = sys.argv[sys.argv.index('--column')+2]
-        if checkint(scol1):
+        if isint(scol1):
             scol1 = int(scol1)
         elif header1 is not None:
             try:
@@ -72,7 +54,7 @@ if __name__ == '__main__':
             except:
                 print(scol1, 'not a valid column')
                 sys.exit()
-        if checkint(scol2):
+        if isint(scol2):
             scol2 = int(scol2)
         elif header2 is not None:
             try:
@@ -91,24 +73,24 @@ if __name__ == '__main__':
     if '--columns_and_row' in sys.argv:
         scol1 = sys.argv[sys.argv.index('--columns_and_row')+1].split(',')
         scol2 = sys.argv[sys.argv.index('--columns_and_row')+2].split(',')
-        if checkint(scol1[0]):
+        if isint(scol1[0]):
             scol1 = np.array(scol1, dtype = int)
         else:
             scol1 = np.where(np.isin(header1, scol1))[0]
-        if checkint(scol2[0]):
+        if isint(scol2[0]):
             scol2 = np.array(scol2, dtype = int)
         else:
             scol2 = np.where(np.isin(header2, scol2))[0]
         
         srow1 = sys.argv[sys.argv.index('--columns_and_row')+3]
         srow2 = sys.argv[sys.argv.index('--columns_and_row')+4]
-        if checkint(srow1):
+        if isint(srow1):
             srow1 = int(srow1)
         else:
             srow1 = list(names1).index(srow1)
         
         names1 = names1[srow1]
-        if checkint(srow2):
+        if isint(srow2):
             srow2 = int(srow2)
         else:
             srow2 = list(names2).index(srow2)
@@ -128,6 +110,15 @@ if __name__ == '__main__':
             sort = np.isin(names, sset)
             names, vals1, vals2 = names[sort], vals1[sort], vals2[sort]
 
+        
+    if '--similarity' in sys.argv:
+        vals1 = 1.-vals1
+        vals2 = 1.-vals2
+    if '--similarityA' in sys.argv:
+        vals1 = 1.-vals1
+    if '--similarityB' in sys.argv:
+        vals2 = 1.-vals2
+
     if '--xlog10' in sys.argv:
         vals1 = np.log10(vals1)
     if '--ylog10' in sys.argv:
@@ -139,7 +130,7 @@ if __name__ == '__main__':
     
     
     if '--wigglex' in sys.argv:
-        vals1 = vals1 + np.random.random(len(vals1))-0.5
+        vals1 = vals1 + 0.6* np.random.random(len(vals1))-0.3
     if '--wiggley' in sys.argv:
         vals2 = vals2 + np.random.random(len(vals2))-0.5
     if '--wigglexy' in sys.argv:
@@ -148,9 +139,12 @@ if __name__ == '__main__':
         radratio2 = np.sqrt(1.-radratio**2)
         vals1 = vals1 + rad * radratio
         vals2 = vals2 + rad * radratio2
-        
-    vals1 = np.nan_to_num(vals1)
-    vals2 = np.nan_to_num(vals2)
+    
+    posinf = 1e16
+    if '--posinf' in sys.argv:
+        posinf = float(sys.argv[sys.argv.index('--posinf')+1])
+    vals1 = np.nan_to_num(vals1, posinf = posinf, neginf = -posinf)
+    vals2 = np.nan_to_num(vals2, posinf = posinf, neginf = -posinf)
     
     vals = np.array([vals1, vals2])
     print('Size after sorting', np.shape(vals))
@@ -159,7 +153,7 @@ if __name__ == '__main__':
         sizefile = sys.argv[sys.argv.index('--sizefile')+1]
         scol = int(sys.argv[sys.argv.index('--sizefile')+2])
         sqrt = sys.argv[sys.argv.index('--sizefile')+3] == 'True'
-        snames, header, sizes = read_matrix_files(sizefile)
+        snames, header, sizes = read_matrix_file(sizefile)
         sizes = sizes[:,scol]
         sort = np.argsort(snames)[np.isin(np.sort(snames), names)]
         snames, sizes = snames[sort], sizes[sort]
@@ -183,7 +177,7 @@ if __name__ == '__main__':
         cdelimiter = None
         if '--colordelimiter' in sys.argv:
             cdelimiter = sys.argv[sys.argv.index('--colordelimiter')+1]
-        cnames, header, colors = read_matrix_files(colorfile, delimiter = cdelimiter)
+        cnames, header, colors = read_matrix_file(colorfile, delimiter = cdelimiter)
         if ccol == 'find' and header1 is not None:
             ccol = find_in_list(header1[scol1], header)
             if ccol is None:
@@ -197,6 +191,7 @@ if __name__ == '__main__':
             colors = np.absolute(colors)
         sort = np.argsort(cnames)[np.isin(cnames, names)]
         cnames, colors = cnames[sort], colors[sort]
+        
         if not np.array_equal(cnames, names):
             print('Colors are incomplete. Only present', len(cnames))
             for name in names[~np.isin(names, cnames)]:
@@ -292,7 +287,6 @@ if __name__ == '__main__':
         print(colors)
     if sizes is not None:
         sizes = sizes[sortd]
-    
     
     if '--boxplot' in sys.argv:
         nbins = int(sys.argv[sys.argv.index('--boxplot')+1])

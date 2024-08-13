@@ -85,6 +85,9 @@ if __name__ == '__main__':
         outname = None
         dpi = None
     
+    if '--dpi' in sys.argv:
+        dpi = int(sys.argv[sys.argv.index('--dpi')+1])
+    
     noheatmap = True
     xticklabels = None
     heatmap = None
@@ -192,7 +195,10 @@ if __name__ == '__main__':
         correlation = cdist(heatmap, heatmap, heatdist)
         outname += heatdist[:3]
     else:
-        correlation, logs, ofs, revcomp_matrix = align_compute_similarity_motifs(pwms, pwms, fill_logp_self = 1000, min_sim = min_sim, infocont = False, reverse_complement = revcom_array)
+        njobs = os.cpu_count()
+        if '--njobs' in sys.argv:
+            njobs = int(sys.argv[sys.argv.index('--njobs')+1])
+        correlation, logs, ofs, revcomp_matrix = align_compute_similarity_motifs(pwms, pwms, fill_logp_self = 1000, min_sim = min_sim, infocont = False, reverse_complement = revcom_array, njobs = njobs)
         if '--joinpwms' in sys.argv:
             distance_threshold=float(sys.argv[sys.argv.index('--joinpwms')+1])
             newclustering = AgglomerativeClustering(n_clusters = None, affinity = 'precomputed', linkage = 'average', distance_threshold = distance_threshold).fit(correlation)

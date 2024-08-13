@@ -79,7 +79,7 @@ def kernels_seqactivations_from_seqlets(weights, seqlet_set, biases = None, acti
 
 
 
-def pwms_from_seqs(ohseqs, activations, cut, z_score = True):
+def pwms_from_seqs(ohseqs, activations, cut, z_score = True, pseudo = 0.25):
     # scale kernel activations between 0 and 1
     minact = np.amin(activations, axis = 1)
     activations = activations - minact[:,None]
@@ -94,6 +94,7 @@ def pwms_from_seqs(ohseqs, activations, cut, z_score = True):
     for a, act in enumerate(activations):
         mask = seqs[1][seqs[0]==a]
         chseq = act[mask][:,None,None]*ohseqs[mask]
+        chseq += pseudo
         pwms.append(np.sum(chseq, axis = 0)/np.sum(chseq, axis = (0,1))[None, :])
         
         # check distribution
@@ -252,6 +253,9 @@ def takegrad(x, model, tracks=None, ensemble = 1, zero_mean_gauge = True, top=No
     -------
     grad : Numpy array
         Shape = (n_type, N_seqs, tracks, L_seq, channels)?
+    
+    # TODO 
+        Add tism output
     
     '''
     

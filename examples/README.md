@@ -12,6 +12,9 @@
 
 ### Single input - multi tracks output
 
+### BP-model
+- Exmaple how to train a bias model on protein free data
+- How to train a bias model on closed OCRs
 
 ## Reload model for inference and in silico experiments
 

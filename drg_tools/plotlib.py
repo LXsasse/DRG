@@ -16,7 +16,7 @@ import logomaker
 import pandas as pd
 from scipy.stats import gaussian_kde, pearsonr
 from sklearn import linear_model
-from .motif_analysis import align_compute_similarity_motifs
+from .motif_analysis import align_compute_similarity_motifs, torch_compute_similarity_motifs
 import matplotlib.patches as mpatches
 
 
@@ -270,42 +270,55 @@ def plot_single_pwm(pwm, log = False, showaxes = False, channels = list('ACGT'),
     ax.set_yticks(lim)
     return ax
 
-def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('ACGT')):
+def reverse(pwm):
+    return pwm[::-1][:,::-1]
+
+def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('ACGT'), offsets = None, revcomp_matrix = None, align_to = None):
     '''
     Aligns and plots multiple pwms
+    TODO: 
+    use align_to to determine to which pwm the others should be aligned
+    use 
     '''
     if isinstance(pwm, list):
-        ifcont = True
-        min_sim = 5
-        for pw in pwm:
-            min_sim = min(min_sim, np.shape(pw)[0])
-            if (pw<0).any():
-                ifcont = False
-        correlation, log_pvalues, offsets, revcomp_matrix = align_compute_similarity_motifs(pwm, pwm, fill_logp_self = 1000, 
-                     min_sim = min_sim, infocont = ifcont, 
-                     reverse_complement = np.ones(len(pwm), dtype = int))
-        
+        if offsets is None:
+            ifcont = True
+            min_sim = 5
+            for pw in pwm:
+                min_sim = min(min_sim, np.shape(pw)[0])
+                if (pw<0).any():
+                    ifcont = False
+            #correlation, log_pvalues, offsets, revcomp_matrix = align_compute_similarity_motifs(pwm, pwm, fill_logp_self = 1000, min_sim = min_sim, infocont = ifcont, reverse_complement = np.ones(len(pwm), dtype = int))
+            correlation, log_pvalues, offsets, revcomp_matrix = torch_compute_similarity_motifs(pwm, pwm, fill_logp_self = 1000, min_sim = min_sim, infocont = ifcont, reverse_complement = np.ones(len(pwm), dtype = int))
+            offsets = offsets[:,0] # use offsets  from first pwm
+            revcomp_matrix = revcomp_matrix[:,0] # use reverse complement assignment from first pwms
+        else:
+            if revcomp_matrix is None:
+                revcomp_matrix = np.zeros(len(offsets))
+                
         pwm_len=np.array([len(pw) for pw in pwm]) # array of pwm lengths
-        offsets = offsets[:,0] # use offsets  from first pwm
+        
         # compute offsets for each pwm so that they will be put into an array,
         #so that all pwms will be aligned 
         offleft = abs(min(0,np.amin(offsets))) 
         offright = max(0,np.amax(offsets + pwm_len-np.shape(pwm[0])[0]))
-        revcomp_matrix = revcomp_matrix[:,0] # use reverse complement 
-        #assignment from first pwms
+        
         
         
         nshape = list(np.shape(pwm[0]))
         nshape[0] = nshape[0] + offleft + offright # total length that is 
         #needed to fit all pwms into region when aligned to each other
         
-        fig = plt.figure(figsize = (nshape[0]*unit,unit*nshape[1]), dpi = 50)
+        fig = plt.figure(figsize = (nshape[1]*unit,unit*nshape[0]), dpi = 50)
         for p, pw in enumerate(pwm):
             ax = fig.add_subplot(len(pwm), 1, p + 1)
             if revcomp_matrix[p] == 1:
                 pw = reverse(pw)
             # create empty array with nshape
-            pw0 = np.zeros(nshape)
+            if log:
+                pw0 = np.zeros(nshape)
+            else: 
+                pw0 = np.ones(nshape)*0.25
             pw0[offleft + offsets[p]: len(pw) + offleft + offsets[p]] = pw
             pw = pw0
             plot_single_pwm(pw, log=log, showaxes = showaxes, channels = channels, ax = ax)

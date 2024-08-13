@@ -274,7 +274,9 @@ def readtomtom(f):
                 target.append(line[1])
                 pvals.append(line[3])
                 qvals.append(line[5])
-        
+    if len(names) == 0:
+        print('Could not read tomtom file')
+        sys.exit()
     names = np.array(names)
     target = np.array(target)
     pvals = np.array(pvals, dtype = float)
@@ -470,8 +472,13 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
     if row_name_replace is not None:
         for r, row in enumerate(rows):
             rows[r] = row.replace(row_name_replace[0], row_name_replace[1])
-
-    values = np.array(values, dtype = value_dtype)
+    try: 
+        values = np.array(values, dtype = value_dtype)
+    except: 
+        ValueError
+        values = np.array(values)
+        print("matrix could not be converted to floats")
+        
     if (values == np.nan).any():
         print('ATTENTION nan values in data matrix.', filename)
         if nan_value is not None:
@@ -481,8 +488,8 @@ def read_matrix_file(filename, delimiter = None, name_column = 0, data_start_col
     if columns is not None:
         if len(columns) > np.shape(values)[1]:
             columns = columns[-np.shape(values)[1]:]
-    
-    return np.array(rows), np.array(columns), values
+        columns = np.array(columns)
+    return np.array(rows), columns, values
 
 
 def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_rows = True, concatenate_axis = 1, align_columns = False, return_unique_names = True, **kwargs):
@@ -512,7 +519,7 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_row
     islist = False
     if isinstance(matrixfiles,list):
         islist = True
-    elif isisntance(matrixfiles, str):
+    elif isinstance(matrixfiles, str):
         if split in matrixfiles:
             islist = True
         elif not os.path.isfile(matrixfiles):

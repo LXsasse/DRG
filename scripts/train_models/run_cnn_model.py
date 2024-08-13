@@ -620,7 +620,13 @@ if __name__ == '__main__':
         attribution_type = sys.argv[sys.argv.index('--sequence_attributions')+1]
         selected_tracks = sys.argv[sys.argv.index('--sequence_attributions')+2]
         track_indeces = get_index_from_string(selected_tracks, experiments, delimiter = ',')
-    
+        
+        kwargs = {}
+        addppmname = ''
+        if len(sys.argv) > sys.argv.index('--sequence_attributions')+2:
+            kwargs = inputkwargs_from_string(sys.argv[sys.argv.index('--sequence_attributions')+1], definer='=', separater = '+')
+            addppmname = add_name_from_dict(kwargs, cutkey = 2, cutitem = 3, keysep = '_')
+                
         topattributions = None
         if '--topattributions' in sys.argv:
             topattributions = int(sys.argv[sys.argv.index('--topattributions')+1])
@@ -635,9 +641,11 @@ if __name__ == '__main__':
             attarray = deeplift(X[testset], model, track_indeces, top = topattributions)
         else:
             attarray = captum_sequence_attributions(X[testset], model, track_indeces, attribution_method = attribution_type)
+        
         if experiments is not None:
             track_indeces = experiments[track_indeces]
-        np.savez_compressed(outname + '_'+attribution_type+selected_tracks.replace(',', '-') + '.npz', names = names[testset], values = attarray, experiments = track_indeces)
+        
+        np.savez_compressed(outname + '_'+attribution_type+addppmname+selected_tracks.replace(',', '-') + '.npz', names = names[testset], values = attarray, experiments = track_indeces)
     
 
     

@@ -8,7 +8,9 @@ import sys, os
 from scipy.stats import pearsonr 
 import time
 from joblib import Parallel, delayed
-
+import torch 
+import torch.nn.functional as F
+from .stats_functions import correlation_to_pvalue
 
 def reverse(ppm):
     '''
@@ -17,6 +19,12 @@ def reverse(ppm):
     rppm = np.copy(ppm)
     rppm = rppm[::-1][:,::-1]
     return rppm
+
+def reverse_torch(ppm):
+    '''
+    Generates the reverse complement of a pwm
+    '''
+    return ppm.flip([-1,-2])
 
 def determine_best_unique_matches(similarity):
     '''
@@ -44,6 +52,204 @@ def determine_best_unique_matches(similarity):
         if len(n_refs) == 0 or len(n_ppms) == 0:
             break
     return bestmatch
+
+def padded_weight_conv1d(qpm, ppm, min_overlap, padding = 0.25):
+    '''
+    Adds padding to weights so that all of the qpm is covered and all positions
+    that are part of either one motif are compared
+    '''
+    cha = qpm.shape[-2]
+    lq = qpm.shape[-1]
+    lp = ppm.shape[-1]
+    # padding for both motifs
+    pad = lp - min_overlap
+    ppad = pad - (lp -lq)
+    qpmp = F.pad(qpm, (pad, pad), 'constant', padding)
+    ppmp = F.pad(ppm, (ppad, ppad), 'constant', padding)
+    lpp = ppmp.shape[-1]
+    lqp = qpmp.shape[-1]
+    # collect results from convolutions, inputs to convs have same length
+    res = []
+    for i in range(lqp-lp+1):
+        # compute start and end for parts of motifs to compare
+        qstart, qend = min(i,pad), max(pad+lq,i+lp)
+        pstart, pend = ppad+min(0,(pad-i)), max(lpp-ppad,lpp-i)
+        qpmpin = qpmp[...,qstart:qend]
+        ppmpin = ppmp[...,pstart: pend]
+        plp = qend-qstart
+        res.append(torch.conv1d(qpmpin, ppmpin)/plp/cha)
+    # concatenate along the length
+    res = torch.cat(res,-1)
+    return res
+              
+def torch_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, metric = 'correlation', min_sim = 5, padding = 0.25, infocont = False, bk_freq = 0.25, reverse_complement = False, verbose = False, device = 'cpu', batchsize = 1024, exact = False):
+    '''
+    Aligns PWMs and returns a correlation and p-value matrix for downstream analysis
+    
+    Parameters
+    ----------
+    
+    ppms : list or np.ndarray
+        of motifs of shape (length, channels)
+    ppms_ref : list or np.ndarray
+        motif to compare ppms to
+    fill_logp_self: 
+        if one_half, diagonal elements will not be computed and just filled with 
+        this value
+    min_sim : int
+        minimum bases that have to overlap in a comparison
+    padding : float
+        padding value, for nucleotides 0.25, representing uniform prob. that
+        base is present
+    reverse_complement: boolean
+        or two arrays defining if an individual pwm in
+        one of the sets should be compared with its reverse complement
+    exact : 
+        includes regions with values for both matrices, not only the one that
+        is used as the weight.
+    '''
+    
+    # initialize numpy arrays that will be returned
+    # best offset to align matrices
+    offsets = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int8)
+    # correlation matrix itself
+    correlation = np.zeros((len(ppms), len(ppms_ref)), dtype = np.float32)*2
+    # reverse complement matrix
+    revcomp_matrix = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int8)
+    # Number of positions to compute palues
+    n_matrix = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int8)
+    
+    if infocont:
+        if bk_freq is None:
+            bk_freq = 1./pwm[0].shape[-1]
+            
+        padding = np.log2(padding/bk_freq)
+        for p, ppm in enumerate(ppms):
+            ppm =np.log2((ppm+1e-8)/bk_freq)
+            ppm[ppm<0] = 0
+            ppms[p] = ppm 
+        for p, ppm in enumerate(ppms_ref):
+            ppm =np.log2((ppm+1e-8)/bk_freq)
+            ppm[ppm<0] = 0
+            ppms_ref[p] = ppm
+    
+    # Normalize pwms to compute correlation or cosine
+    if metric == 'correlation':
+        ppms = [ppm-np.mean(ppm.flatten()) for ppm in ppms]
+        ppms_ref = [ppm-np.mean(ppm.flatten()) for ppm in ppms_ref]
+    if metric == 'cosine' or metric == 'correlation':
+        ppms = [ppm/np.std(ppm.flatten()) for ppm in ppms]
+        ppms_ref = [ppm/np.std(ppm.flatten()) for ppm in ppms_ref]
+    else:
+        raise ValueError(f'{metric} not implemented')
+    
+    # Reverse complement will be checked to see if computations with reverse 
+    # complment should be included
+    if isinstance(reverse_complement, bool):
+        if reverse_complement == False:
+            reverse_complement = np.array([np.zeros(len(ppms), dtype = int), 
+                                       np.zeros(len(ppms_ref), dtype = int)])
+        elif reverse_complement == True:
+            reverse_complement = np.array([np.ones(len(ppms), dtype = int), 
+                                       np.ones(len(ppms_ref), dtype = int)])
+    elif len(reverse_complement) != 2:
+        reverse_complement = np.array([reverse_complement, 
+                                       np.ones(len(ppms_ref), dtype = int)])
+    rcmat = reverse_complement[0][:,None]*reverse_complement[1][None, :]
+    
+    # Determine the lenghth of input pwms to split them into different length tensors
+    plen = np.array([len(p) for p in ppms])
+    ppms_indeces = [np.where(plen == pl)[0] for pl in np.unique(plen)]
+    ppms = [torch.tensor(np.array([ppms[pi] for pi in pin], dtype = float)).transpose(-1,-2) for pin in ppms_indeces]
+    
+    plen_ref = np.array([len(p) for p in ppms_ref])
+    ppms_ref_indeces = [np.where(plen_ref == pl)[0] for pl in np.unique(plen_ref)]
+    ppms_ref = [torch.tensor(np.array([ppms_ref[pi] for pi in pin], dtype = float)).transpose(-1,-2) for pin in ppms_ref_indeces]
+
+    # Compare sets of ppms against each other
+    for p, ppm in enumerate(ppms):
+        lp, plp, cha = ppm.shape[0], ppm.shape[-1], ppm.shape[-2]
+        for q, qpm in enumerate(ppms_ref):
+            lq, plq = qpm.shape[0], qpm.shape[-1]
+            # if not exact, use conv1d with longer pwm
+            res, resrev = [], []
+            if plp >= plq:
+                pad = plp-min_sim
+                with torch.no_grad():
+                    for b in range(0,lq, batchsize):
+                        if exact:
+                            res.append(padded_weight_conv1d(qpm[b:b+batchsize], ppm, min_sim, padding = padding).transpose(0,1))
+                            if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any():
+                                resrev.append(padded_weight_conv1d(qpm[b:b+batchsize], reverse_torch(ppm), min_sim, padding = padding).transpose(0,1))
+                            else:
+                                resrev = None
+                        else:
+                            qpmp = F.pad(qpm[b:b+batchsize], (pad, pad), 'constant', padding)
+                            res.append(torch.conv1d(qpmp, ppm).transpose(0,1)/plp/cha)
+                            if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any():
+                                resrev.append(torch.conv1d(qpmp, reverse_torch(ppm)).transpose(0,1)/plp/cha)
+                            else:
+                                resrev = None
+                    
+                    #concatenate batches on qpm axis
+                    res = torch.cat(res, 1)
+                    if resrev is not None:
+                        resrev = torch.cat(resrev, 1)
+            else:
+                pad = plq-min_sim
+                with torch.no_grad():
+                    for b in range(0,lq, batchsize):
+                        if exact:
+                            res.append(padded_weight_conv1d(ppm, qpm[b:b+batchsize], min_sim, padding = padding))
+                            if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any():
+                                resrev.append(padded_weight_conv1d(ppm, reverse_torch(qpm[b:b+batchsize]), min_sim, padding = padding))
+                            else:
+                                resrev = None
+                        else:
+                            ppmp = F.pad(ppm, (pad, pad), 'constant', padding)
+                            res.append(torch.conv1d(ppmp, qpm[b:b+batchsize])/plq/cha)
+                            if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any():
+                                resrev.append(torch.conv1d(ppmp, reverse_torch(qpm[b:b+batchsize]))/plq/cha)
+                            else:
+                                resrev = None
+                    res = torch.cat(res, 1)
+                    if resrev is not None:
+                        resrev = torch.cat(resrev, 1)
+                        
+            bmax, best = torch.max(res, dim = -1)
+            bmax, best = bmax.cpu().numpy(), best.cpu().numpy()
+            if resrev is not None:
+                bmaxrev, bestrev = torch.max(resrev, dim=-1)
+                bmaxrev, bestrev = bmaxrev.cpu().numpy(), bestrev.cpu().numpy()
+                mask = rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]] & (bmaxrev > bmax)
+                best[mask==1] = bestrev[mask == 1]
+                bmax[mask==1] = bmaxrev[mask == 1]
+           
+            # calculate offsets of ppm to qpm
+            off = best - pad
+            # if qpm was used as weight, need to turn around offsets for ppm to qpm
+            if plp<plq:
+                off = -off
+                if resrev is not None:
+                    # if reverse complement was used, offset needs to measured from other direction
+                    off[mask==1] = plq-plp-off[mask==1]
+            # give values to output arrays
+            for j,i in enumerate(ppms_indeces[p]):
+                offsets[i,ppms_ref_indeces[q]] = off[j]
+                correlation[i,ppms_ref_indeces[q]] = bmax[j]
+                n_matrix[i,ppms_ref_indeces[q]] = max(plp, plq)*cha
+                if resrev is not None:
+                    revcomp_matrix[i,ppms_ref_indeces[q]] = mask[j]
+    
+    # compute pvalues with t-distribution, make
+    #if metric == 'correlation' or metric == 'cosine':
+    pvalue = correlation_to_pvalue(correlation, n_matrix) + 1e-64
+    log_pvalues = np.sign(correlation) * -np.log10(pvalue)
+    correlation = 1-correlation
+    
+    if fill_logp_self is not None:
+        np.fill_diagonal(log_pvalues, fill_logp_self)
+    return correlation, log_pvalues, offsets, revcomp_matrix
 
 def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_sim = 5, padding = 0.25,
                                      infocont = False, bk_freq = 0.25, 
@@ -89,6 +295,16 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
         binary matrix determines if pwms was best aligned when in reverse complement
     '''
     
+    for p, ppm in enumerate(ppms):
+        if np.isnan(ppm).any():
+            raise ValueError(f'nan in ppm {ppm}')
+
+    for p, ppm in enumerate(ppms_ref):
+        if np.isnan(ppm).any():
+            raise ValueError(f'nan in ppm_ref {ppm}')
+
+
+    
     # reverse_complement array determines if one should also compare the reverse complement of the pwms to all other pwms
     if isinstance(reverse_complement, bool):
         if reverse_complement == False:
@@ -112,17 +328,16 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
     
     one_half = is_the_same
     
-    
     if njobs == 1:
-        correlation, log_pvalues, offsets, revcomp_matrix, _ctrl = _align_compute_similarity_motifs(ppms, ppms_ref, one_half = one_half,                                          fill_logp_self = 1000, min_sim = min_sim, infocont = infocont, reverse_complement=reverse_complement, verbose = verbose)
+        correlation, log_pvalues, offsets, revcomp_matrix, _ctrl = _align_compute_similarity_motifs(ppms, ppms_ref, one_half = one_half,                                          fill_logp_self = 1000, min_sim = min_sim, infocont = infocont,bk_freq = bk_freq, reverse_complement=reverse_complement, verbose = verbose)
     else:
         correlation = 2*np.ones((l_in, l_ref), dtype = np.float32)
         log_pvalues = np.zeros((l_in, l_ref), dtype = np.float32)
         offsets = 100*np.ones((l_in, l_ref), dtype = np.int16)
         revcomp_matrix = -np.ones((l_in, l_ref), dtype = np.int8)
         
-        spacesi = np.linspace(0,np.shape(ppms)[0], njobs + 1, dtype = int)
-        spacesj = np.linspace(0,np.shape(ppms)[0], njobs*int(one_half)+1,
+        spacesi = np.linspace(0,len(ppms), njobs + 1, dtype = int)
+        spacesj = np.linspace(0,len(ppms_ref), njobs*int(one_half)+1,
                               dtype = int)
     
         if verbose:
@@ -135,6 +350,7 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
                                               fill_logp_self = fill_logp_self, 
                                               min_sim = min_sim, 
                                               infocont = infocont, 
+                                              bk_freq = bk_freq,
                                               reverse_complement = [reverse_complement[0][spacesi[i]:spacesi[i+1]], 
                                                                     reverse_complement[1][spacesj[j]:spacesj[j+1]]],
                                               ctrl = (i,j),
@@ -167,7 +383,7 @@ def _align_compute_similarity_motifs(ppms, ppms_ref, one_half = False,
                                      fill_logp_self = 1000, min_sim = 5, padding = 0.25,
                                      infocont = False, bk_freq = 0.25, 
                                      non_zero_elements = False, reverse_complement
-                                     = None, ctrl = None, verbose = False):
+                                     = False, ctrl = None, verbose = False):
     '''
     Aligns PWMs and returns a correlation and p-value matrix for downstream analysis
     
