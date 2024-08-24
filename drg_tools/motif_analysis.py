@@ -20,10 +20,12 @@ def reverse(ppm):
     rppm = rppm[::-1][:,::-1]
     return rppm
 
-def reverse_torch(ppm):
+def reverse_torch(ppm, clone =True):
     '''
     Generates the reverse complement of a pwm
     '''
+    if clone:
+        ppm = ppm.clone()
     return ppm.flip([-1,-2])
 
 def determine_best_unique_matches(similarity):
@@ -53,18 +55,30 @@ def determine_best_unique_matches(similarity):
             break
     return bestmatch
 
-def padded_weight_conv1d(qpm, ppm, min_overlap, padding = 0.25):
+def padded_weight_conv1d(qpm, ppm, min_overlap, padding = 0.25, centered=False, standard=False, verbose = False):
     '''
     Adds padding to weights so that all of the qpm is covered and all positions
-    that are part of either one motif are compared
+    that are part of either one motif are compared to each other.
+    
+    Parameters
+    ----------
+    qpm : 
+        shape=(N_0,4,Length_0)
+    ppm : 
+        shape=(N_1,4,Length_1)
+    min_overlap : 
+        minimal overlap between qpm and ppm 
+    padding : 
+        value to fill padded areas
+        
     '''
     cha = qpm.shape[-2]
     lq = qpm.shape[-1]
     lp = ppm.shape[-1]
     # padding for both motifs
-    pad = lp - min_overlap
-    ppad = pad - (lp -lq)
-    qpmp = F.pad(qpm, (pad, pad), 'constant', padding)
+    qpad = lp - min_overlap
+    ppad = qpad - (lp -lq)
+    qpmp = F.pad(qpm, (qpad, qpad), 'constant', padding)
     ppmp = F.pad(ppm, (ppad, ppad), 'constant', padding)
     lpp = ppmp.shape[-1]
     lqp = qpmp.shape[-1]
@@ -72,17 +86,43 @@ def padded_weight_conv1d(qpm, ppm, min_overlap, padding = 0.25):
     res = []
     for i in range(lqp-lp+1):
         # compute start and end for parts of motifs to compare
-        qstart, qend = min(i,pad), max(pad+lq,i+lp)
-        pstart, pend = ppad+min(0,(pad-i)), max(lpp-ppad,lpp-i)
-        qpmpin = qpmp[...,qstart:qend]
-        ppmpin = ppmp[...,pstart: pend]
-        plp = qend-qstart
-        res.append(torch.conv1d(qpmpin, ppmpin)/plp/cha)
+        qstart, qend = min(i,qpad), max(qpad+lq,i+lp)
+        pstart, pend = ppad+min(0,(qpad-i)), max(lpp-ppad,lpp-i)
+        with torch.no_grad():
+            # Standardized values will be assigned to qpmp if not cloned
+            qpmpin = qpmp[...,qstart:qend].detach().clone()
+            ppmpin = ppmp[...,pstart: pend].detach().clone()
+            if centered:
+                qpmpin -= torch.mean(qpmpin,dim=(-1,-2),keepdim = True)
+                ppmpin -= torch.mean(ppmpin,dim=(-1,-2),keepdim = True)
+            if standard:
+                # Use this for norm2 because is divided to every entry and summed
+                # Need to cancel n basically
+                qpmpin /= torch.sqrt(torch.mean(qpmpin**2,dim=(-1,-2),keepdim = True))
+                ppmpin /= torch.sqrt(torch.mean(ppmpin**2,dim=(-1,-2),keepdim = True))
+            plp = qend-qstart
+            res.append(torch.conv1d(qpmpin, ppmpin)/(plp*cha))
     # concatenate along the length
     res = torch.cat(res,-1)
     return res
+
+
               
-def torch_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, metric = 'correlation', min_sim = 5, padding = 0.25, infocont = False, bk_freq = 0.25, reverse_complement = False, verbose = False, device = 'cpu', batchsize = 1024, exact = False):
+def torch_compute_similarity_motifs(ppms, ppms_ref, 
+                                    metric = 'correlation', 
+                                    min_sim = 4, 
+                                    padding = 0.25, 
+                                    infocont = False, 
+                                    bk_freq = 0.25, 
+                                    reverse_complement = False, 
+                                    verbose = False, 
+                                    device = 'cpu', 
+                                    batchsize = 1024, 
+                                    exact = True, 
+                                    fill_logp_self = 127, 
+                                    return_alignment = False, 
+                                    sparse = False,
+                                    ):
     '''
     Aligns PWMs and returns a correlation and p-value matrix for downstream analysis
     
@@ -96,6 +136,8 @@ def torch_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, metri
     fill_logp_self: 
         if one_half, diagonal elements will not be computed and just filled with 
         this value
+    metric : 
+        Can be correlation, cosine, correlation_pvalue, mse
     min_sim : int
         minimum bases that have to overlap in a comparison
     padding : float
@@ -104,25 +146,38 @@ def torch_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, metri
     reverse_complement: boolean
         or two arrays defining if an individual pwm in
         one of the sets should be compared with its reverse complement
+    return_alignment : 
+        returns matrices for aligmement, i.e. offsets and reverse complement
+        assignment.
     exact : 
         includes regions with values for both matrices, not only the one that
-        is used as the weight.
+        is used as the weight. If False, it is roughly 10 times faster but it
+        underestimates the correlation because it does only include positions
+        that are shared with weights and not overhanging positions from the 
+        motif given as sequence.
     '''
     
     # initialize numpy arrays that will be returned
-    # best offset to align matrices
-    offsets = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int8)
-    # correlation matrix itself
-    correlation = np.zeros((len(ppms), len(ppms_ref)), dtype = np.float32)*2
-    # reverse complement matrix
-    revcomp_matrix = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int8)
-    # Number of positions to compute palues
-    n_matrix = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int8)
+    if return_alignment:
+        # best offset to align matrices
+        offsets = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int8)
+        # reverse complement matrix
+        revcomp_matrix = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int8)
     
-    if infocont:
+    # correlation matrix itself
+    correlation = np.ones((len(ppms), len(ppms_ref)), dtype = np.float32)
+    
+    if metric == 'correlation_pvalue':
+        # Number of positions to compute palues
+        n_matrix = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int16)
+    
+    # Do this to avoid affecting original motifs
+    ppms = [ppm for ppm in ppms]
+    ppms_ref = [ppm for ppm in ppms_ref]
+    
+    if infocont: # transform ppms to information content, also transform padding
         if bk_freq is None:
             bk_freq = 1./pwm[0].shape[-1]
-            
         padding = np.log2(padding/bk_freq)
         for p, ppm in enumerate(ppms):
             ppm =np.log2((ppm+1e-8)/bk_freq)
@@ -133,29 +188,49 @@ def torch_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, metri
             ppm[ppm<0] = 0
             ppms_ref[p] = ppm
     
+    ## Needs to happen with the padding being added!!!
     # Normalize pwms to compute correlation or cosine
-    if metric == 'correlation':
-        ppms = [ppm-np.mean(ppm.flatten()) for ppm in ppms]
-        ppms_ref = [ppm-np.mean(ppm.flatten()) for ppm in ppms_ref]
-    if metric == 'cosine' or metric == 'correlation':
-        ppms = [ppm/np.std(ppm.flatten()) for ppm in ppms]
-        ppms_ref = [ppm/np.std(ppm.flatten()) for ppm in ppms_ref]
-    else:
+    centered = False
+    if 'correlation' in metric:
+        centered = True
+        if not exact:
+            means = [np.mean(ppm) for ppm in ppms]
+            means_ref = [np.mean(ppm) for ppm in ppms_ref]
+            ppms = [ppm-np.mean(ppm) for ppm in ppms]
+            ppms_ref = [ppm-np.mean(ppm) for ppm in ppms_ref]
+            padding -= np.mean(np.append(means,means_ref))
+            
+    standard = False
+    if metric == 'cosine' or 'correlation' in metric:
+        standard = True
+        if not exact:
+            # If not exact, normalization is performed beforehand
+            # padding needs to be addjusted as if it was in the motif after 
+            # padding.
+            std = [np.sqrt(np.mean(ppm**2)) for ppm in ppms]
+            std_ref = [np.sqrt(np.mean(ppm**2)) for ppm in ppms_ref]
+            ppms = [ppm/std[p] for p,ppm in enumerate(ppms)]
+            ppms_ref = [ppm/std_ref[p] for p,ppm in enumerate(ppms_ref)]
+            padding /= np.mean(np.append(std,std_ref))
+    
+    if metric not in ['correlation', 'correlation_pvalue', 'cosine', 'mse'] :
         raise ValueError(f'{metric} not implemented')
     
     # Reverse complement will be checked to see if computations with reverse 
     # complment should be included
     if isinstance(reverse_complement, bool):
         if reverse_complement == False:
-            reverse_complement = np.array([np.zeros(len(ppms), dtype = int), 
-                                       np.zeros(len(ppms_ref), dtype = int)])
+            reverse_complement = [np.zeros(len(ppms), dtype = int), 
+                                       np.zeros(len(ppms_ref), dtype = int)]
         elif reverse_complement == True:
-            reverse_complement = np.array([np.ones(len(ppms), dtype = int), 
-                                       np.ones(len(ppms_ref), dtype = int)])
+            reverse_complement = [np.ones(len(ppms), dtype = int), 
+                                       np.ones(len(ppms_ref), dtype = int)]
     elif len(reverse_complement) != 2:
-        reverse_complement = np.array([reverse_complement, 
-                                       np.ones(len(ppms_ref), dtype = int)])
+        reverse_complement = [reverse_complement, 
+                                       np.ones(len(ppms_ref), dtype = int)]
     rcmat = reverse_complement[0][:,None]*reverse_complement[1][None, :]
+    # reverse complements will be compared if both motifs are assigned to occur
+    # as reverse complement.
     
     # Determine the lenghth of input pwms to split them into different length tensors
     plen = np.array([len(p) for p in ppms])
@@ -166,6 +241,24 @@ def torch_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, metri
     ppms_ref_indeces = [np.where(plen_ref == pl)[0] for pl in np.unique(plen_ref)]
     ppms_ref = [torch.tensor(np.array([ppms_ref[pi] for pi in pin], dtype = float)).transpose(-1,-2) for pin in ppms_ref_indeces]
 
+    mscale = 1
+    if metric == 'mse':
+        # Euclidean distance is |x-y|_2 = sqrt(x*x + y*y -2xy)
+        # Convolution returns xy, so we need to precompute xx and yy
+        # Since xx and yy don't have any paddings, we will add a padding 
+        # constant  times the used padding size for each combination
+        # Precompute xx and yy:
+        mscale = 2
+        correlation[:] = 0
+        for p, ppm in enumerate(ppms):
+            res = torch.sum(ppm* ppm, dim = (-1,-2))
+            
+            correlation[ppms_indeces[p],:] += res.numpy()[:,None]
+        for q, qpm in enumerate(ppms_ref):
+            res = torch.sum(qpm* qpm, dim = (-1,-2))
+            correlation[:,ppms_ref_indeces[q]] += res.numpy()[None,:]
+        
+            
     # Compare sets of ppms against each other
     for p, ppm in enumerate(ppms):
         lp, plp, cha = ppm.shape[0], ppm.shape[-1], ppm.shape[-2]
@@ -173,54 +266,51 @@ def torch_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, metri
             lq, plq = qpm.shape[0], qpm.shape[-1]
             # if not exact, use conv1d with longer pwm
             res, resrev = [], []
-            if plp >= plq:
+            if exact:
                 pad = plp-min_sim
                 with torch.no_grad():
                     for b in range(0,lq, batchsize):
-                        if exact:
-                            res.append(padded_weight_conv1d(qpm[b:b+batchsize], ppm, min_sim, padding = padding).transpose(0,1))
-                            if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any():
-                                resrev.append(padded_weight_conv1d(qpm[b:b+batchsize], reverse_torch(ppm), min_sim, padding = padding).transpose(0,1))
-                            else:
-                                resrev = None
+                        res.append(padded_weight_conv1d(qpm[b:b+batchsize], ppm, min_sim, padding = padding, centered = centered, standard = standard).transpose(0,1))
+                        if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any(): # check for reverse complement for any combination
+                            resrev.append(padded_weight_conv1d(qpm[b:b+batchsize], reverse_torch(ppm), min_sim, padding = padding, centered = centered, standard = standard).transpose(0,1))
                         else:
+                            resrev = None
+            else:
+                    
+                if plp >= plq: # always fun the longer pwm as weights
+                    pad = plp-min_sim
+                    with torch.no_grad():
+                        for b in range(0,lq, batchsize):
                             qpmp = F.pad(qpm[b:b+batchsize], (pad, pad), 'constant', padding)
                             res.append(torch.conv1d(qpmp, ppm).transpose(0,1)/plp/cha)
                             if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any():
                                 resrev.append(torch.conv1d(qpmp, reverse_torch(ppm)).transpose(0,1)/plp/cha)
                             else:
                                 resrev = None
-                    
-                    #concatenate batches on qpm axis
-                    res = torch.cat(res, 1)
-                    if resrev is not None:
-                        resrev = torch.cat(resrev, 1)
-            else:
-                pad = plq-min_sim
-                with torch.no_grad():
-                    for b in range(0,lq, batchsize):
-                        if exact:
-                            res.append(padded_weight_conv1d(ppm, qpm[b:b+batchsize], min_sim, padding = padding))
-                            if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any():
-                                resrev.append(padded_weight_conv1d(ppm, reverse_torch(qpm[b:b+batchsize]), min_sim, padding = padding))
-                            else:
-                                resrev = None
-                        else:
+                else:
+                    pad = plq-min_sim
+                    with torch.no_grad():
+                        for b in range(0,lq, batchsize):
                             ppmp = F.pad(ppm, (pad, pad), 'constant', padding)
                             res.append(torch.conv1d(ppmp, qpm[b:b+batchsize])/plq/cha)
                             if rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]].any():
                                 resrev.append(torch.conv1d(ppmp, reverse_torch(qpm[b:b+batchsize]))/plq/cha)
                             else:
                                 resrev = None
-                    res = torch.cat(res, 1)
-                    if resrev is not None:
-                        resrev = torch.cat(resrev, 1)
-                        
+            
+            res = torch.cat(res, 1)
+            if resrev is not None:
+                resrev = torch.cat(resrev, 1)
+            
+            # get the position of the best match            
             bmax, best = torch.max(res, dim = -1)
             bmax, best = bmax.cpu().numpy(), best.cpu().numpy()
             if resrev is not None:
+                # if reverse was done, check if there's a better alignment
+                # in the reverse matrix
                 bmaxrev, bestrev = torch.max(resrev, dim=-1)
                 bmaxrev, bestrev = bmaxrev.cpu().numpy(), bestrev.cpu().numpy()
+                # if there is a better alignment, use the revese
                 mask = rcmat[ppms_indeces[p]][:,ppms_ref_indeces[q]] & (bmaxrev > bmax)
                 best[mask==1] = bestrev[mask == 1]
                 bmax[mask==1] = bmaxrev[mask == 1]
@@ -228,28 +318,88 @@ def torch_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, metri
             # calculate offsets of ppm to qpm
             off = best - pad
             # if qpm was used as weight, need to turn around offsets for ppm to qpm
-            if plp<plq:
+            if plp<plq and not exact:
                 off = -off
                 if resrev is not None:
-                    # if reverse complement was used, offset needs to measured from other direction
+                    # if reverse complement was used on qpm as weight
+                    # offset needs to measured from other direction
+                    # to represent offset of ppm with reverse complement
                     off[mask==1] = plq-plp-off[mask==1]
-            # give values to output arrays
+            
+            # Give values to output arrays
             for j,i in enumerate(ppms_indeces[p]):
-                offsets[i,ppms_ref_indeces[q]] = off[j]
-                correlation[i,ppms_ref_indeces[q]] = bmax[j]
-                n_matrix[i,ppms_ref_indeces[q]] = max(plp, plq)*cha
-                if resrev is not None:
-                    revcomp_matrix[i,ppms_ref_indeces[q]] = mask[j]
+                # Number of positions is distance between offset of ppm to qpm
+                # to the end.
+                # Distance computed as end_pos-start_pos
+                # = max(plp+off, plq) - min(0,off)
+                ns = (np.amax([plp+off[j], np.ones(len(off[j]))*plq], axis = 0)-np.amin([np.zeros(len(off[j])),off[j]],axis =0)) *cha
+                if metric == 'correlation_pvalue':
+                    n_matrix[i,ppms_ref_indeces[q]] = ns
+                if metric == 'mse':
+                    # add the missing parts to x*x and y*y for the padded areas
+                    correlation[i,ppms_ref_indeces[q]] += padding**2 * ((ns-plp*cha) + (ns-plq*cha))
+                    # devide through ns because bmax is already divided 
+                    correlation[i,ppms_ref_indeces[q]] /= ns
+                correlation[i,ppms_ref_indeces[q]] += -mscale*bmax[j]
+                
+                if return_alignment:
+                    offsets[i,ppms_ref_indeces[q]] = off[j]
+                    if resrev is not None:
+                        revcomp_matrix[i,ppms_ref_indeces[q]] = mask[j]
     
     # compute pvalues with t-distribution, make
-    #if metric == 'correlation' or metric == 'cosine':
-    pvalue = correlation_to_pvalue(correlation, n_matrix) + 1e-64
-    log_pvalues = np.sign(correlation) * -np.log10(pvalue)
-    correlation = 1-correlation
+    if metric == 'correlation_pvalue':
+        pvalue = correlation_to_pvalue(1.-correlation, n_matrix) + 10**-(fill_logp_self)
+        # since correlations can also have good p-values, transform into log pvalue
+        correlation = np.sign(1.-correlation) * -np.log10(pvalue)
+        # multiply by the sign of the correlation and transform back
+        correlation = 10**(-correlation)
     
-    if fill_logp_self is not None:
-        np.fill_diagonal(log_pvalues, fill_logp_self)
-    return correlation, log_pvalues, offsets, revcomp_matrix
+    if return_alignment:
+        return correlation, offsets, revcomp_matrix
+    else:
+        return correlation
+
+
+def assign_leftout_to_cluster(tripletclusters, checkmat, linkage, distance_threshold):
+    '''
+    Assign data points that were left out of origional clustering to one of 
+    the clusters
+    Parameters
+    ----------
+    tripletclusters :
+        cluster numbers of triplets, 3 repeats of clusternumber
+    checkmat : 
+        contains the distance matrix between triplets with cluster
+        assignment and left out data points
+        shape = (3, n_cluster, n_left_datapoints)
+    linkage :
+        linkage function
+    
+    '''
+    
+    clusters_left = -np.ones(checkmat.shape[-1], dtype = int)
+    
+    for c in range(checkmat.shape[-1]):
+        if c%1000==0:
+            print(c)
+        if linkage == 'complete':
+            poscl = np.where(np.sum(checkmat[...,c] < distance_threshold, axis = 0) == 3)[0]
+            if len(poscl) > 0:
+                poscl = poscl[np.argmin(np.mean(checkmat[:, poscl,c], axis = 0))]
+                clusters_left[c] = tripletclusters[3*poscl]
+        if linkage == 'single':
+            amins = np.amin(checkmat[...,c],axis=0)
+            poscl = np.argmin(amins)
+            if amins[poscl] <= distance_threshold:
+                clusters_left[c] = tripletclusters[3*poscl]
+        if linkage == 'average':
+            ameans = np.mean(checkmat[...,c],axis=0)
+            poscl = np.argmin(ameans)
+            if ameans[poscl] <= distance_threshold:
+                clusters_left[c] = tripletclusters[3*poscl]
+
+    return clusters_left
 
 def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_sim = 5, padding = 0.25,
                                      infocont = False, bk_freq = 0.25, 
@@ -329,7 +479,7 @@ def align_compute_similarity_motifs(ppms, ppms_ref, fill_logp_self = 1000, min_s
     one_half = is_the_same
     
     if njobs == 1:
-        correlation, log_pvalues, offsets, revcomp_matrix, _ctrl = _align_compute_similarity_motifs(ppms, ppms_ref, one_half = one_half,                                          fill_logp_self = 1000, min_sim = min_sim, infocont = infocont,bk_freq = bk_freq, reverse_complement=reverse_complement, verbose = verbose)
+        correlation, log_pvalues, offsets, revcomp_matrix, _ctrl = _align_compute_similarity_motifs(ppms, ppms_ref, one_half = one_half, fill_logp_self = fill_logp_self, min_sim = min_sim, infocont = infocont,bk_freq = bk_freq, reverse_complement=reverse_complement, verbose = verbose)
     else:
         correlation = 2*np.ones((l_in, l_ref), dtype = np.float32)
         log_pvalues = np.zeros((l_in, l_ref), dtype = np.float32)
@@ -588,80 +738,116 @@ def pfm2iupac(pwms, bk_freq = None):
 
 
 def combine_pwms(pwms, clusters, similarity, offsets, orientation, norm = 'max',
-                 remove_low = 0.45, minlen = 4):
+                 remove_low = 0.075, minlen = 3):
     
     '''
     Combine set of pwms based on their cluster assignments
-    Need also precomputed offsets and orientation to each other (reverse of forward)
+    Need also precomputed offsets and orientation to each other 
+    (i.e. reverse or forward)
+    
+    Parameters
+    ----------
+    
+    pwms : 
+        motifs of shape = (L,4)
+    clusters : 
+        cluster number for each pwm 
+    similarity: 
+        Similarity matrix, the large values are better
+    offsets : 
+        matrix with offsets of pwms at axis 0 to pwms at axis 1
+    orientation: 
+        orientation of pwms at axis 0 when aliged to pwm at axis 1, 0 forward
+        1 for reverse complement
+    norm : 
+        determines average 
+    remove_low :
+        removes regions with lwo coverage from alignment
+    minlen : 
+        minimum length of resulting motifs
     '''
+    
     lenpwms = np.array([len(pwm) for pwm in pwms])
     unclusters = np.unique(clusters)
     unclusters = unclusters[unclusters>=0]
     comb_pwms = []
     for u in unclusters:
         mask = np.where(clusters == u)[0]
-        if len(mask) > 1:
- 
-            sim = similarity[mask][:,mask]
-            offsetcluster = offsets[mask][:,mask]
-            orient = orientation[mask][:,mask]
-            pwmscluster = pwms[mask]
-            clusterlen = lenpwms[mask]
-            
-            sort = np.argsort(-np.sum(sim, axis = 1))
-            sim = sim[sort][:, sort]
-            offsetcluster = offsetcluster[sort][:, sort]
-            orient = orient[sort][:, sort]
-            pwmscluster = pwmscluster[sort]
-            clusterlen = clusterlen[sort]
-            
-            centerpiece = pwmscluster[0]
-            
-            centeroffsets = offsetcluster.T[0] # offset to the pwm that is most similar to all others
-            centerorient = orient.T[0]
-            
-            lenmat = len(centerpiece)+max(0,np.amax(centeroffsets+clusterlen-len(centerpiece))) - min(0,np.amin(centeroffsets))
-            
-            seed = np.zeros((lenmat,len(pwms[0][0])))
-            seedcount = np.zeros(len(seed))
-            
-            center = - min(0,np.amin(centeroffsets))
-            
-            centerrev = center + len(centerpiece)
-            
-            for o in range(len(pwmscluster)):
-                pwm0 = pwmscluster[o]
-                if centerorient[o] == 1:
-                    pwm0 = reverse(pwm0)
-                
-                seed[center + centeroffsets[o]: center +centeroffsets[o] + len(pwm0)] += pwm0.astype(float)
-                seedcount[center + centeroffsets[o]: center +centeroffsets[o] + len(pwm0)] += 1
-                
-            if norm == 'mean':
-                seed = seed/seedcount[:,None]
 
-        else:
-            seed = pwms[mask[0]]
-            seedcount = np.ones(len(seed))
-
-        if norm == 'max':
-            seed = seed/np.amax(seedcount)
-        elif norm == 'sum':
-            seed = seed/np.sum(np.absolute(seed),axis = 1)[:, None]
+        sim = similarity[mask][:,mask]
+        offsetcluster = offsets[mask][:,mask]
+        orient = orientation[mask][:,mask]
+        pwmscluster = pwms[mask]
+        clusterlen = lenpwms[mask]
         
-        if remove_low > 0:
-            sumseed = np.sum(np.absolute(seed), axis = 1)
-            edges = np.where(sumseed/np.amax(sumseed)>remove_low)[0]
-            if len(edges) > 0:
-                if edges[-1]-edges[0]>= minlen:
-                    seed = seed[edges[0]:edges[-1]+1]
-                else:
-                    seed[:] = 0.
-            else:
-                seed[:] = 0.
+        sort = np.argsort(-np.sum(sim, axis = 1))
+        sim = sim[sort][:, sort]
+        offsetcluster = offsetcluster[sort][:, sort]
+        orient = orient[sort][:, sort]
+        pwmscluster = pwmscluster[sort]
+        clusterlen = clusterlen[sort]
+
+        centerpiece = pwmscluster[0]
+        
+        centeroffsets = offsetcluster.T[0] # offset to the pwm that is most 
+        # similar to all others
+        centerorient = orient.T[0]
+        seed = _join_pwms(pwmscluster, clusterlen, centeroffsets, centerorient,
+                          norm = norm, remove_low = remove_low, minlen = minlen)
                 
         comb_pwms.append(seed)
     return comb_pwms
+
+
+def _join_pwms(pwmscluster, clusterlen, centeroffsets, centerorient, norm = 'max', remove_low = 0.05, minlen = 3):
+    '''
+    Joins PWMS in pwmcluster to the pwm in position 0. 
+    '''
+    
+    if len(pwmscluster) > 1:
+        centerpiece = pwmscluster[0]
+        
+        lenmat = len(centerpiece)+max(0,np.amax(centeroffsets+clusterlen-len(centerpiece))) - min(0,np.amin(centeroffsets))
+        
+        seed = np.zeros((lenmat,len(pwmscluster[0][0])))
+        seedcount = np.zeros(len(seed))
+        
+        center = - min(0,np.amin(centeroffsets))
+        
+        centerrev = center + len(centerpiece)
+        
+        for o in range(len(pwmscluster)):
+            pwm0 = pwmscluster[o]
+            if centerorient[o] == 1:
+                pwm0 = reverse(pwm0)
+            
+            seed[center + centeroffsets[o]: center +centeroffsets[o] + len(pwm0)] += pwm0.astype(float)
+            seedcount[center + centeroffsets[o]: center +centeroffsets[o] + len(pwm0)] += 1
+            
+        if norm == 'mean':
+            seed = seed/seedcount[:,None]
+
+    else:
+        seed = pwmscluster[0]
+        seedcount = np.ones(len(seed))
+
+    if norm == 'max':
+        seed = seed/np.amax(seedcount)
+    elif norm == 'sum':
+        seed = seed/np.sum(np.absolute(seed),axis = 1)[:, None]
+
+    if remove_low > 0:
+        sumseed = np.sum(np.absolute(seed), axis = 1)
+        edges = np.where(sumseed/np.amax(sumseed)>remove_low)[0]
+        if len(edges) > 0:
+            if edges[-1]+1-edges[0]>= minlen:
+                seed = seed[edges[0]:edges[-1]+1]
+            else:
+                seed[:] = 0.
+        else:
+            seed[:] = 0.
+
+    return seed
 
 
 
@@ -684,11 +870,27 @@ def find_motifs(ref_attribution, cut, max_gap = 1, min_motif_size = 4, smooth_ga
         list of lists that contain every position which is considered to be part of a motif. 
         
     '''
-    # if smooth_gap:
-    # Define more relaxed rule on what to call a gap based on the average
-    # around the base within max_gap that is not significant
-    def gap_call(i, msi, ref_attribution, cut, max_gap = 0):
-        return msi *np.mean(ref_attribution[max(0,i-max_gap): min(len(ref_attribution),i+max_gap+1)]) < cut
+    
+    def gap_call(i, msi, ref_attribution, cut, avgwindow = 0):
+        '''
+        If smooth_gap:
+        Define more relaxed rule on what to call a gap based on the average
+        around the base within avgwindow that is not significant
+        
+        Parameters: 
+        ----------
+        i : 
+            position in ref_attribution
+        msi : 
+            supposed sign of attribution at i
+        ref_attribution:
+            array with attributions at reference
+        cut : 
+            cut off for significance
+        avgwindow : 
+            window to consider for average to check if a position is still part of motif
+        '''
+        return msi *np.mean(ref_attribution[max(0,i-avgwindow): min(len(ref_attribution),i+avgwindow+1)]) < cut
     
     aloc = np.absolute(ref_attribution)>cut
     sign = np.sign(ref_attribution) # get sign of effects
@@ -708,7 +910,7 @@ def find_motifs(ref_attribution, cut, max_gap = 1, min_motif_size = 4, smooth_ga
                 potloc.append(i)
                 gap = 0
             
-            elif gap_call(i, msi, ref_attribution, cut, max_gap = max_gap * int(smooth_gap)): 
+            elif gap_call(i, msi, ref_attribution, cut, avgwindow = max_gap * int(smooth_gap)): 
                 # if the average with gapsize around the location is smaller than the cut, 
                 # only then count as gap, otherwise just count as nothing
                 gap += 1
@@ -726,7 +928,7 @@ def find_motifs(ref_attribution, cut, max_gap = 1, min_motif_size = 4, smooth_ga
                     gap = max_gap + 1
                     potloc = []
         
-        elif gap_call(i, msi, ref_attribution, cut, max_gap = max_gap * int(smooth_gap)):
+        elif gap_call(i, msi, ref_attribution, cut, avgwindow = max_gap * int(smooth_gap)):
             gap +=1
             if gap > max_gap:
                 if len(potloc) >= min_motif_size:

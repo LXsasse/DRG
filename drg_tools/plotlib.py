@@ -273,25 +273,24 @@ def plot_single_pwm(pwm, log = False, showaxes = False, channels = list('ACGT'),
 def reverse(pwm):
     return pwm[::-1][:,::-1]
 
-def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('ACGT'), offsets = None, revcomp_matrix = None, align_to = None):
+def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('ACGT'), offsets = None, revcomp_matrix = None, align_to = 0):
     '''
     Aligns and plots multiple pwms
-    TODO: 
     use align_to to determine to which pwm the others should be aligned
-    use 
+    set align_to to 'combine' to combine list of pwms and add combined motif
+    at position 0
     '''
     if isinstance(pwm, list):
         if offsets is None:
             ifcont = True
-            min_sim = 5
+            min_sim = 4
             for pw in pwm:
                 min_sim = min(min_sim, np.shape(pw)[0])
                 if (pw<0).any():
                     ifcont = False
-            #correlation, log_pvalues, offsets, revcomp_matrix = align_compute_similarity_motifs(pwm, pwm, fill_logp_self = 1000, min_sim = min_sim, infocont = ifcont, reverse_complement = np.ones(len(pwm), dtype = int))
-            correlation, log_pvalues, offsets, revcomp_matrix = torch_compute_similarity_motifs(pwm, pwm, fill_logp_self = 1000, min_sim = min_sim, infocont = ifcont, reverse_complement = np.ones(len(pwm), dtype = int))
-            offsets = offsets[:,0] # use offsets  from first pwm
-            revcomp_matrix = revcomp_matrix[:,0] # use reverse complement assignment from first pwms
+            correlation, offsets, revcomp_matrix = torch_compute_similarity_motifs(pwm, pwm, exact=True, return_alignment = True, metric = 'correlation', min_sim = min_sim, infocont = ifcont, reverse_complement = revcomp_matrix is not None)
+            offsets = offsets[:,align_to] # use offsets  from first pwm
+            revcomp_matrix = revcomp_matrix[:,align_to] # use reverse complement assignment from first pwms
         else:
             if revcomp_matrix is None:
                 revcomp_matrix = np.zeros(len(offsets))
@@ -302,20 +301,18 @@ def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('AC
         #so that all pwms will be aligned 
         offleft = abs(min(0,np.amin(offsets))) 
         offright = max(0,np.amax(offsets + pwm_len-np.shape(pwm[0])[0]))
-        
-        
-        
+
         nshape = list(np.shape(pwm[0]))
         nshape[0] = nshape[0] + offleft + offright # total length that is 
         #needed to fit all pwms into region when aligned to each other
-        
-        fig = plt.figure(figsize = (nshape[1]*unit,unit*nshape[0]), dpi = 50)
+
+        fig = plt.figure(figsize = (len(pwm) * nshape[0]*unit,3*unit*nshape[1]), dpi = 50)
         for p, pw in enumerate(pwm):
             ax = fig.add_subplot(len(pwm), 1, p + 1)
             if revcomp_matrix[p] == 1:
                 pw = reverse(pw)
             # create empty array with nshape
-            if log:
+            if not log:
                 pw0 = np.zeros(nshape)
             else: 
                 pw0 = np.ones(nshape)*0.25
@@ -324,7 +321,7 @@ def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('AC
             plot_single_pwm(pw, log=log, showaxes = showaxes, channels = channels, ax = ax)
     else:
         
-        fig = plt.figure(figsize = (np.shape(pwm)[0]*unit,np.shape(pwm)[1]*unit), dpi = 300)
+        fig = plt.figure(figsize = (np.shape(pwm)[0]*unit,3*np.shape(pwm)[1]*unit), dpi = 300)
         ax = fig.add_subplot(111)
         plot_single_pwm(pwm, log = log, showaxes = showaxes, channels = channels, ax = ax)
         
@@ -349,7 +346,6 @@ def _transform_similarity_to_distance(distmat):
     simatrix = int(issimilarity) - (2.*int(issimilarity)-1.) * (distmat - heatmin)/(heatmax - heatmin)
 
     return simatrix
-
 
 def plot_heatmap(heatmat, # matrix that is plotted with imshow
                  ydistmat = None, # matrix to compute sorty, default uses heatmat
@@ -397,6 +393,16 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
                  # a box or a bar plot with plot_distribution, 
                  row_distribution_kwargs = {} # kwargs fro plot_distribution
                  ):
+    '''
+    Plots a heatmap with tree on x and y
+    Motifs can be added to the end of the tree
+    Attributions of each column or row can be indicated by additoinal heatmap with different color code
+    Other statistics, for example, barplot or boxplots can be added to the y-axis
+    Heatmap can be blocked and only tree with motifs and other statistics can be shown
+    TODO 
+    Put dedrogram and pwm plot in function.
+    '''
+    
     # Determine size of heatmap
     if heatmat is None:
         Nx = 0
@@ -417,7 +423,7 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
             simatrixX = pdist(xdistmat.T, metric = measurex)
         elif xdistmat is not None:
             
-            if ~_check_symmetric_matrix(xdistmat):
+            if not _check_symmetric_matrix(xdistmat):
                 sortx = None
             
             if sortx is not None:        
@@ -430,9 +436,9 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
                 
     if measurey is not None:
         simatrixY = pdist(ydistmat, metric = measurey)
+    
     elif ydistmat is not None:
-            
-            if ~_check_symmetric_matrix(ydistmat):
+            if not _check_symmetric_matrix(ydistmat):
                 sorty = None
             
             if sorty is not None:        
@@ -442,7 +448,7 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
     else:
         sorty = None
         simatrixY = None
-            
+    
     
     
     # Generate dendrogram for x and y
@@ -451,7 +457,7 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
         Zx = linkage(simatrixX, sortx)
         #if combine_cutx > 0:
             #Zx = reduce_z(Zx, combine_cutx)
-    
+
     if sorty is not None:
         Zy = linkage(simatrixY, sorty) 
         #if combine_cuty > 0:
@@ -556,7 +562,6 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
     
     sys.setrecursionlimit(100000)    
     
-    
     if sorty is not None:
         axdeny = fig.add_subplot(171)
         axdeny.spines['top'].set_visible(False)
@@ -576,9 +581,7 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
             y_attributes = y_attributes[sorty]
             
         if yticklabels is not None:
-            #print(yticklabels)
             yticklabels = yticklabels[sorty]
-            #print(sorty, yticklabels)
         if ydenline is not None:
             axdeny.plot([ydenline, ydenline], [0,len(heatmat)*10], color = 'r')
     elif heatmat is not None:
@@ -590,7 +593,9 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
         if infocont:
             pwm_min, pwm_max = 0,2
         else:
-            pwm_min, pwm_max = 0, int(np.ceil(np.amax([np.amax(pwm) for pwm in pwms])))
+            pwm_min, pwm_max = 0, int(np.ceil(np.amax([np.amax(np.sum(np.ma.masked_less(pwm,0),axis = -1)) for pwm in pwms])))
+        lenpwms = np.array([len(pwm) for pwm in pwms])
+        maxlenpwms = np.amax(lenpwms)
         for s, si in enumerate(sorty[::-1]):
             axpwm = fig.add_subplot(len(sorty),1,s+1)
             axpwm.set_position([0.1+before-pwmsize*width/fullw, 
@@ -601,7 +606,9 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
             if infocont:
                 pwm = np.log2((pwms[si]+1e-16)/0.25)
                 pwm[pwm<0] = 0
-            logomaker.Logo(pd.DataFrame(pwm, columns = list('ACGT')),
+            ppwm = np.zeros((maxlenpwms,4))
+            ppwm[(maxlenpwms-lenpwms[si])//2:(maxlenpwms-lenpwms[si])//2+lenpwms[si]] = pwm
+            lm.Logo(pd.DataFrame(ppwm, columns = list('ACGT')),
                            ax = axpwm, color_scheme = 'classic')
             axpwm.set_ylim([pwm_min, pwm_max])
             
@@ -795,6 +802,7 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
     return sortx, sorty
 
 
+
 def simple_beeswarm(y, nbins=None):
     """
     Returns x coordinates for the points in ``y``, so that plotting ``x`` and
@@ -946,7 +954,9 @@ def _simple_swarmplot(data, positions, vert = True, unit = 0.4, colormin = None,
     
 def _colorbar(cmap, ticklabels = None, vert = True, ratio = 3, tickpositions = None, ax = None):
     '''
-    # Generates heatmap for cmap
+    Generates heatmap for cmap
+    TODO 
+    Use in other functions as well. 
     '''
     return_fig = False
     if ax is None:
@@ -1083,8 +1093,12 @@ def plot_distribution(
     
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
+    
     if ylabel is not None:
-        ax.set_ylabel(ylabel)
+        if vert:
+            ax.set_ylabel(ylabel)
+        else:
+            ax.set_xlabel(ylabel)
         
     data = list(data)
     
@@ -1183,8 +1197,6 @@ def plot_distribution(
         plt.show()
     else:
         fig.savefig(outname+'_distribution.'+fmt, dpi = savedpi, bbox_inches = 'tight')
-
-
 
 
 def vulcano(fc, pv, figname = None, logfc = False, logpv = False, fccutoff=None, pvcutoff=None, annotate_significant = None, 
@@ -1555,7 +1567,7 @@ def BoxPlotfromBins(X, Y, start=None, end=None, bins=10, axis = 'x', ax = None, 
         start = np.amin(maskdata)
     if end is None:
         end = np.amax(maskdata)
-    if ~isinstance(bins, np.ndarray):
+    if not isinstance(bins, np.ndarray):
         bins = np.linspace(start, end, bins+1)
     
     wticks = (bins[1:]+bins[:-1])/2
@@ -1854,5 +1866,54 @@ def plot_lines(y, x = None, xticks = None, xticklabels = None, color = None,
     if yscale is not None:
         ax.set_yscale(yscale)
    
+    if return_fig:
+        return fig
+
+
+def piechart(percentages, labels = None, colors = None, cmap = 'tab10', cmap_range=[0,1], explode_size = None, explode_indices = None, labels_on_side = False, explode_color = None, ax = None):
+    '''
+    Plots piechart with some options
+    '''
+    return_fig = False
+    if ax is None:
+        return_fig = True
+        fig = plt.figure(figsize = (3.,3.), dpi = 200)
+        ax = fig.add_subplot(111)
+    
+    if labels is None:
+        labels = np.arange(len(percentages)).astype(str)
+        
+    if colors is None:
+        colors = plt.get_cmap(cmap)(np.linspace(cmap_range[0],cmap_range[1], len(percentages)))
+        
+    explode = None
+    if explode_indices:
+        explode = np.zeros(len(percentages))
+        # Have Outside entries stick out
+        if explode_size is None:
+            explode_size = 0.1
+        explode[explode_indices] = explode_size
+        if explode_color is not None:
+            if isinstance(explode_color, str) and not isinstance(colors[0], str):
+                explode_color = mpl.colors.to_rgba(explode_color)
+            colors[explode_indices] = explode_color
+    
+    if labels_on_side:
+        wedges, texts = ax.pie(percentages, colors = colors, explode = explode) 
+        bbox_props = dict(boxstyle="square,pad=0.", fc="w", ec=None, lw=0.)
+        kw = dict(arrowprops=dict(arrowstyle="-"),
+                bbox=bbox_props, zorder=0, va="center")
+
+        for i, p in enumerate(wedges):
+            ang = (p.theta2 - p.theta1)/2. + p.theta1
+            y = np.sin(np.deg2rad(ang))
+            x = np.cos(np.deg2rad(ang))
+            horizontalalignment = {-1: "right", 1: "left"}[int(np.sign(x))]
+            connectionstyle = f"angle,angleA=0,angleB={ang}"
+            kw["arrowprops"].update({"connectionstyle": connectionstyle})
+            ax.annotate(labels[i], xy=(x, y), xytext=(1.35*np.sign(x), 1.4*y),
+                        horizontalalignment=horizontalalignment, **kw)
+    else:
+        ax.pie(percentages, labels=labels, colors = colors, explode = explode)
     if return_fig:
         return fig

@@ -230,8 +230,8 @@ def correlation2pvalue(r, n):
 
 
 # add function pvalue2correlation to compute correlation tresholds for pvalues
-def correlation_to_pvalue(r,n):
-    tt = r* np.sqrt(n-2)/np.sqrt(1-r**2)
+def correlation_to_pvalue(r,n,eps = 1e-7):
+    tt = r* np.sqrt(n-2)/np.sqrt(1-(r-eps)**2)
     pval = t.sf(np.abs(tt), n-1)*2
     return pval
 

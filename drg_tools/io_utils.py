@@ -60,6 +60,11 @@ def inputkwargs_from_string(string, definer='=', separater = '+'):
     return kwargs
 
 def add_name_from_dict(dictionary, cutkey = 2, cutitem = 3, keysep = None):
+    '''
+    Transforms keys and values of dictionary into a string that can be used
+    as an identifier for file name
+    '''
+    
     addname = ''
     for key in dictionary:
         if keysep is not None:
@@ -876,7 +881,7 @@ def read_pwm(pwmlist, nameline = 'Motif'):
                 nts = line[1:]
             elif isinstance(numbertype(line[0]), int):
                 pwm.append(line[1:])
-    return pwms, names, nts
+    return np.array(pwms,dtype = object), np.array(names), np.array(nts)
 
 def read_meme(pwmlist, nameline = 'MOTIF'):
     names = []
@@ -902,7 +907,7 @@ def read_meme(pwmlist, nameline = 'MOTIF'):
         pwm = np.array(pwm, dtype = float)
         pwms.append(np.array(pwm))
         names.append(name)
-    return pwms, names, nts
+    return np.array(pwms,dtype=object), np.array(names), np.array(nts)
 
 def write_pwm(file_path, pwms, names):
     obj = open(file_path, 'w')

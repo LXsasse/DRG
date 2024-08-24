@@ -437,9 +437,9 @@ if __name__ == '__main__':
         if model.generate_paramfile:
             lines = open(model.outname+'_model_params.dat', 'r').readlines()
             obj = open(model.outname+'_model_params.dat', 'w')
-            for line in enumerate(lines):
+            for line in lines:
                 if line[:len('n_classes')] == 'n_classes':
-                    obj.write('n_classes : '+str(model.n_classes))
+                    obj.write('n_classes : '+str(np.array(model.n_classes, dtype = str))+'\n')
                 else:
                     obj.write(line)
             obj.close()
