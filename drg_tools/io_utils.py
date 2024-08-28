@@ -817,16 +817,26 @@ def readin_sequence_return_onehot(seqfile):
 # TODO
 # Combine read_motifs, read_meme, and read_pwm, and include in readin_motif_files
 
-def read_motifs(pwmlist, nameline = 'Motif', delimiter = '\t', alphabet_line = 'Pos', dtype = 'txt'):
+def read_motifs(pwmlist, nameline = 'Motif', delimiter = '\t', alphabet_line = 'Pos', dtype = None, info = None):
     names = []
     pwms = []
     pwm = []
     other = []
     obj = open(pwmlist, 'r').readlines()
+    if dtype is None:
+        dtype = pwmlist.rsplit('.',1)[-1]
+    
     if dtype == 'meme':
         nameline = "MOTIF"
         delimiter = None
         alphabet_line = 'ALPHABET='
+        start_motif = 0
+    elif dtype == 'txt':
+        nameline = "Motif"
+        delimiter = '\t'
+        alphabet_line = 'Pos'
+        start_motif = 1
+    
     for l, line in enumerate(obj):
         line = line.strip().split(delimiter)
         if ((len(line) == 0) or (line[0] == '')) and len(pwm) > 0:
@@ -838,24 +848,34 @@ def read_motifs(pwmlist, nameline = 'Motif', delimiter = '\t', alphabet_line = '
             if line[0] == nameline:
                 name = line[1]
                 pwm = []
+            
             elif line[0][:len(alphabet_line)] == alphabet_line:
                 nts = list(line[1:])
-            elif dtype == 'txt':
-                if isinstance(numbertype(line[0]), int):
-                    pwm.append(line[1:])
-            elif dtype == 'meme':
-                if isinstance(numbertype(line[0]), float):
-                    pwm.append(line)
-                if 'bias=' in line:
-                    other.append(float(line[line.index('bias=')+1]))
+            
+            elif isinstance(numbertype(line[start_motif]), float):
+                pwm.append(line)
+            
+            if info is not None:
+                if info in line:
+                    other.append(float(line[line.index(info)+1]))
     
     if len(pwm) > 0:
         pwms.append(np.array(pwm))
         names.append(name)
+    
+    names = np.array(names)
+    lenpwms = np.array([len(pwm) for pwm in pwms])
+    if (lenpwms == len(pwms[0])).all():
+        pwms = np.array(pwms)
+    else:
+        pwms = np.array(pwms,dtype=object)
+    
     if len(other) == 0:
-        other = None
+        return pwms, names, nts
     else:
         other = np.array(other)
+        return pwms, names, other
+
     pwms, names = np.array(pwms, dtype = float), np.array(names)
     return pwms, names, other
 
@@ -881,7 +901,14 @@ def read_pwm(pwmlist, nameline = 'Motif'):
                 nts = line[1:]
             elif isinstance(numbertype(line[0]), int):
                 pwm.append(line[1:])
-    return np.array(pwms,dtype = object), np.array(names), np.array(nts)
+    
+    lenpwms = np.array([len(pwm) for pwm in pwms])
+    if (lenpwms == len(pwms[0])).all():
+        pwms = np.array(pwms)
+    else:
+        pwms = np.array(pwms,dtype=object)
+    
+    return pwms, np.array(names), np.array(nts)
 
 def read_meme(pwmlist, nameline = 'MOTIF'):
     names = []
@@ -907,7 +934,14 @@ def read_meme(pwmlist, nameline = 'MOTIF'):
         pwm = np.array(pwm, dtype = float)
         pwms.append(np.array(pwm))
         names.append(name)
-    return np.array(pwms,dtype=object), np.array(names), np.array(nts)
+    
+    lenpwms = np.array([len(pwm) for pwm in pwms])
+    if (lenpwms == len(pwms[0])).all():
+        pwms = np.array(pwms)
+    else:
+        pwms = np.array(pwms,dtype=object)
+    
+    return pwms, np.array(names), np.array(nts)
 
 def write_pwm(file_path, pwms, names):
     obj = open(file_path, 'w')
@@ -952,23 +986,32 @@ def write_meme_file(pwm, pwmname, alphabet, output_file_path, round = None, bias
 
     print("Saved PWM File as : {}".format(output_file_path))
 
+    # Switch axes if necessary
+    switch = True
+    for p, pw in enumerate(pwm):
+        if pw.shape[1] != len(alphabet):
+            switch *= False
+
     for i in range(0, n_filters):
-        if np.sum(np.absolute(np.nan_to_num(pwm[i]))) > 0:
+        pw = pwm[i]
+        if np.sum(np.absolute(np.nan_to_num(pw))) > 0:
             if round is not None:
-                pwm[i] = np.around(pwm[i],round)
+                pw = np.around(pw,round)
+            if switch:
+                pw = pw.T
             meme_file.write("\n")
             meme_file.write("MOTIF %s \n" % pwmname[i])
             if biases is not None:
-                meme_file.write("letter-probability matrix: alength= "+str(len(alphabet))+" w= {0} bias= {1} \n".format(np.count_nonzero(np.sum(pwm[i], axis=0)), biases[i]))
+                meme_file.write("letter-probability matrix: alength= "+str(len(alphabet))+" w= {0} bias= {1} \n".format(np.count_nonzero(np.sum(pw, axis=0)), biases[i]))
             else:
-                meme_file.write("letter-probability matrix: alength= "+str(len(alphabet))+" w= %d \n" % np.count_nonzero(np.sum(pwm[i], axis=0)))
-        for j in range(0, np.shape(pwm[i])[-1]):
-            #if np.sum(pwm[i][:, j]) > 0:
-                for a in range(len(alphabet)):
-                    if a < len(alphabet)-1:
-                        meme_file.write(str(pwm[i][ a, j])+ "\t")
-                    else:
-                        meme_file.write(str(pwm[i][ a, j])+ "\n")
+                meme_file.write("letter-probability matrix: alength= "+str(len(alphabet))+" w= %d \n" % np.count_nonzero(np.sum(pw, axis=0)))
+        for j in range(0, np.shape(pw)[-1]):
+            for a in range(len(alphabet)):
+                if a < len(alphabet)-1:
+                    meme_file.write(str(pw[ a, j])+ "\t")
+                else:
+                    meme_file.write(str(pw[ a, j])+ "\n")
+
 
     meme_file.close()
 

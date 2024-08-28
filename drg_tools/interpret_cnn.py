@@ -57,6 +57,7 @@ def kernels_to_pwms_from_seqlets(weights, seqlet_set, maxact, biases = None, act
     else:
         seqactivations = kernels_seqactivations_from_seqlets(weights, seqlet_set, biases = biases, activation_func=activation_func, device = device)
         pwms = pwms_from_seqs(seqlet_set, seqactivations, maxact, z_score = zscore)
+    pwms = np.transpose(pwms, axes = (0,2,1))
     return pwms
     
 
@@ -79,7 +80,12 @@ def kernels_seqactivations_from_seqlets(weights, seqlet_set, biases = None, acti
 
 
 
-def pwms_from_seqs(ohseqs, activations, cut, z_score = True, pseudo = 0.25):
+def pwms_from_seqs(ohseqs, activations, cut, z_score = True, pseudo = 0.025):
+    '''
+    multiplies the one hot encoded sequences with the activations
+    Selects only sequences with activations higher than cut 
+    Creates Position frequency matrix from sequences
+    '''
     # scale kernel activations between 0 and 1
     minact = np.amin(activations, axis = 1)
     activations = activations - minact[:,None]
@@ -94,9 +100,9 @@ def pwms_from_seqs(ohseqs, activations, cut, z_score = True, pseudo = 0.25):
     for a, act in enumerate(activations):
         mask = seqs[1][seqs[0]==a]
         chseq = act[mask][:,None,None]*ohseqs[mask]
-        chseq += pseudo
+        # pseudo count represents an additional sequence that is filled with pseudo
+        chseq += pseudo/len(chseq)
         pwms.append(np.sum(chseq, axis = 0)/np.sum(chseq, axis = (0,1))[None, :])
-        
         # check distribution
         #bins = np.linspace(0,1,21)
         #plt.hist(act, bins = bins)

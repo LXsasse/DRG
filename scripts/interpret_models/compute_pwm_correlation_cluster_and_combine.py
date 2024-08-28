@@ -85,11 +85,15 @@ def combine_pwms_separately(pwm_set, clusters):
         if uc >=0:
             mask = clusters == uc
             corr_left, ofs_left, revcomp_matrix_left = torch_compute_similarity_motifs(pwm_set[mask], pwm_set[mask], metric = args.distance_metric, return_alignment = True, min_sim = args.min_overlap, infocont = args.infocont, reverse_complement = args.reverse_complement, exact = args.approximate_distance)
-            clusterpwms.append(combine_pwms(np.array(pwm_set, dtype = object)[mask], clusters[mask], 1-corr_left, ofs_left, revcomp_matrix_left)[0])
+            clusterpwms.append(combine_pwms(pwm_set[mask], clusters[mask], 1-corr_left, ofs_left, revcomp_matrix_left)[0])
     return clusterpwms
 
 
+'''
+TODO: 
+Give connectivity graph to agglomerative clustering, f.e. from correlation of effects
 
+'''
 
 
 
@@ -193,22 +197,23 @@ if __name__ == '__main__':
                 sort.append(list(clusters[:,0]).index(pwn))
             clusters = clusters[sort]
         clusters = clusters[:,1].astype(int)
+        
         if ofs is None:
             clusterpwms = combine_pwms_separately(pwm_set, clusters)
         else:
             clusterpwms = combine_pwms(pwm_set, clusters, 1-correlation, ofs, revcomp_matrix)
     else: # If clusters not given, perform clustering
-        if args.outname is None:
-            outname += '_cld'+args.linkage
-            if args.n_clusters:
-                outname += 'N'+str(args.n_clusters)
-            else:
-                outname += str(args.distance_threshold)
-            if '_' in args.distance_metric:
-                for dm in args.distance_metric.split('_'):
-                    outname += dm[:3] 
-            else:
-                outname += args.distance_metric[:3]
+        
+        outname += '_cld'+args.linkage
+        if args.n_clusters:
+            outname += 'N'+str(args.n_clusters)
+        else:
+            outname += str(args.distance_threshold)
+        if '_' in args.distance_metric:
+            for dm in args.distance_metric.split('_'):
+                outname += dm[:3] 
+        else:
+            outname += args.distance_metric[:3]
             
         clustering = AgglomerativeClustering(n_clusters = args.n_clusters, metric = 'precomputed', linkage = args.linkage, distance_threshold = args.distance_threshold).fit(correlation)
         

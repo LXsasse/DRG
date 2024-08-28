@@ -172,8 +172,8 @@ def torch_compute_similarity_motifs(ppms, ppms_ref,
         n_matrix = np.zeros((len(ppms), len(ppms_ref)), dtype = np.int16)
     
     # Do this to avoid affecting original motifs
-    ppms = [ppm for ppm in ppms]
-    ppms_ref = [ppm for ppm in ppms_ref]
+    ppms = [ppm.astype(np.float32) for ppm in ppms]
+    ppms_ref = [ppm.astype(np.float32) for ppm in ppms_ref]
     
     if infocont: # transform ppms to information content, also transform padding
         if bk_freq is None:
@@ -777,14 +777,14 @@ def combine_pwms(pwms, clusters, similarity, offsets, orientation, norm = 'max',
         sim = similarity[mask][:,mask]
         offsetcluster = offsets[mask][:,mask]
         orient = orientation[mask][:,mask]
-        pwmscluster = pwms[mask]
+        pwmscluster = [pwms[m] for m in mask]
         clusterlen = lenpwms[mask]
         
         sort = np.argsort(-np.sum(sim, axis = 1))
         sim = sim[sort][:, sort]
         offsetcluster = offsetcluster[sort][:, sort]
         orient = orient[sort][:, sort]
-        pwmscluster = pwmscluster[sort]
+        pwmscluster = [pwmscluster[s] for s in sort]
         clusterlen = clusterlen[sort]
 
         centerpiece = pwmscluster[0]

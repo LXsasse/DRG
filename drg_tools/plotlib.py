@@ -12,7 +12,7 @@ from scipy.spatial.distance import pdist, cdist
 from scipy.cluster.hierarchy import dendrogram, linkage
 import seaborn as sns
 import matplotlib as mpl
-import logomaker
+import logomaker as lm
 import pandas as pd
 from scipy.stats import gaussian_kde, pearsonr
 from sklearn import linear_model
@@ -260,7 +260,7 @@ def plot_single_pwm(pwm, log = False, showaxes = False, channels = list('ACGT'),
         pwm[pwm<0] = 0
         lim = [0,2]
     
-    logomaker.Logo(pd.DataFrame(pwm, columns = channels), ax = ax, color_scheme = 'classic')
+    lm.Logo(pd.DataFrame(pwm, columns = channels), ax = ax, color_scheme = 'classic')
     ax.set_ylim(lim)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
