@@ -20,6 +20,7 @@ from .modules import func_dict, func_dict_single, SoftmaxNorm
 from .sequence_utils import generate_random_onehot
 from .motif_analysis import pfm2iupac
 from .stats_functions import correlation, mse
+from .model_training import batched_predict
 
 def kernel_to_ppm(kernels, kernel_bias = None, bk_freq = None):
     '''
@@ -155,6 +156,11 @@ def ism(x, model, tracks=None, zero_mean_gauge = True):
         Shape = (n_type, N_seqs, tracks, L_seq, channels)?
     '''
     
+    
+    if tracks is not None:
+        if isinstance(tracks[0], list) or isinstance(tracks[0], np.ndarray):
+            model = cnn_average_wrapper(model, tracks)
+            tracks = [i for i in range(len(tracks))]
     # Predict values for original sequences, 
     # predict() returns numpy arrays and acts with torch.no_grad
     reference_pred = model.predict(x)
@@ -233,6 +239,42 @@ def ism(x, model, tracks=None, zero_mean_gauge = True):
     return ismout
                                                      
 
+class cnn_average_wrapper(torch.nn.Module):
+    '''
+    Wrapper for cnn get attributions for average of tracks
+    
+    Parameters
+    ----------
+    model : pytorch.nn.module
+        The cnn_multi object
+    tracks : list of lists
+        tuples contain all the track indices that are combined to averages
+    '''
+    def __init__(self, model, tracks):
+        super(cnn_average_wrapper, self).__init__()
+        self.shift_sequence = model.shift_sequence
+        self.random_shift = model.random_shift
+        self.model = model
+        self.tracks = tracks
+        self.Nt = len(tracks)
+        
+    def forward(self, X, **kwargs):
+        pred = self.model(X)
+        npred = []
+        for tup in self.tracks:
+            npred.append(pred[:,tup].mean(dim = 1,keepdim = True))
+        pred = torch.hstack(npred)
+        return pred
+        # The prediction after training are performed on the cpu
+    
+    def predict(self, X, device = None, enable_grad = False):
+        if device is None:
+            device = self.model.device
+            
+        predout = batched_predict(self, X, device = device, batchsize = self.model.batchsize, shift_sequence = self.model.shift_sequence, random_shift = self.model.random_shift, enable_grad = enable_grad)
+        return predout
+
+
 def takegrad(x, model, tracks=None, ensemble = 1, zero_mean_gauge = True, top=None):
     '''
     Returns the gradient of the model with respect to the individual bases
@@ -262,8 +304,12 @@ def takegrad(x, model, tracks=None, ensemble = 1, zero_mean_gauge = True, top=No
     
     # TODO 
         Add tism output
-    
     '''
+    
+    if tracks is not None:
+        if isinstance(tracks[0], list) or isinstance(tracks[0], np.ndarray):
+            model = cnn_average_wrapper(model, tracks)
+            tracks = [i for i in range(len(tracks))]
     
     if isinstance(x, list):
         x = [torch.Tensor(xi) for xi in x]
@@ -287,6 +333,7 @@ def takegrad(x, model, tracks=None, ensemble = 1, zero_mean_gauge = True, top=No
             # Iterate over the number of ensembles, if 1, this is just a 
             # technical difference
             for e in range(ensemble):
+                # we use predict here because it handles padding and batching
                 pred = model.predict(xi, enable_grad = True)
                 if isinstance(pred, list):
                     pred = torch.cat(pred, axis = 1)
@@ -382,7 +429,7 @@ class cnn_multi_deeplift_wrapper(torch.nn.Module):
         
     '''
     def __init__(self, model, N = 2, n = 0):
-        super(Wrapper, self).__init__()
+        super(cnn_multi_deeplift_wrapper, self).__init__()
         self.model = model
         self.N = N
         self.n = n
@@ -527,6 +574,11 @@ def deeplift(x, model, tracks, baseline = None, batchsize = None, corrected_raw_
                 
     #predx = model.forward(x.to(model.device)).cpu()
     #predbase = model.forward(baseline.squeeze(1).to(model.device)).cpu()
+    if tracks is not None:
+        if isinstance(tracks[0], list) or isinstance(tracks[0], np.ndarray):
+            model = cnn_average_wrapper(model, tracks)
+            tracks = [i for i in range(len(tracks))]
+
     if isinstance(x, list):
         grad = []
         for n in range(Nin):

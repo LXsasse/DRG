@@ -533,7 +533,7 @@ if __name__ == '__main__':
             for exp in experiments:
                 tsort.append(list(meanclasses[:,0]).index(exp))
             meanclasses = meanclasses[tsort][:,1]
-            
+        
         
         # Sometimes we're not interested in the reconstruction for all genes in the training set and we can define a set of genes that we're most interested in
         if '--significant_genes' in sys.argv:
@@ -619,7 +619,7 @@ if __name__ == '__main__':
     if '--sequence_attributions' in sys.argv:
         attribution_type = sys.argv[sys.argv.index('--sequence_attributions')+1]
         selected_tracks = sys.argv[sys.argv.index('--sequence_attributions')+2]
-        track_indeces = get_index_from_string(selected_tracks, experiments, delimiter = ',')
+        track_indices = get_index_from_string(selected_tracks, experiments, delimiter = ',')
         
         kwargs = {}
         addppmname = ''
@@ -633,19 +633,30 @@ if __name__ == '__main__':
         if '--seqattribution_name' in sys.argv:
             selected_tracks = sys.argv[sys.argv.index('--gradname')+1]
         
+        if meanclasses is not None:
+            track_indices_classes = meanclasses[track_indices]
+            ntrack_indices = []
+            unique_track_indices_classes = np.unique(track_indices_classes)
+            for trincl in unique_track_indices_classes:
+                ntrack_indices.append(track_indices[track_indices_classes == trincl])
+            track_indices = ntrack_indices
+            
+        
         if attribution_type == 'ism':
-            attarray = ism(X[testset], model, track_indeces)
+            attarray = ism(X[testset], model, track_indices)
         elif attribution_type == 'grad':
-            attarray = takegrad(X[testset], model, track_indeces, top = topattributions)
+            attarray = takegrad(X[testset], model, track_indices, top = topattributions)
         elif attribution_type == 'deepshap': 
-            attarray = deeplift(X[testset], model, track_indeces, top = topattributions)
+            attarray = deeplift(X[testset], model, track_indices, top = topattributions)
         else:
-            attarray = captum_sequence_attributions(X[testset], model, track_indeces, attribution_method = attribution_type)
+            attarray = captum_sequence_attributions(X[testset], model, track_indices, attribution_method = attribution_type)
         
-        if experiments is not None:
-            track_indeces = experiments[track_indeces]
+        if experiments is not None and meanclasses is None:
+            track_indices = experiments[track_indices]
+        elif meanclasses is not None:
+            track_indices = unique_track_indices_classes
         
-        np.savez_compressed(outname + '_'+attribution_type+addppmname+selected_tracks.replace(',', '-') + '.npz', names = names[testset], values = attarray, experiments = track_indeces)
+        np.savez_compressed(outname + '_'+attribution_type+addppmname+selected_tracks.replace(',', '-') + '.npz', names = names[testset], values = attarray, experiments = track_indices)
     
 
     

@@ -241,12 +241,16 @@ def get_index_from_string(string, alist, delimiter = ','):
     elif string == 'all' or string == 'complete':
         itrack = np.arange(len(alist), dtype = int)
     elif '-to-' in string:
-        itrack = np.arange(int(string.split('-to-')[0]), int(string.split('-to-')[1])+1, dtype = int)
+        itrack = np.arange(int(string.split('-to-')[0]), int(string.split('-to-')[1]), dtype = int)
     elif isint(string):
         itrack = [int(string)]
-    else:
-        if string in alist:
+    elif string in alist:
             itrack = [list(alist).index(string)]
+    else:
+        print(string, 'cannot be translated into indices')
+        print('Select "all", "-to-", or provide list with integers or names in')
+        print(alist)
+        sys.exit()
     return itrack
     
 
