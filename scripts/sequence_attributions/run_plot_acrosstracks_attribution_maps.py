@@ -3,57 +3,23 @@ import sys, os
 import matplotlib.pyplot as plt
 from scipy.stats import pearsonr
 
-from drg_tools.plotlib import plot_attribution
-from drg_tools.io_utils import read_txt_files as read_txt
+from drg_tools.plotlib import plot_attribution_maps
+from drg_tools.io_utils import read_matrix_file as read_txt, get_indx
 
 
-
-def isint(x):
-    try:
-        int(x) 
-        return True
-    except:
-        return False
-
-
-def get_indx(given, target, islist = False):
-    '''
-    Function to determine the indeces of strings in target to elements in given
-    '''
-    if islist:
-        if given == 'all':
-            indx = np.arange(len(target), dtype = int)
-        else:
-            if isinstance(given, str):
-                indx = given.split(',')
-            for e, el in enumerate(indx):
-                if isint(el):
-                    indx[e] = int(el)
-                else:
-                    indx[e] = list(target).index(el)
-    else:
-        if isint(given):
-            indx = int(given)
-        else:
-            indx = list(target).index(given) 
-            
-    return indx
-
-            
-            
-            
-            
             
 
 if __name__ == '__main__':
     ism = np.load(sys.argv[1], allow_pickle = True)
     ref = np.load(sys.argv[2], allow_pickle = True)
     
-    selectin = sys.argv[3]
-    electin = sys.argv[4]
+    selectin = sys.argv[3] # name of sequences
+    electin = sys.argv[4] # tracks
     
     
     names, values, exp = ism['names'], ism['values'], ism['experiments']
+    # Define which sequence if several are provided to the model.
+    # Single sequence attributions are of shape (Nseq, Ntracks, 4, length)
     if len(np.shape(values)) >4:
         values = values[int(sys.argv[5])]
     
@@ -85,6 +51,8 @@ if __name__ == '__main__':
     print(names[select], genenames[select], exp)
     print(np.shape(att))
     
+    # Check if the attributions were stored in sparse coordinates and to
+    # original size
     if np.shape(att)[-1] != np.shape(seq)[-1]:
         nshape = list(np.shape(seq))
         nshape = [len(att)] + nshape
@@ -96,6 +64,7 @@ if __name__ == '__main__':
     maxatt = np.amax(att, axis = (-2,-1))
     
     newrange = None
+    
     if '--remove_zero_attributions' in sys.argv:
         mask = np.where(np.sum(np.absolute(att),axis = (0,-1)))[0]
         newrange = [mask[0], mask[-1]]
@@ -150,10 +119,7 @@ if __name__ == '__main__':
         expd = exp[diff]
         exp = exp[mask]
         exp = np.array([e +'\n-'+expd for e in exp])
-    
-    seq_based = True
-    if '--showall_attributions' in sys.argv:
-        seq_based = False
+
 
     barplot = None
     if '--add_predictions' in sys.argv:
@@ -218,7 +184,11 @@ if __name__ == '__main__':
     if '--dpi' in sys.argv:
         dpi = int(sys.argv[sys.argv.index('--dpi')+1])
     
-    fig = plot_attribution(seq, att, motifs = mlocs, seq_based = seq_based, exp = exp, vlim = vlim, unit = unit, ratio = ratio, barplot = barplot, xtick_range = newrange)
+    if not '--showall_attributions' in sys.argv:
+        att = att*seq
+        seq = None
+    
+    fig = plot_attribution_maps(att, seq = seq, motifs = mlocs, experiments = exp, vlim = vlim, unit = unit, ratio = ratio, barplot = barplot, xtick_range = newrange)
     if '--show' in sys.argv:
         plt.show()
     else:

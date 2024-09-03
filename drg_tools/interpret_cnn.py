@@ -16,7 +16,7 @@ import torch.nn.functional as F
 import time 
 from functools import reduce 
 
-from .modules import func_dict, func_dict_single, SoftmaxNorm
+from .modules import func_dict, func_dict_single, SoftmaxNorm, EXPmax
 from .sequence_utils import generate_random_onehot
 from .motif_analysis import pfm2iupac
 from .stats_functions import correlation, mse
@@ -260,6 +260,9 @@ class cnn_average_wrapper(torch.nn.Module):
         
     def forward(self, X, **kwargs):
         pred = self.model(X)
+        if isinstance(pred, list):
+            pred = torch.hstack(pred)
+
         npred = []
         for tup in self.tracks:
             npred.append(pred[:,tup].mean(dim = 1,keepdim = True))
@@ -390,12 +393,28 @@ def takegrad(x, model, tracks=None, ensemble = 1, zero_mean_gauge = True, top=No
                     xi.grad.zero_()
             # take mean over ensemble
             gra = np.mean(gra, axis = 0)
-            grad.append(np.concatenate(gra,axis = 0))
+            
+            #TODO
+            # add top feature here
+            gra = np.concatenate(gra,axis = 0)
+            if zero_mean_gauge:
+                gra = correct_by_mean(gra)
+            # Only keep top attributions along all tracks
+            if top is not None:
+                ngrashape = list(np.shape(gra))
+                ngrashape[-2] += 1 # add dimension to channel for position
+                ngrashape[-1] = top # reduce length to of attributions to top
+                ngra = np.zeros(ngrashape)
+                for t in range(np.shape(gra)[0]):
+                    # looking for largest at reference
+                    lcn = np.argsort(-np.amax(np.absolute(gra[t]*x[i].numpy()),axis = -2))
+                    lcn = np.sort(lcn[:top])
+                    ngra[t] = np.append(gra[t][...,lcn], lcn[None, :], axis = -2)
+                gra = ngra
+            grad.append(gra)
         grad = np.array(grad)
         end = time.time()
-        if zero_mean_gauge:
-            grad = correct_by_mean(grad)
-        print('TISM time for', x.size(dim = 0), len(tracks),  end-start)
+        print('TISM time for', grad.shape, len(tracks),  end-start)
     return grad
 
 
@@ -596,7 +615,7 @@ def deeplift(x, model, tracks, baseline = None, batchsize = None, corrected_raw_
                     else:
                         bl = baseline[n][:bs]
                     args = [xj[b:b+batchsize] for j, xj in enumerate(x) if j != n] 
-                    gr = deep_lift_shap(model, xi[b:b+bs], args = args, target = tr, references = bl, n_shuffles = n_shuffles, device=device, raw_outputs = raw_outputs, hypothetical = hypothetical, additional_nonlinear_ops = {SoftmaxNorm: _nonlinear}).cpu().detach().numpy()
+                    gr = deep_lift_shap(model, xi[b:b+bs], args = args, target = tr, references = bl, n_shuffles = n_shuffles, device=device, raw_outputs = raw_outputs, hypothetical = hypothetical, additional_nonlinear_ops = {SoftmaxNorm: _nonlinear, EXPmax : _nonlinear}).cpu().detach().numpy()
                     if raw_outputs:
                         gr = np.mean(gr, axis = 1)
                     #deltas = (predx[:,[tr]] - predbase[:,[tr]]) - torch.sum(gr * (x.unsqueeze(1)-baseline), dim = (-1,-2))
@@ -636,7 +655,7 @@ def deeplift(x, model, tracks, baseline = None, batchsize = None, corrected_raw_
                 # additional_nonlinear_ops = {SoftmaxNorm: _nonlinear}
                 bs = min(batchsize, Ni-b)
                 bl = baseline[:bs]
-                gr = deep_lift_shap(model, x[b:b+bs], target = tr, references = bl, n_shuffles = n_shuffles, device=device, raw_outputs = raw_outputs, hypothetical = hypothetical, additional_nonlinear_ops = {SoftmaxNorm: _nonlinear}).cpu().detach().numpy()
+                gr = deep_lift_shap(model, x[b:b+bs], target = tr, references = bl, n_shuffles = n_shuffles, device=device, raw_outputs = raw_outputs, hypothetical = hypothetical, additional_nonlinear_ops = {SoftmaxNorm: _nonlinear, EXPmax : _nonlinear}).cpu().detach().numpy()
                 if raw_outputs:
                     gr = np.mean(gr, axis = 1)
                 #deltas = (predx[:,[tr]] - predbase[:,[tr]]) - torch.sum(gr * (x.unsqueeze(1)-baseline), dim = (-1,-2))

@@ -2,7 +2,7 @@ import numpy as np
 import sys, os
 import glob
 
-from drg_tools.io_utils import write_meme_file
+from drg_tools.io_utils import write_meme_file, get_indx
 from drg_tools.motif_analysis import find_motifs
 
 if __name__ == '__main__': 
@@ -14,6 +14,14 @@ if __name__ == '__main__':
     
     values = np.transpose(values, axes = (0,1,3,2))
     
+    if '--select_tracks' in sys.argv:
+        tracks = sys.argv[sys.argv.index('--select_tracks')+1]
+        outname += tracks
+        tracks = get_indx(tracks, experiments, islist = True)
+        experiments=experiments[tracks]
+        values = values[:,tracks]
+    
+    
     seq = np.load(sys.argv[2], allow_pickle = True)
     seqs, snames = seq['seqfeatures'], seq['genenames']
     
@@ -22,10 +30,26 @@ if __name__ == '__main__':
     sort = np.argsort(snames)[np.isin(np.sort(snames), names)]
     snames, seqs = snames[sort], seqs[sort]
     
-    cut = float(sys.argv[3])
-    maxgap = int(sys.argv[4])
-    minsig = int(sys.argv[5])
-    norm = sys.argv[6]
+    
+    
+    # Check if the attributions were stored in sparse coordinates and to
+    # original size
+    if np.shape(values)[-1] != np.shape(seqs)[-1]:
+        nshape = list(np.shape(values))
+        nshape[-1] = np.shape(seqs)[-1]
+        nshape[-2] = np.shape(seqs)[-2]
+        natt = np.zeros(nshape, dtype = np.float32)
+        for a, at in enumerate(values):
+            for b, bt in enumerate(at):
+                natt[a,b, bt[:,-1].astype(int)] = bt[:, :nshape[-1]]
+        values = natt
+    
+
+    
+    cut = float(sys.argv[3]) # cutoff for significant positions
+    maxgap = int(sys.argv[4]) # maximum gap in motifs
+    minsig = int(sys.argv[5]) # minimum number of signifianct bases in motif
+    norm = sys.argv[6] # normalization to detect significant bases
     
     outname += '_'+norm+'motifs'+str(cut)+'_'+str(maxgap)+'_'+str(minsig)
     print(outname)
@@ -41,10 +65,10 @@ if __name__ == '__main__':
     
     refatt = np.sum(values*seqs[:,None,:,:], axis = -1)
     stats = refatt/std
+    
     if '--normpwms' in sys.argv and norm not in ['global', 'seq', 'condition']:
         print('normpwms')
         std = np.mean(np.sqrt(np.mean(values**2, axis = (-1,-2))))
-        
     
     values = values/std[...,None]
     
@@ -58,11 +82,14 @@ if __name__ == '__main__':
                 seqname = name+'_'+str(exp)+'_'+str(ml[0])+'-'+str(ml[-1])
                 # compute mean, max, loc
                 mean = np.mean(refatt[n,e,ml])
-                maxs = np.amax(refatt[n,e,ml])
+                maxs = np.argmax(np.abs(refatt[n,e,ml]))
+                maxs = refatt[n,e,ml[maxs]]
                 obj.write(seqname+' '+str(round(mean,3))+' '+str(round(maxs,3))+' '+','.join(ml.astype(str))+'\n')
                 pwmnames.append(seqname)
                 pwms.append(values[n,e,ml[0]:ml[-1]+1]*np.sign(mean))
     
+    print(f'{len(pwmnames)} extracted pwms from attributions of shape', np.shape(refatt))
+    pwms = np.array(pwms, dtype = object)
     np.savez_compressed(outname+'.npz', pwms = pwms, pwmnames = pwmnames)
             
     

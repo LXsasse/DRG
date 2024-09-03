@@ -82,6 +82,49 @@ def add_name_from_dict(dictionary, cutkey = 2, cutitem = 3, keysep = None):
     return addname
     
 
+def get_indx(given, target, islist = False):
+    '''
+    Function to determine the indeces of strings in target to elements in given
+    
+    Parameters
+    ----------
+    islist: 
+        if given should be treated as a list, then function also returns list
+    '''
+    
+    if islist: 
+        if given == 'all':
+            indx = np.arange(len(target), dtype = int)
+        elif 'musthave=' in given:
+            given = given.replace('musthave=', '')
+            if ',' in given:
+                given = given.split(',')
+            else:
+                given = [given]
+            indx = []
+            for e, el in enumerate(given):
+                if isint(el):
+                    indx.append(int(el))
+                else:
+                    for t, tar in enumerate(target):
+                        if el in tar:
+                            indx.append(t)
+        else:
+            if isinstance(given, str):
+                indx = given.split(',')
+            for e, el in enumerate(indx):
+                if isint(el):
+                    indx[e] = int(el)
+                else:
+                    indx[e] = list(target).index(el)
+    else:
+        if isint(given):
+            indx = int(given)
+        else:
+            indx = list(target).index(given) 
+            
+    return indx
+
 
 def string_features(string1, string2, placeholder = ['_', '-', '.'], case = False, k = 4, mink=2, ossplit = True, emphasizeto =2, emphasizelast = 2):
     '''
@@ -307,7 +350,7 @@ def readin_motif_files(pwmfile, nameline = 'Motif'):
         pf = np.load(pwmfile, allow_pickle = True)
         pwm_set, pwmnames = pf['pwms'] , pf['pwmnames']
         nts = None
-        if 'nts' in pf:
+        if 'nts' in pf.files:
             nts = pf['nts']
     else:
         pwm_set,pwmnames,nts = read_pwm(pwmfile, nameline = nameline)
@@ -543,7 +586,10 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_row
             elif 'values' in Yin.files:
                 Y = Yin['values']
             rownames = Yin['names']
-            columnnames = Yin['celltypes']
+            if 'columns' in Yin.files:
+                columnnames = Yin['columns']
+            else:
+                columnnames = Yin['celltypes']
         else:
             rownames, columnnames, Y = read_matrix_file(matrixfiles, delimiter = delimiter, **kwargs)
     elif islist:
@@ -554,7 +600,10 @@ def readalign_matrix_files(matrixfiles, split = ',', delimiter = None, align_row
             if os.path.splitext(putfile)[1] == '.npz':
                 Yin = np.load(putfile, allow_pickle = True)
                 onames = Yin['names']
-                ocolumns = Yin['celltypes']
+                if 'columns' in Yin.files:
+                    ocolumns = Yin['columns']
+                else:
+                    ocolumns = Yin['celltypes']
                 # need to sort to use isin for removing names taht are not shared
                 sort = np.argsort(onames)
                 if 'counts' in Yin.files:

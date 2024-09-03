@@ -143,8 +143,8 @@ if __name__ == '__main__':
     isstatsfile = False
     if infmt == '.npz':
         pf = np.load(args.pwmfile, allow_pickle = True)
-        pffiles = pf.files()
-        if ('correlation' in pfiles) and ('offsets' in pf):
+        pfiles = pf.files
+        if ('correlation' in pfiles) and ('offsets' in pfiles):
             isstatsfile = True
     ofs = None
     if isstatsfile:

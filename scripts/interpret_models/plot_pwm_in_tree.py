@@ -26,6 +26,7 @@ if __name__ == '__main__':
     else:
         outname = None
         dpi = None
+    # If to save pwms and features after joining them in this script for visialization
     if '--savejoined' in sys.argv and outname is None:
         outname = os.path.splitext(pwmfile)[0]
     
@@ -116,7 +117,9 @@ if __name__ == '__main__':
         if '--start_heatmap' in sys.argv:
             start_data = int(sys.argv[sys.argv.index('--start_heatmap')+1])
         heatmap = heatmap[:, start_data:].astype(float)
-        xticklabels = np.array(open(sys.argv[sys.argv.index('--heatmap')+1], 'r').readline().strip('#').strip().split())[start_data:]
+        print(heatmap)
+        xticklabels = np.array(open(sys.argv[sys.argv.index('--heatmap')+1], 'r').readline().strip('#').strip().split())[-np.shape(heatmap)[-1]:]
+        print(xticklabels)
         if not np.array_equal(heatnames, pwmnames): # compare the heatmap names to pwms
             sort = [] # sort if necessary
             for p, pwn in enumerate(pwmnames):

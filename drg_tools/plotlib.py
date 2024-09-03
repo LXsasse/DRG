@@ -217,14 +217,14 @@ def plot_attribution_maps(att, seq = None, motifs = None, experiments = None, vl
     axs = []
     for a, at in enumerate(att):
         ax = fig.add_subplot(len(att)*_heat, 1, 1+(a*_heat))
-        ax.set_positions([0.1, 0.1+(len(att)-1-(a*_heat))/len(att)/_heat*0.8, 0.8, 0.8*(1/len(att)/_heat)*0.8])
+        ax.set_position([0.1, 0.1+(len(att)-1-(a*_heat))/len(att)/_heat*0.8, 0.8, 0.8*(1/len(att)/_heat)*0.8])
         axs.append(plot_seqlogo(at, ax = ax, ylabel = experiments[a], labelbottom = (a == len(att)-1) & (~heatmap), bottomticks = (a == len(att)-1)& (~heatmap), ylim = attlim, xticks = xticks, xticklabels = xticklabels))
         if motifs is not None:
             _add_frames(at, locations[a], ax, color = motifcolors)
         if heatmap:
             _vlim = np.amax(np.absolute(attlim))
             ax = fig.add_subplot(len(att)*_heat, 1, 2+(a*_heat))
-            ax.set_positions([0.1, 0.1+(len(att)-2-(a*_heat))/len(att)/_heat*0.8, 0.8, 0.8*(1/len(att)/_heat)*0.8])
+            ax.set_position([0.1, 0.1+(len(att)-2-(a*_heat))/len(att)/_heat*0.8, 0.8, 0.8*(1/len(att)/_heat)*0.8])
             axs.append(_plot_heatmap(ism, ax = ax, ylim = attlim, labelbottom = (a == len(att)-1), bottomticks = (a == len(att)-1), xticks = xticks, xticklabels = xticklabels), cmap = 'coolwarm', ylabel = None, vlim = [-_vlim, _vlim])
             
     
@@ -381,6 +381,7 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
                  ylabel = None, # ylabel
                  xticklabels = None,
                  yticklabels  = None,
+                colormaplabel = None,
                  showdpi = None, # dpi value for plotting with plt.show()
                  dpi = None, # dpi value for savefig
                  figname = None, # if given, figure saved under this name
@@ -492,7 +493,7 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
     # Plan for extra space for dendrogram and pwms
     denx, deny, pwmsize, rowdistsize = 0, 0, 0, 0
     if sortx is not None and not noheatmap:
-        denx = 10 + 0.25
+        denx = 3 + 0.25
     if sorty is not None:
         deny = 3+.25
     if pwms is not None:
@@ -648,12 +649,12 @@ def plot_heatmap(heatmat, # matrix that is plotted with imshow
         axcol.set_xticks([0,101])
         
         colormapresolution = 1
-        colormapresolution = ['Repressive', 'Activating']
         
-        if isinstance(colormapresolution, int):
+        if colormaplabel is not None:
+            axcol.set_xticklabels([colormaplabel[0], colormaplabel[-1]], rotation = 60)
+        else:
             axcol.set_xticklabels([round(vmin,colormapresolution), round(vmax,colormapresolution)], rotation = 60)
-        elif isinstance(colormapresolution,list):
-            axcol.set_xticklabels([colormapresolution[0], colormapresolution[-1]], rotation = 60)
+        
             
         #Add text to heatmap if true
         if plot_value:
