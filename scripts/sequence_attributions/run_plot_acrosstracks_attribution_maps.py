@@ -33,7 +33,7 @@ if __name__ == '__main__':
     seqfeatures = seqfeatures[gsort]
     names, genenames = names[nsort], genenames[gsort]
     values = np.transpose(values, axes = (0,1,3,2))
-    outname = os.path.splitext(sys.argv[1])[0] +'_'+selectin+'_'+electin
+    outname = os.path.splitext(sys.argv[1])[0] +'_'+selectin+'_'+electin.replace('musthave=', '')
     
     if '--outname' in sys.argv:
         outname = sys.argv[sys.argv.index('--outname')+1]

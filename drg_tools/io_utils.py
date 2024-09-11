@@ -9,7 +9,7 @@ import glob
 import pandas as pd
 from .sequence_utils import quick_onehot, seq_onehot
 from functools import reduce
-
+import gzip
 
 def readinlocation(regfile):
     '''

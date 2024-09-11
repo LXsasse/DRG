@@ -15,7 +15,7 @@ dependencies:
   - setuptools>=69.5
   - umap-learn>=0.5.6
   - pip:
-      - einops==0.8.0
-      - fft-conv-pytorch==1.2.0
-      - logomaker==0.8
-      - torch==2.3.1
+      - einops>=0.8.0
+      - fft-conv-pytorch>=1.2.0
+      - logomaker>=0.8
+      - torch>=2.3.1

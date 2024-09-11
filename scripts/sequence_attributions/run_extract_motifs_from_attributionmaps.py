@@ -34,7 +34,9 @@ if __name__ == '__main__':
     
     # Check if the attributions were stored in sparse coordinates and to
     # original size
+    returned = False
     if np.shape(values)[-1] != np.shape(seqs)[-1]:
+        returned = True
         nshape = list(np.shape(values))
         nshape[-1] = np.shape(seqs)[-1]
         nshape[-2] = np.shape(seqs)[-2]
@@ -43,6 +45,7 @@ if __name__ == '__main__':
             for b, bt in enumerate(at):
                 natt[a,b, bt[:,-1].astype(int)] = bt[:, :nshape[-1]]
         values = natt
+        print(np.shape(values))
     
 
     
@@ -53,7 +56,16 @@ if __name__ == '__main__':
     
     outname += '_'+norm+'motifs'+str(cut)+'_'+str(maxgap)+'_'+str(minsig)
     print(outname)
-    std = np.sqrt(np.mean(values**2, axis = (-1,-2)))
+    if returned:
+        mask = np.repeat(np.sum(np.abs(values),axis=-1)[...,None],4, axis =-1) == 0
+        stdmask = np.sqrt(np.mean(np.ma.masked_array(values, mask)**2, axis = (-1,-2)))
+        fvalues = np.copy(values)
+        for s, stdm in enumerate(stdmask):
+            for t, ttdm in enumerate(stdm):
+                fvalues[s,t] = ttdm/2
+        std = np.sqrt(np.mean(fvalues**2, axis = (-1,-2)))
+    else:
+        std = np.sqrt(np.mean(values**2, axis = (-1,-2)))
     if norm == 'condition':
         std = np.mean(std, axis = 0)[None,:, None]
     elif norm == 'seq':
@@ -90,6 +102,7 @@ if __name__ == '__main__':
     
     print(f'{len(pwmnames)} extracted pwms from attributions of shape', np.shape(refatt))
     pwms = np.array(pwms, dtype = object)
+    print(np.shape(pwms))
     np.savez_compressed(outname+'.npz', pwms = pwms, pwmnames = pwmnames)
             
     

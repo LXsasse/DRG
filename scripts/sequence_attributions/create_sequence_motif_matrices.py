@@ -114,7 +114,8 @@ if __name__ == "__main__":
     for u, um in enumerate(unMotclusters):
         efclust = motif_clusters == um
         efseqs = np.unique(seq_names[efclust])
-        for e, es in enumerate(efseqs):
+        for ie, es in enumerate(efseqs):
+            e = list(unSeqs).index(es)
             effcond = np.zeros(len(unCond))
             seqmask = seq_names == es
             seqclustmask = seqmask * efclust
@@ -133,7 +134,13 @@ if __name__ == "__main__":
                     effectmatrix[u,e] = np.mean(effcond)
                 elif args.motif_statistic == 'maxdiff':
                     effectmatrix[u,e] = np.amax(effcond)-np.amin(effcond)
-            
+                elif args.motif_statistic == 'sum':
+                    effectmatrix[u,e] = np.sum(effcond)
+                elif args.motif_statistic == 'presence':
+                    effectmatrix[u,e] = np.sign(effcond[np.argmax(np.abs(effcond))])
+                elif args.motif_statistic == 'count':
+                    effectmatrix[u,e] = len(effcond)
+                
     
     
     # Summarize to sequence clusters
@@ -141,10 +148,10 @@ if __name__ == "__main__":
         seq_clusters = np.genfromtxt(args.sequence_clusters, dtype = str)
         common_seqs = np.isin(seq_clusters[:,0], unSeqs)
         seq_clusters = seq_clusters[common_seqs]
-        unseqclusters = np.unique(seq_clusters[:,0])
+        unseqclusters = np.unique(seq_clusters[:,1])
         seqclust_effectmatrix = np.zeros((len(unMotclusters), len(unseqclusters)))
         for u, usc in enumerate(unseqclusters):
-            seqmask = np.isin(seq_names, seq_clusters[seq_clusters[:,1]==usc,0])
+            seqmask = np.isin(unSeqs, seq_clusters[seq_clusters[:,1]==usc,0])
             seqclust_effectmatrix[:, u] = np.mean(effectmatrix[:, seqmask], axis = 1)
         effectmatrix = seqclust_effectmatrix
         unSeqs = unseqclusters 
@@ -153,7 +160,7 @@ if __name__ == "__main__":
     # Save output with given outfmt
     print(outname + args.outfmt)
     if args.outfmt == '.npz':
-        np.savez_compressed(outname + '.npz', values = effectmatrix, names = unMotclusters, columns = unSeqs)
+        np.savez_compressed(outname + '.npz', values = effectmatrix, names = unMotclusters.astype(str), columns = unSeqs.astype(str))
     else:
         np.savetxt(outname + '.txt', np.append(unMotclusters.reshape(-1,1).astype(str), np.around(effectmatrix,3), axis =1), header = ' '.join(unSeqs), fmt = '%s')
         

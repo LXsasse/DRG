@@ -125,6 +125,14 @@ if __name__ == '__main__':
                         help = 'Uses regular torch conv1d to compute distance, ignores overhanging parts of shorter motif. Generally underestimates correlation between two motifs')
     parser.add_argument('--approximate_cluster_on', default = None, type = int, 
                         help='Define number of random motifs on which clustering will be performed, while rest will be assiged to best matching centroid of these clusters. Should be used if memory is too small for large distance matrix')
+    
+    parser.add_argument('--reduce_by_name', action='store_true', 
+                        help='Combines seqlets with same name')
+    parser.add_argument('--seqname_delimiter', type=str, default = '_',
+                        help='Delimiter to split motif name on')
+    parser.add_argument('--seqname_inclusion', type=int, default = 2,
+                        help='Number of strings that belong to sequences name after split by delimiter')
+    
     parser.add_argument('--min_overlap', type = int, default = 4)
     
     args = parser.parse_args()
@@ -159,23 +167,40 @@ if __name__ == '__main__':
     else:
         pwm_set, pwmnames, nts = readin_motif_files(args.pwmfile)
         
-        if args.approximate_cluster_on is not None: # Approximation of clusters
-            # cluster only subset and assign left over seqlets to assigned 
-            # clusters based on the similarity to the three most distant 
-            # points in the cluster. Reduced memory by only computing 
-            # similarity to three points per cluster.
-            np.random.seed(0)
-            if args.outname is None:
-                outname += 'aprx'+str(args.approximate_cluster_on)
-            rand_mix = np.random.permutation(len(pwm_set))
-            rand_set,rand_left = rand_mix[:args.approximate_cluster_on], rand_mix[args.approximate_cluster_on:]
-            
-            pwm_left = pwm_set[rand_left]
-            pwmnames_left = pwmnames[rand_left]
-            pwm_set = pwm_set[rand_set]
-            pwmnames = pwmnames[rand_set]
-        
         if not os.path.isfile(args.linkage):
+        
+            if args.reduce_by_name:
+                # Reduce seqlets if they have the same name and the same 
+                seq_names = np.array([args.seqname_delimiter.join(np.array(mn.split(args.seqname_delimiter, args.seqname_inclusion)[:args.seqname_inclusion]))+'_'+mn.rsplit('_',1)[-1] for mn in pwmnames])
+                seqlet_names = np.copy(pwmnames)
+                pwmnames, reduce_index, reverse_index = np.unique(seq_names, return_index = True, return_inverse = True)
+                print(f'Reduced seqlets to {len(pwmnames)} from {len(seqlet_names)} by their names', args.seqname_delimiter, args.seqname_inclusion)
+                
+                npwm_set = []
+                for pwmn in pwmnames:
+                    mask = np.where(seq_names == pwmn)[0]
+                    npwm_set.append(np.mean(pwm_set[mask], axis = 0))
+                    #corrpwm = np.corrcoef(np.array(list(pwm_set[mask])).reshape(len(mask), -1), np.array(list(pwm_set[mask])).reshape(len(mask), -1))
+                    #if (corrpwm < 0.95).any():
+                        #print(np.amin(corrpwm))
+                pwm_set = np.array(npwm_set, dtype = object)
+            
+            if args.approximate_cluster_on is not None: # Approximation of clusters
+                # cluster only subset and assign left over seqlets to assigned 
+                # clusters based on the similarity to the three most distant 
+                # points in the cluster. Reduced memory by only computing 
+                # similarity to three points per cluster.
+                np.random.seed(0)
+                if args.outname is None:
+                    outname += 'aprx'+str(args.approximate_cluster_on)
+                rand_mix = np.random.permutation(len(pwm_set))
+                rand_set,rand_left = rand_mix[:args.approximate_cluster_on], rand_mix[args.approximate_cluster_on:]
+                
+                pwm_left = pwm_set[rand_left]
+                pwmnames_left = pwmnames[rand_left]
+                pwm_set = pwm_set[rand_set]
+                pwmnames = pwmnames[rand_set]
+            
             # Align and compute correlatoin between seqlets using torch conv1d.
             correlation, ofs, revcomp_matrix= torch_compute_similarity_motifs(pwm_set, pwm_set, metric = args.distance_metric, min_sim = args.min_overlap, infocont = args.infocont, reverse_complement = args.reverse_complement, exact = args.approximate_distance, return_alignment = True)
             
@@ -228,6 +253,10 @@ if __name__ == '__main__':
         else:
            
             clusterpwms = combine_pwms(pwm_set, clusters, 1.-correlation, ofs, revcomp_matrix)
+        
+        if args.reduce_by_name:
+            clusters = clusters[reverse_index]
+            pwmnames = seqlet_names
         
         np.savetxt(outname + '.txt', np.array([pwmnames,clusters]).T, fmt = '%s')
         print(outname + '.txt')

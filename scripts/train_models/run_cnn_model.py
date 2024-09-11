@@ -43,7 +43,14 @@ if __name__ == '__main__':
         
     X, Y, names, features, experiments = readin(inputfile, outputfile, delimiter = delimiter,return_header = True, assign_region = aregion, mirrorx = mirror, combinex = combinput)
     
-        # make X with 8 rows for ACGTACGT to capture the reverse complement
+    if '--load_output_track_names' in sys.argv and experiments is None:
+        track_names = sys.argv[sys.argv.index('--load_output_track_names')+1]
+        if ',' in track_names:
+            experiments = [np.genfromtxt(tr, dtype = str) for tr in track_names.split(',')]
+        else:
+            experiments = np.genfromtxt(tr, str)
+
+    # make X with 8 rows for ACGTACGT to capture the reverse complement
     reverse_complement = False
     if '--reverse_complement' in sys.argv:
         reverse_complement = True
@@ -485,6 +492,7 @@ if __name__ == '__main__':
     if isinstance(Y,list):
         # Y_pred returns concatenated list
         Y = np.concatenate(Y, axis = 1)
+    if isinstance(experiments, list):
         experiments = np.concatenate(experiments)
         
     if '--norm2output' in sys.argv:
@@ -504,6 +512,14 @@ if __name__ == '__main__':
         Y_emb = model.predict(X[testset], location = emb_layer)
         np.savez_compressed(outname+'_embed.npz', names = names[testset], values = Y_emb)
         
+    meanclasses = None
+    if '--average_outclasses' in sys.argv:
+        meanclasses = np.genfromtxt(sys.argv[sys.argv.index('--average_outclasses')+1], dtype = str)
+        tsort = []
+        for exp in experiments:
+            tsort.append(list(meanclasses[:,0]).index(exp))
+        meanclasses = meanclasses[tsort][:,1]
+    
     
     if Y is not None:
             
@@ -525,14 +541,6 @@ if __name__ == '__main__':
                 if len(np.unique(fileclass[mask])) > 1:
                     for m in mask:
                         testclasses[m] = testclasses[m] + fileclass[m]
-        
-        meanclasses = None
-        if '--average_outclasses' in sys.argv:
-            meanclasses = np.genfromtxt(sys.argv[sys.argv.index('--average_outclasses')+1], dtype = str)
-            tsort = []
-            for exp in experiments:
-                tsort.append(list(meanclasses[:,0]).index(exp))
-            meanclasses = meanclasses[tsort][:,1]
         
         
         # Sometimes we're not interested in the reconstruction for all genes in the training set and we can define a set of genes that we're most interested in
@@ -641,7 +649,6 @@ if __name__ == '__main__':
                 ntrack_indices.append(track_indices[track_indices_classes == trincl])
             track_indices = ntrack_indices
             
-        
         if attribution_type == 'ism':
             attarray = ism(X[testset], model, track_indices)
         elif attribution_type == 'grad':
@@ -657,7 +664,7 @@ if __name__ == '__main__':
             track_indices = unique_track_indices_classes
         
         np.savez_compressed(outname + '_'+attribution_type+addppmname+selected_tracks.replace(',', '-') + '.npz', names = names[testset], values = attarray, experiments = track_indices)
-    
+        print('Attributions saved as', outname + '_'+attribution_type+addppmname+selected_tracks.replace(',', '-') + '.npz')
 
     
     
