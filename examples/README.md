@@ -1,5 +1,6 @@
 # This directory contains markdown sites with descriptions and code to execute different analysis. 
 
+
 ## [Train models](https://github.com/LXsasse/DRG/examples/Train\ models.md)
 
 ### Single input - single output model
@@ -15,6 +16,7 @@
 ### BP-model
 - Exmaple how to train a bias model on protein free data
 - How to train a bias model on closed OCRs
+
 
 ## Reload model for inference and in silico experiments
 
