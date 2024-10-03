@@ -453,7 +453,7 @@ class cnn_multi_deeplift_wrapper(torch.nn.Module):
         self.N = N
         self.n = n
     
-    def forward(self, X, arg):
+    def forward(self, X, args):
         '''
         X : torch.Tensor 
             is the sequence of interest
@@ -461,9 +461,9 @@ class cnn_multi_deeplift_wrapper(torch.nn.Module):
             contains other sequences in order as given originally 
         '''
         x = []
-        for i in range(N):
-            t = 0
-            if i == n:
+        t = 0
+        for i in range(self.N):
+            if i == self.n:
                 x.append(X)
                 t = 1
             else:
@@ -507,6 +507,8 @@ def deeplift(x, model, tracks, baseline = None, batchsize = None, corrected_raw_
     Returns
     -------
     
+    TODO
+    Does now work with multi-sequence input CNN yet, something wrong with batch_norm mean.
     '''
     
     from tangermeme.deep_lift_shap import deep_lift_shap, _nonlinear, _maxpool
@@ -597,7 +599,7 @@ def deeplift(x, model, tracks, baseline = None, batchsize = None, corrected_raw_
         if isinstance(tracks[0], list) or isinstance(tracks[0], np.ndarray):
             model = cnn_average_wrapper(model, tracks)
             tracks = [i for i in range(len(tracks))]
-
+    
     if isinstance(x, list):
         grad = []
         for n in range(Nin):
@@ -610,11 +612,13 @@ def deeplift(x, model, tracks, baseline = None, batchsize = None, corrected_raw_
                     # otherwise it might think that these are distinct additional
                     # inputs
                     bs = min(batchsize, Ni-b)
+                    #print(baseline[0].shape)
                     if n_shuffles is not None:
                         bl = baseline
                     else:
                         bl = baseline[n][:bs]
                     args = [xj[b:b+batchsize] for j, xj in enumerate(x) if j != n] 
+                    
                     gr = deep_lift_shap(model, xi[b:b+bs], args = args, target = tr, references = bl, n_shuffles = n_shuffles, device=device, raw_outputs = raw_outputs, hypothetical = hypothetical, additional_nonlinear_ops = {SoftmaxNorm: _nonlinear, EXPmax : _nonlinear}).cpu().detach().numpy()
                     if raw_outputs:
                         gr = np.mean(gr, axis = 1)
@@ -778,7 +782,7 @@ def extract_kernelweights_from_state_dict(state_dict, kernel_layer_name = 'convo
                 kernelmats.append(namep.split('.'))
         if len(kernelmats) > 1:
             unique_names = []
-            for k in range(len(kernel_mats)):
+            for k in range(len(kernelmats)):
                 kernelnames = kernelmats[k:k+1] + kernelmats[:k] + kernelmats[k+1:]
                 unique_name = reduce(np.setdiff1d, kernelnames)
                 if len(unique_name) > 0:

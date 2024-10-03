@@ -91,16 +91,19 @@ class MyDataset(Dataset):
         
 # Either use cpu or use gpu with largest free memory
 def get_device():
-    tot = os.popen('nvidia-smi -q -d Memory |grep -A4 GPU|grep Total').readlines()
-    used = os.popen('nvidia-smi -q -d Memory |grep -A4 GPU|grep Used').readlines()
-    tot = np.array([int(x.split()[2]) for x in tot])
-    used = np.array([int(x.split()[2]) for x in used])
-    memory_available = tot - used
-    if len(memory_available) > 0:
-        bcuda = np.argmax(memory_available)
+    if torch.cuda.is_available():
+        tot = os.popen('nvidia-smi -q -d Memory |grep -A4 GPU|grep Total').readlines()
+        used = os.popen('nvidia-smi -q -d Memory |grep -A4 GPU|grep Used').readlines()
+        tot = np.array([int(x.split()[2]) for x in tot])
+        used = np.array([int(x.split()[2]) for x in used])
+        memory_available = tot - used
+        if len(memory_available) > 0:
+            bcuda = np.argmax(memory_available)
+        else:
+            bcuda = 0
+        device = torch.device("cuda:"+str(bcuda) if torch.cuda.is_available() else "cpu")
     else:
-        bcuda = 0
-    device = torch.device("cuda:"+str(bcuda) if torch.cuda.is_available() else "cpu")
+        device = 'cpu'
     return device
 
 

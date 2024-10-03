@@ -510,7 +510,7 @@ if __name__ == '__main__':
     if '--save_embedding' in sys.argv:
         emb_layer = sys.argv[sys.argv.index('--save_embedding')+1]
         Y_emb = model.predict(X[testset], location = emb_layer)
-        np.savez_compressed(outname+'_embed.npz', names = names[testset], values = Y_emb)
+        np.savez_compressed(outname+'_embed'+emb_layer+'.npz', names = names[testset], values = Y_emb)
         
     meanclasses = None
     if '--average_outclasses' in sys.argv:
@@ -535,12 +535,28 @@ if __name__ == '__main__':
         
         if fileclass is not None:
             fileclass = np.concatenate(fileclass)
-            testclasses = testclasses.astype('<U20')
+            experiments = experiments.astype('<U200')
+            testclasses = testclasses.astype('<U200')
+            if meanclasses is not None:
+                meanclasses = meanclasses.astype('<U200')
+            unexp, unexp_n = np.unique(experiments, return_counts = True)
+            expname_add_class = (unexp_n > 1).any() # Determine automatically of fileclasses should be added to experiment names
+            if meanclasses is not None:
+                unmeanclass = np.unique(meanclasses)
+                add_to_meanclass = False
+                for umnc in unmeanclass:
+                    mcmask = meanclasses == umnc
+                    if len(np.unique(fileclass[mcmask]))>1:
+                        add_to_meanclass = True
             for tclass in np.unique(testclasses):
                 mask = np.where(testclasses == tclass)[0]
                 if len(np.unique(fileclass[mask])) > 1:
                     for m in mask:
                         testclasses[m] = testclasses[m] + fileclass[m]
+                        if expname_add_class:
+                            experiments[m] = experiments[m] + '_' + fileclass[m]
+                        if add_to_meanclass:
+                            meanclasses[m] = meanclasses[m] + fileclass[m]
         
         
         # Sometimes we're not interested in the reconstruction for all genes in the training set and we can define a set of genes that we're most interested in
