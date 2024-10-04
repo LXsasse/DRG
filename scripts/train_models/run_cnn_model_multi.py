@@ -540,7 +540,7 @@ if __name__ == '__main__':
         if '--topattributions' in sys.argv:
             topattributions = int(sys.argv[sys.argv.index('--topattributions')+1])
         if '--seqattribution_name' in sys.argv:
-            selected_tracks = sys.argv[sys.argv.index('--gradname')+1]
+            selected_tracks = sys.argv[sys.argv.index('--seqattribution_name')+1]
         
         if meanclasses is not None:
             track_indices_classes = meanclasses[track_indices]

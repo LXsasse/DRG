@@ -62,14 +62,13 @@ tset='Testset1.txt' # Test set sequences that are used to analyze the models lea
 classfile=celltype.class.txt # Analysis will be split between different cell types but not conditions
 parms=${outdir}exonicdegradintroniconTSS40kRNA40krcomp_sd1-cv10-1_Cormsek300l15TfGELUwei4rcTvlCotaNone_dc3i1d1-2-4s1l11r1_tc4d300d1s1r1l11mw6nfc3s1024dicedictdictcbnoTfdo0.1tr1e-05SGD0.9bs8-F_comb88nl0Linear1.1r0_model_params.dat
 
-python ${scriptdir}run_cnn_model.py $input ${output0},${deoutput0},${troutput0} --outdir $outdir --delimiter $'\t' --reverse_complement --predictnew --select_list $tset --cnn ${parms} outname=${parms%_model_params.dat}+device=${device} --split_outclasses $classfile --kernel_analysis --save_kernel_filters --save_correlation_perpoint --add_fileclasses ex,kd,kt 
-
+python ${scriptdir}run_cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --delimiter $'\t' --reverse_complement True,False --predictnew --select_list $tset --cnn ${parms} outname=${parms%_model_params.dat}+device=${device}+shared_embedding=False --add_fileclasses ex,kd,kt --split_outclasses $classfile --kernel_analysis --save_kernel_filters --save_correlation_perpoint
 
 
 # Load model parameters to save TISMs
 tset=pbslist.txt # You can also use sequences that are well predicted and have strong signal (here across PBS conditions for example)
 # Load model parameters to save TISMs/corrected gradients, deepshap does not work yet
-python ${scriptdir}cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --delimiter $'\t' --reverse_complement True,False --predictnew --select_list $tset --cnn ${parms} outname=${parms%_model_params.dat}+device=${device}+shared_embedding=False --add_fileclasses ex,kd,kt --sequence_attributions grad Bfo_PBS_ex,DC8+_PBS_ex,MC_PBS_ex,MFRP_PBS_ex,MF_PBS_ex,MZB_PBS_ex,Mo6C+_PBS_ex,NK_PBS_ex,T4_PBS_ex,T8_PBS_ex,Tgd_PBS_ex,Treg_PBS_ex,pDC_PBS_ex --topattributions 500 --seqattribution_name PBSs2
+python ${scriptdir}run_cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --delimiter $'\t' --reverse_complement True,False --predictnew --select_list $tset --cnn ${parms} outname=${parms%_model_params.dat}+device=${device}+shared_embedding=False --add_fileclasses ex,kd,kt --sequence_attributions grad Bfo_PBS_ex,DC8+_PBS_ex,MC_PBS_ex,MFRP_PBS_ex,MF_PBS_ex,MZB_PBS_ex,Mo6C+_PBS_ex,NK_PBS_ex,T4_PBS_ex,T8_PBS_ex,Tgd_PBS_ex,Treg_PBS_ex,pDC_PBS_ex --topattributions 500 --seqattribution_name PBSs2
 # --topattributions only saves the 500 positions of the strongest attributions in each celltype, the shape of the base-type channel is extended by one with the position of the attributions in sequence, from 4 bases (ACGT) to 5 (ACGT +position)
 # --sequence_attributions <type> <tracks> 
 # <type> can be grad, deepshap, ism, and deeplift: ism takes too long and deepshap and deeplift do not work for these models yet
