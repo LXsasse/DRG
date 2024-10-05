@@ -427,9 +427,9 @@ if __name__ == '__main__':
                 meanclasses = meanclasses.astype('<U200')
             unexp, unexp_n = np.unique(experiments, return_counts = True)
             expname_add_class = (unexp_n > 1).any() # Determine automatically of fileclasses should be added to experiment names
+            add_to_meanclass = False
             if meanclasses is not None:
                 unmeanclass = np.unique(meanclasses)
-                add_to_meanclass = False
                 for umnc in unmeanclass:
                     mcmask = meanclasses == umnc
                     if len(np.unique(fileclass[mcmask]))>1:
