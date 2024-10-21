@@ -11,5 +11,7 @@ setup(
     install_requires=[
         "numpy >= 1.14.2",
         "torch >= 1.9.0",
+        "fft_conv_pytorch == 1.2.0",
+        "einops == 0.8.0",
     ],
 )
