@@ -366,7 +366,7 @@ class multinomial(nn.Module):
         self.log_counts = log_counts
         self.eps = eps
         
-    def forward(self, p: torch.tensor, q: torch.tensor):
+    def forward(self, p: torch.Tensor, q: torch.Tensor):
         # bin the counts data, if mean_size = None then bin is entire length of input
         if self.mean_size is None:
             self.mean_size = p.size(dim = -1)
@@ -402,7 +402,7 @@ class JSD(nn.Module):
         self.reduction = reduction
         self.eps = eps
         
-    def forward(self, p: torch.tensor, q: torch.tensor):
+    def forward(self, p: torch.Tensor, q: torch.Tensor):
         if self.mse is not None:
             if self.mean_size is None:
                 self.mean_size = p.size(dim = -1)
@@ -453,7 +453,7 @@ class BCEMSE(nn.Module):
         self.log_counts = log_counts
         self.eps = eps
         
-    def forward(self, p: torch.tensor, q: torch.tensor):
+    def forward(self, p: torch.Tensor, q: torch.Tensor):
         if self.mean_size is None:
             self.mean_size = p.size(dim = -1)
         if self.meanpool is None:
