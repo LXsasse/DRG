@@ -486,8 +486,8 @@ class LogMSELoss(nn.Module):
         q = q-minq.unsqueeze(-1)
         q =torch.log(q+self.eps)
         if self.log_prediction:
-            p = p-minp.unsqueeze(-1)
             minp = torch.min(p,dim =-1)[0]
+            p = p-minp.unsqueeze(-1)
             p =torch.log(p+self.eps)
         return self.mse(p,q)
     
@@ -1557,8 +1557,11 @@ class final_convolution(nn.Module):
             self.cut_sites = [cut_sites, cut_sites]
         else:
             self.cut_sites = cut_sites
+        
         if batch_norm:
-            self.Bnorm = self.nn.BatchNorm1d(currdim)
+            # TODO: VERIFY 
+            # NOTE [Alyss Flynn 2024-10-21]: used gap_conv init as reference; changed self.nn.BatchNorm1d(currdim) to nn.BatchNorm1d(indim) 
+            self.Bnorm = nn.BatchNorm1d(indim)
 
         self.n_convolutions = n_convolutions
         if n_convolutions > 1:
@@ -1601,7 +1604,7 @@ class final_convolution(nn.Module):
 
 # Interaction module creates non-linear interactions between all features by multiplying them with each other and then multiplies a weight matrix to them
 class interaction_module(nn.Module):
-    def __init__(self, indim, outdim):
+    def __init__(self, indim, outdim, classes=None):
         super(interaction_module, self).__init__()
         self.outdim = outdim # if outdim is 1 then use softmax output
         # else use RelU
@@ -1842,7 +1845,7 @@ class MyAttention_layer(nn.Module):
                 if self.receptive_matmul.mask.is_cuda:
                     devicetobe = self.qpred.get_device()
                     self.receptive_matmul.to('cuda:'+str(devicetobe))
-            attmatix = self.receptive_matmul(qpred, kpred)
+            attmatrix = self.receptive_matmul(qpred, kpred)
         else:
             qpred = qpred.transpose(-1,-2)
             attmatrix = torch.matmul(qpred, kpred)
@@ -1930,9 +1933,18 @@ class PredictionHead(nn.Module):
 # Returns a stretching and adds bias for each kernel dimension after convolution
 # Also good example how write own module with any tensor multiplication and initialized parameters
 class Kernel_linear(nn.Module):
-    def __init__(self, n_kernels: int) -> None:
+    # TODO: VERIFY 
+    # NOTE [Alyss Flynn 2024-10-21]: this init only included one input `n_kernels: int`,
+    # but common usage appears to require two inputs => `Kernel_linear(currdim, self.kernel_thresholding)`,
+    # and internally it seems to require additional keyword parameters (**factory_kwargs) to pass into torch.empty.
+    # 
+    # I added `kernel_thresholding: int` and `**factory_kwargs` to the init, to fix Type/NameErrors, 
+    # but I want to verify these changes are appropriate for typical use of this class.
+    # Also, we should replace `**factory_kwargs` with explicit key-value pairs to avoid passing invalid args to torch.empty.
+    def __init__(self, n_kernels: int, kernel_thresholding: int, **factory_kwargs) -> None:
         super(Kernel_linear, self).__init__()
         self.n_kernels = n_kernels
+        self.kernel_thresholding = kernel_thresholding
         self.weight = Parameter(torch.empty((1, n_kernels, 1), **factory_kwargs))
         self.bias = Parameter(torch.empty(n_kernels, **factory_kwargs))
         self.init_parameters()
