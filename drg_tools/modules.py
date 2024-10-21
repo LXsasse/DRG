@@ -1537,7 +1537,6 @@ class parallel_module(nn.Module):
     def forward(self, x):
         out = []
         for m in self.modellist:
-            outadd = m(x)
             if self.flatten:
                 out.append(torch.flatten(m(x), start_dim = 1, end_dim = -1))
             else:
