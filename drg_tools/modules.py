@@ -4,17 +4,16 @@ Contains torch.modules for automatic model building
 i.e. loss functions and model layers
 '''
 
-
-import sys, os 
+import math
 import numpy as np
 import torch.nn as nn
 import torch
+import torch.nn.functional as F
 from collections import OrderedDict
+from einops.layers.torch import Rearrange
+from fft_conv_pytorch import fft_conv
 from torch import Tensor
 from torch.nn.parameter import Parameter
-import math
-import torch.nn.functional as F
-from fft_conv_pytorch import fft_conv
 
 
 class EXPmax(nn.Module):
@@ -796,7 +795,6 @@ class Res_FullyConnect(nn.Module):
 
         return pred
 
-from einops.layers.torch import Rearrange
 #from einops import rearrange
 # This one is included into Padded_AvgPool1d now
 class SoftmaxNorm(nn.Module):
