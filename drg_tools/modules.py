@@ -1306,7 +1306,7 @@ class Res_Conv1d(nn.Module):
                 self.convlayers['Bnorm'+str(n)] = nn.BatchNorm1d(currdim + int(concatenate_residual*dtl*(residual_after>0))*currdim)
             
             # decide if activation function should be applied before or after convolutional layer
-            if act_func_before and ((~is_modified) or (n != 0)):
+            if act_func_before and ((not is_modified) or (n != 0)):
                 self.convlayers['Conv_func'+str(n)] = func_dict[activation_function]()
             
             if long_conv:
