@@ -1322,7 +1322,7 @@ class Res_Conv1d(nn.Module):
                 # (non-symmetric) padding to have same padding left and right of sequence and get same sequence length
                 convpad = [int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))-int((dilations[n]*(l_kernels[n]-1)+1)%2==0), int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))]
                 # padded convolutional layer
-                concatcheck = int(concatenate_residual*dtl)*int(n%residual_after==0)*int(linear_layer==False) # check if input is concatenated output of convolution and residual or not
+                concatcheck = int(concatenate_residual*dtl)*int(n%residual_after==0)*int(linear_layer is False) # check if input is concatenated output of convolution and residual or not
                 self.convlayers['Conv'+str(n)] = Padded_Conv1d(currdim+ concatcheck*currdim, int(currdim*kernel_increase[n]), kernel_size = l_kernels[n], bias = bias, stride = strides[n], dilation = dilations[n], padding = convpad)
                 currlen = int(np.floor((currlen +convpad[0]+convpad[1]- dilations[n]*(l_kernels[n]-1)-1)/strides[n]+1))
             # see above
@@ -1387,7 +1387,9 @@ class Res_Conv1d(nn.Module):
             self.residual_entire = Residual_convolution(resedim, currdim, resentire)
         else:
             self.residual_entire = None
-        concatcheck = int(concatenate_residual)*int(n%residual_after==0)*int(linear_layer==False) # check if input is concatenated output of convolution and residual or not
+        
+        # check if input is concatenated output of convolution and residual or not
+        concatcheck = int(concatenate_residual)*int(n%residual_after==0)*int(linear_layer is False) 
         
         self.currdim, self.currlen = currdim+ concatcheck*currdim +int(residual_entire)*currdim, currlen
         
@@ -1447,7 +1449,7 @@ class gap_conv(nn.Module):
         self.out_len = int(np.floor((in_len + padding - kernel_size)/stride +1))
         # max pooling before layers are flattened to reduce dimension of output given to fully connected layer
         self.pooling = None
-        if pooling == True:
+        if pooling is True:
             poolstride = int(kernel_size/2)
         elif pooling > 1:
             poolstride = pooling
