@@ -1,22 +1,19 @@
-import sys, os 
+import sys
 import numpy as np
 import torch.nn as nn
 import torch
 from collections import OrderedDict
 
-
-from .modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, func_dict_single, Padded_Conv1d, RC_Conv1d, PredictionHead, Hyena_Conv
+from .modules import (
+    parallel_module, gap_conv, pooling_layer, Res_Conv1d, MyAttention_layer, 
+    Kernel_linear, func_dict, Padded_Conv1d, final_convolution
+)
 from .model_training import pwm_scan, batched_predict, fit_model
 from .model_output import add_params_to_outname
 
 
-
-
-
-
-
-# flexible Convolutional neural network architecture
 class bpcnn(nn.Module):
+    """Flexible Convolutional neural network architecture."""
     def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, reverse_complement = False, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, weighted_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = 0, dilmean_pooling = 0, dilweighted_pooling= 0, dilpooling_residual = 1, dilresidual_entire = False, dilresidual_concat = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_interpolated_conv = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, attentionmax_pooling = 0, attentionweighted_pooling = 0, attentionconv_pooling = 1, attention_multiplier = 0.5, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = 0, trmean_pooling = 0, trweighted_pooling = 0, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, **kwargs):
         super(bpcnn, self).__init__()
         
@@ -83,7 +80,7 @@ class bpcnn(nn.Module):
         self.weighted_pooling = weighted_pooling
         self.pooling_size = pooling_size    # The size of the pooling window, Can span the entire sequence
         self.pooling_steps = pooling_steps # The step size of the pooling window, stepsizes smaller than the pooling window size create overlapping regions
-        if self.max_pooling == False and self.mean_pooling == False and self.weighted_pooling == False:
+        if self.max_pooling is False and self.mean_pooling is False and self.weighted_pooling is False:
             self.pooling_size = None
             self.pooling_steps = None
         elif self.pooling_size is None and self.pooling_steps is None:
@@ -208,7 +205,6 @@ class bpcnn(nn.Module):
         self.aug_loss = aug_loss # loss function for augmentation sequence learning
         self.aug_loss_mix = aug_loss_mix # mixture value between main and augmenting task
 
-
         self.outclass = outclass # Class: sigmoid, Multi_class: Softmax, Complex: for non-linear scaling
 
         self.outname = outname
@@ -263,8 +259,7 @@ class bpcnn(nn.Module):
         # set learning_rate reduce or increase learning rate for kernels by hand
         if self.kernel_lr is None:
             self.kernel_lr = lr
-        
-        
+
         currdim = self.n_features
         currlen = self.l_seqs + 2*paddy
         if self.verbose:
@@ -367,15 +362,13 @@ class bpcnn(nn.Module):
             self.distattention = nn.Sequential(distattention)
             if self.verbose:
                 print('Attention', currdim, currlen)
-            
-        
-        
+
         # convolutional layers and pooling layers to reduce the dimension after transformer detected kernel interactions
         if self.transformer_convolutions > 0:
             if self.trconv_dim is None:
                 self.trconv_dim = currdim
             
-            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmaxpooling_size, mean_pooling=trmeanpooling_size, residual_after = self.trpooling_residual, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
+            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = self.trmax_pooling, mean_pooling = self.trmean_pooling, residual_after = self.trpooling_residual, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
             currdim, currlen = self.trconvolution_layers.currdim, self.trconvolution_layers.currlen
             if self.verbose:
                 print('Convolution after attention', currdim, currlen)
@@ -383,7 +376,7 @@ class bpcnn(nn.Module):
         elif (self.trmax_pooling >0  or self.trmean_pooling >0 or self.trweighted_pooling > 0) and self.transformer_convolutions == 0:
             trpooling_size = max(max(self.trmax_pooling,self.trmean_pooling),self.trweighted_pooling)
             self.trconvolution_layers = pooling_layer(self.trmax_pooling>0, self.trmean_pooling>0, self.trweighted_pooling > 0, pooling_size=trpooling_size, stride=trpooling_size, padding = np.ceil((trpooling_size-currlen%trpooling_size)/2)*int(currlen%trpooling_size>0))
-            currlen = int(np.ceil(currlen/self.trpooling_size))
+            currlen = int(np.ceil(currlen/trpooling_size))
             currdim = (int(self.trmax_pooling>0) + int(self.trmean_pooling>0)) * currdim
         
         # Initialize gapped convolutions
@@ -421,8 +414,7 @@ class bpcnn(nn.Module):
         elif self.outclass != 'Linear':
             classifier[self.outclass] = func_dict[self.outclass]
         self.classifier = nn.Sequential(classifier)
-        
-   
+
     # The prediction after training are performed on the cpu
     def predict(self, X, pwm_out = None, mask = None, device = None):
         if device is None:
@@ -503,26 +495,6 @@ class bpcnn(nn.Module):
             pred = self.classifier(pred)
         
         return pred
-    
-    
+
     def fit(self, X, Y, XYval = None, sample_weights = None):
         self.saveloss = fit_model(self, X, Y, XYval = XYval, sample_weights = sample_weights, loss_function = self.loss_function, validation_loss = self.validation_loss, batchsize = self.batchsize, device = self.device, optimizer = self.optimizer, optim_params = self.optim_params, verbose = self.verbose, lr = self.lr, kernel_lr = self.kernel_lr, hot_start = self.hot_start, warm_start = self.warm_start, outname = self.outname, adjust_lr = self.adjust_lr, patience = self.patience, init_adjust = self.init_adjust, keepmodel = self.keepmodel, load_previous = self.load_previous, write_steps = self.write_steps, checkval = self.checkval, writeloss = self.writeloss, init_epochs = self.init_epochs, epochs = self.epochs, l1reg_last = self.l1reg_last, l2_reg_last = self.l2reg_last, l1_kernel = self.l1_kernel, reverse_sign = self.reverse_sign, shift_back = self.shift_sequence, random_shift=self.random_shift, smooth_onehot = self.smooth_onehot, restart = self.restart, masks = self.masks, nmasks = self.nmasks, augment_representation = self.augment_representation, aug_kernel_size = self.aug_kernel_size, aug_conv_layers = self.aug_conv_layers, aug_loss_masked = self.aug_loss_masked, aug_loss = self.aug_loss, aug_loss_mix = self.aug_loss_mix, **self.kwargs)
-        
-
-
-
-
-
-    
-
-    
-    
-    
-
-
-
-
-
-
-
-
