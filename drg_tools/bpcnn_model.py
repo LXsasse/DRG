@@ -1,18 +1,15 @@
-import sys, os 
+import sys
 import numpy as np
 import torch.nn as nn
 import torch
 from collections import OrderedDict
 
-
-from .modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, func_dict_single, Padded_Conv1d, RC_Conv1d, PredictionHead, Hyena_Conv
+from .modules import (
+    parallel_module, gap_conv, pooling_layer, Res_Conv1d, MyAttention_layer, 
+    Kernel_linear, func_dict, Padded_Conv1d, final_convolution
+)
 from .model_training import pwm_scan, batched_predict, fit_model
 from .model_output import add_params_to_outname
-
-
-
-
-
 
 
 # flexible Convolutional neural network architecture
