@@ -66,20 +66,24 @@ if __name__ == '__main__':
         std = np.sqrt(np.mean(fvalues**2, axis = (-1,-2)))
     else:
         std = np.sqrt(np.mean(values**2, axis = (-1,-2)))
+    
     if norm == 'condition':
         std = np.mean(std, axis = 0)[None,:, None]
     elif norm == 'seq':
         std = np.mean(std, axis = 1)[:,None, None]
     elif norm == 'global':
         std = np.mean(std)
+    elif norm == 'std':
+        std = np.float64(sys.argv[7])
     else:
         std = np.array(1.)
+    print('std', std, type(std))
     
     refatt = np.sum(values*seqs[:,None,:,:], axis = -1)
     stats = refatt/std
     
     if '--normpwms' in sys.argv and norm not in ['global', 'seq', 'condition']:
-        print('normpwms')
+        print('normpwms') # normalize values by std of individual sequence
         std = np.mean(np.sqrt(np.mean(values**2, axis = (-1,-2))))
     
     values = values/std[...,None]

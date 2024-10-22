@@ -305,8 +305,9 @@ def plot_pwms(pwm, log = False, showaxes = False, unit = 0.4, channels= list('AC
         nshape = list(np.shape(pwm[0]))
         nshape[0] = nshape[0] + offleft + offright # total length that is 
         #needed to fit all pwms into region when aligned to each other
-
-        fig = plt.figure(figsize = (len(pwm) * nshape[0]*unit,3*unit*nshape[1]), dpi = 50)
+ 
+        fig = plt.figure(figsize = (unit*nshape[0], len(pwm) * nshape[1]*2*unit), dpi = 50)
+        print((unit*nshape[0], len(pwm) * nshape[1]*unit), len(pwm), nshape)
         for p, pw in enumerate(pwm):
             ax = fig.add_subplot(len(pwm), 1, p + 1)
             if revcomp_matrix[p] == 1:
@@ -881,7 +882,7 @@ def approximate_density(x, bins = 20, sliding_windows = 4, miny=None, maxy = Non
     
     return dens
 
-def _simple_swarmplot(data, positions, vert = True, unit = 0.4, colormin = None, colormax = None, color = None, cmap = None, connect_swarm = False, scattersort = 'top', scatter_size = None, ax = None):
+def _simple_swarmplot(data, positions, vert = True, unit = 0.4, colormin = None, colormax = None, color = None, cmap = None, connect_swarm = False, scattersort = 'top', scatter_size = None, width = 1., scatter_alpha = 0.8, ax = None):
     '''
     Creates a simple swarmplot with scatter plot with control over all aspects
     in the swarm, such as size, color, connections between distributions
@@ -1104,7 +1105,7 @@ def plot_distribution(
     data = list(data)
     
     if swarm: # add fancy swarmplot with different option on top of boxplot
-        _simple_swarmplot(data, positions, vert = vert, colormin = colormin, colormax = colormat, color = scatter_color, cmap = scatter_colormap, connect_swarm = connect_swarm, scattersort = scattersort, scatter_size = scatter_size, ax = ax)
+        _simple_swarmplot(data, positions, vert = vert, colormin = colormin, colormax = colormax, color = scatter_color, cmap = scatter_colormap, connect_swarm = connect_swarm, scattersort = scattersort, scatter_size = scatter_size, width = width*0.9, scatter_alpha = scatter_alpha, ax = ax)
             
         # generate colorbar
         if ((scatter_color is not None) and (not isinstance(scatter_color, str))):

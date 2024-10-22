@@ -12,27 +12,30 @@ def ExpPWM(pwms):
     for p,pwm in enumerate(pwms):
         pwms[p] = np.exp(pwm)
 
-def stripPWM(pwms, cut, metric = 'sum', relative=True):
+def stripPWM(pwms, cut, metric = 'absum', relative=True):
     for p,pwm in enumerate(pwms):
+        #print(pwm.shape)
         if metric == 'sum':
             pwmsum = np.sum(pwm,axis=0)
-        if metric == 'absum':
+        elif metric == 'absum':
             pwmsum = np.sum(np.abs(pwm),axis=0)
-        if metric == 'max':
+        elif metric == 'max':
             pwmsum = np.amax(pwm,axis=0)
-        if metric == 'absmax':
+        elif metric == 'absmax':
             pwmsum = np.amax(np.abs(pwm),axis=0)
+        
         if relative:
             mask = np.where(pwmsum >= cut*np.amax(pwmsum))[0]
         else:
             mask = np.where(pwmsum >= cut)[0]
-
+        
         if mask[-1]-1 > mask[0]:
             pwms[p] = pwm[:,mask[0]:mask[-1]+1]
         else:
             print('No entries in pwm', names[p], pwmsum)
             print('Change stripcut')
             sys.exit()
+        #print(pwms[p].shape)
 
 def normPWM(pwms, norm = 'sumpos'):
     for p,pwm in enumerate(pwms):
@@ -64,6 +67,9 @@ if __name__ == '__main__':
     
     pwms = [pwm.T for pwm in pwms]
     
+    if '--useIDasname' in sys.argv:
+        names = np.arange(len(names)).astype(str)
+    
     if '--set' in sys.argv:
         setfile = sys.argv[sys.argv.index('--set')+1]
         tset = np.genfromtxt(setfile, dtype = str)
@@ -79,18 +85,23 @@ if __name__ == '__main__':
     
     if '--transform' in sys.argv:
         trans = sys.argv[sys.argv.index('--transform')+1]
+        # Provide transformations in order separated by ,
+        # Transformations can be: exp, norm, strip
+        # strip and norm can use additional arguments, separated by =
         if ',' in trans:
             trans = trans.split(',')
         else:
             trans = [trans]
+        
         for t, tr in enumerate(trans):
             outname += '.'+tr.replace('=','').replace('.','')
+            
             if '=' in tr:
                 tr = tr.split('=')
             else:
                 tr = [tr]
             
-            for i, tri in enumerate(tr):
+            for i, tri in enumerate(tr): # transform string entries to correct types
                 tr[i] = check(tri)
             if tr[0] == 'exp':
                 ExpPWM(pwms)
@@ -134,6 +145,7 @@ if __name__ == '__main__':
         clusters = np.arange(len(names)).astype(str)
     else:
         clusters = names
+    
     outname += '.meme'
     write_meme_file(pwms, clusters, ''.join(nts), outname, round = 3)
     

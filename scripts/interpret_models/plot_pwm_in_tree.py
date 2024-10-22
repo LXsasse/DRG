@@ -157,6 +157,9 @@ if __name__ == '__main__':
             pffile = np.genfromtxt(featurefile, dtype = str)
             pfnames = pffile[:,0]
             pfeffects = pffile[:,[1]].astype(float)
+            upf, upfN = np.unique(pfnames, return_counts = True)
+            if len(np.unique(upfN)) == 1:
+                pfnames = pfnames[:int(len(pfnames)/upfN[0])]
         # Join determines how many boxplots are shown for each data point
         if len(pfeffects)%len(pfnames) != 0:
             print('pwmfeatures do not match pfnames')
