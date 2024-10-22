@@ -8,4 +8,4 @@ data
 trash
 archive
 .venv
-.mypy_cache
+.*_cache
