@@ -80,7 +80,7 @@ class bpcnn(nn.Module):
         self.weighted_pooling = weighted_pooling
         self.pooling_size = pooling_size    # The size of the pooling window, Can span the entire sequence
         self.pooling_steps = pooling_steps # The step size of the pooling window, stepsizes smaller than the pooling window size create overlapping regions
-        if self.max_pooling == False and self.mean_pooling == False and self.weighted_pooling == False:
+        if self.max_pooling is False and self.mean_pooling is False and self.weighted_pooling is False:
             self.pooling_size = None
             self.pooling_steps = None
         elif self.pooling_size is None and self.pooling_steps is None:
