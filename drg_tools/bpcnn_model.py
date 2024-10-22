@@ -205,7 +205,6 @@ class bpcnn(nn.Module):
         self.aug_loss = aug_loss # loss function for augmentation sequence learning
         self.aug_loss_mix = aug_loss_mix # mixture value between main and augmenting task
 
-
         self.outclass = outclass # Class: sigmoid, Multi_class: Softmax, Complex: for non-linear scaling
 
         self.outname = outname
@@ -260,8 +259,7 @@ class bpcnn(nn.Module):
         # set learning_rate reduce or increase learning rate for kernels by hand
         if self.kernel_lr is None:
             self.kernel_lr = lr
-        
-        
+
         currdim = self.n_features
         currlen = self.l_seqs + 2*paddy
         if self.verbose:
@@ -364,9 +362,7 @@ class bpcnn(nn.Module):
             self.distattention = nn.Sequential(distattention)
             if self.verbose:
                 print('Attention', currdim, currlen)
-            
-        
-        
+
         # convolutional layers and pooling layers to reduce the dimension after transformer detected kernel interactions
         if self.transformer_convolutions > 0:
             if self.trconv_dim is None:
@@ -418,8 +414,7 @@ class bpcnn(nn.Module):
         elif self.outclass != 'Linear':
             classifier[self.outclass] = func_dict[self.outclass]
         self.classifier = nn.Sequential(classifier)
-        
-   
+
     # The prediction after training are performed on the cpu
     def predict(self, X, pwm_out = None, mask = None, device = None):
         if device is None:
@@ -500,26 +495,6 @@ class bpcnn(nn.Module):
             pred = self.classifier(pred)
         
         return pred
-    
-    
+
     def fit(self, X, Y, XYval = None, sample_weights = None):
         self.saveloss = fit_model(self, X, Y, XYval = XYval, sample_weights = sample_weights, loss_function = self.loss_function, validation_loss = self.validation_loss, batchsize = self.batchsize, device = self.device, optimizer = self.optimizer, optim_params = self.optim_params, verbose = self.verbose, lr = self.lr, kernel_lr = self.kernel_lr, hot_start = self.hot_start, warm_start = self.warm_start, outname = self.outname, adjust_lr = self.adjust_lr, patience = self.patience, init_adjust = self.init_adjust, keepmodel = self.keepmodel, load_previous = self.load_previous, write_steps = self.write_steps, checkval = self.checkval, writeloss = self.writeloss, init_epochs = self.init_epochs, epochs = self.epochs, l1reg_last = self.l1reg_last, l2_reg_last = self.l2reg_last, l1_kernel = self.l1_kernel, reverse_sign = self.reverse_sign, shift_back = self.shift_sequence, random_shift=self.random_shift, smooth_onehot = self.smooth_onehot, restart = self.restart, masks = self.masks, nmasks = self.nmasks, augment_representation = self.augment_representation, aug_kernel_size = self.aug_kernel_size, aug_conv_layers = self.aug_conv_layers, aug_loss_masked = self.aug_loss_masked, aug_loss = self.aug_loss, aug_loss_mix = self.aug_loss_mix, **self.kwargs)
-        
-
-
-
-
-
-    
-
-    
-    
-    
-
-
-
-
-
-
-
-
