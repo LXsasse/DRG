@@ -380,7 +380,7 @@ class bpcnn(nn.Module):
         elif (self.trmax_pooling >0  or self.trmean_pooling >0 or self.trweighted_pooling > 0) and self.transformer_convolutions == 0:
             trpooling_size = max(max(self.trmax_pooling,self.trmean_pooling),self.trweighted_pooling)
             self.trconvolution_layers = pooling_layer(self.trmax_pooling>0, self.trmean_pooling>0, self.trweighted_pooling > 0, pooling_size=trpooling_size, stride=trpooling_size, padding = np.ceil((trpooling_size-currlen%trpooling_size)/2)*int(currlen%trpooling_size>0))
-            currlen = int(np.ceil(currlen/self.trpooling_size))
+            currlen = int(np.ceil(currlen/trpooling_size))
             currdim = (int(self.trmax_pooling>0) + int(self.trmean_pooling>0)) * currdim
         
         # Initialize gapped convolutions
