@@ -372,7 +372,7 @@ class bpcnn(nn.Module):
             if self.trconv_dim is None:
                 self.trconv_dim = currdim
             
-            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = trmaxpooling_size, mean_pooling=trmeanpooling_size, residual_after = self.trpooling_residual, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
+            self.trconvolution_layers = Res_Conv1d(currdim, currlen, self.trconv_dim, self.l_trkernels, self.transformer_convolutions, kernel_increase = self.conv_increase, max_pooling = self.trmax_pooling, mean_pooling = self.trmean_pooling, residual_after = self.trpooling_residual, activation_function = net_function, strides = trstrides, dilations = trdilations, bias = True, dropout = dropout, residual_entire = self.trresidual_entire)
             currdim, currlen = self.trconvolution_layers.currdim, self.trconvolution_layers.currlen
             if self.verbose:
                 print('Convolution after attention', currdim, currlen)
