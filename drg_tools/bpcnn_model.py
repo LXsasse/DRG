@@ -5,7 +5,7 @@ import torch
 from collections import OrderedDict
 
 
-from .modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, func_dict_single, Padded_Conv1d, RC_Conv1d, PredictionHead, Hyena_Conv
+from .modules import parallel_module, gap_conv, interaction_module, pooling_layer, correlation_loss, correlation_both, cosine_loss, cosine_both, zero_loss, Complex, Expanding_linear, Res_FullyConnect, Residual_convolution, Res_Conv1d, MyAttention_layer, Kernel_linear, loss_dict, func_dict, func_dict_single, Padded_Conv1d, RC_Conv1d, PredictionHead, Hyena_Conv, final_convolution
 from .model_training import pwm_scan, batched_predict, fit_model
 from .model_output import add_params_to_outname
 
@@ -17,7 +17,7 @@ from .model_output import add_params_to_outname
 
 # flexible Convolutional neural network architecture
 class bpcnn(nn.Module):
-    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, reverse_complement = False, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, weighted_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = 0, dilmean_pooling = 0, dilweighted_pooling= 0, dilpooling_residual = 1, dilresidual_entire = False, dilresidual_concat = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_interpolated_conv = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, attentionmax_pooling = 0, attentionweighted_pooling = 0, attentionconv_pooling = 1, attention_multiplier = 0.5, sum_attention = False, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = 0, trmean_pooling = 0, trweighted_pooling = 0, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, **kwargs):
+    def __init__(self, loss_function = 'MSE', validation_loss = None, n_features = None, reverse_complement = False, n_classes = 1, l_seqs = None, l_out = None, num_kernels = 0, kernel_bias = True, fixed_kernels = None, motif_cutoff = None, l_kernels = 7, kernel_function = 'GELU', warm_start = False, hot_start = False, hot_alpha=0.01, kernel_thresholding = 0, max_pooling = False, mean_pooling = False, weighted_pooling = False, pooling_size = None, pooling_steps = None, net_function = 'GELU', dilated_convolutions = 0, strides = 1, conv_increase = 1., dilations = 1, l_dilkernels = None, dilmax_pooling = 0, dilmean_pooling = 0, dilweighted_pooling= 0, dilpooling_residual = 1, dilresidual_entire = False, dilresidual_concat = False, gapped_convs = None, gapconv_residual = True, gapconv_pooling = False, embedding_convs = 0, n_transformer = 0, n_attention = 0, n_interpolated_conv = 0, n_distattention = 0, dim_distattention=2.5, dim_embattention = None, attentionmax_pooling = 0, attentionweighted_pooling = 0, attentionconv_pooling = 1, attention_multiplier = 0.5, sum_attention = False, n_hyenaconv = 0, transformer_convolutions = 0, trdilations = 1, trstrides = 1, l_trkernels = None, trconv_dim = None, trmax_pooling = 0, trmean_pooling = 0, trweighted_pooling = 0, trpooling_residual = 1, trresidual_entire = False, final_kernel = 1, final_strides = 1, predict_from_dist = False, dropout = 0., batch_norm = False, l1_kernel = 0, l2reg_last = 0., l1reg_last = 0., shift_sequence = None, random_shift = False, reverse_sign = False, smooth_onehot = 0, epochs = 1000, lr = 1e-2, kernel_lr = None, adjust_lr = 'F', batchsize = None, patience = 25, outclass = 'Linear', outname = None, optimizer = 'Adam', optim_params = None, verbose = True, checkval = True, init_epochs = 3, writeloss = True, write_steps = 10, device = 'cpu', load_previous = True, init_adjust = True, seed = 101010, keepmodel = False, generate_paramfile = True, add_outname = True, restart = False, masks = None, nmasks = None, augment_representation = None, aug_kernel_size = None, aug_conv_layers = 1, aug_loss_masked = True, aug_loss = None, aug_loss_mix = None, **kwargs):
         super(bpcnn, self).__init__()
         
         # Set seed for all random processes in the model: parameter init and other dataloader
@@ -120,6 +120,8 @@ class bpcnn(nn.Module):
         if self.dilated_convolutions == 0:
             self.strides, self.dilations = 1,1
             self.l_dilkernels, self.dilmax_pooling, self.dilmean_pooling, self.dilweighted_pooling = None, 0,0,0
+        
+        self.n_hyenaconv = n_hyenaconv
         
         # If lists given, parallel gapped convolutions are initiated
         self.gapped_convs = gapped_convs # list of quadruples, first the size of the kernel left and right, second the gap, third the number of kernals, fourth the stride stride. Will generate several when parallel layers with different gapsizes if list is given.
@@ -290,7 +292,7 @@ class bpcnn(nn.Module):
             modellist['Kernelthresh'] = Kernel_linear(currdim, self.kernel_thresholding)
         
         # Non-linear conversion of kernel output
-        modellist[kernel_function+'0'] = func_dict[kernel_function]
+        modellist[kernel_function+'0'] = func_dict_single[kernel_function]
         
         # Max and mean pooling layers
         if self.max_pooling or self.mean_pooling:
@@ -419,7 +421,7 @@ class bpcnn(nn.Module):
         elif self.outclass == 'Multi_class':
             classifier['Mclass'] = nn.Softmax(dim = -2)
         elif self.outclass != 'Linear':
-            classifier[self.outclass] = func_dict[self.outclass]
+            classifier[self.outclass] = func_dict_single[self.outclass]
         self.classifier = nn.Sequential(classifier)
         
    

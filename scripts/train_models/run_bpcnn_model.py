@@ -13,7 +13,7 @@ from drg_tools.model_output import add_params_to_outname
 from drg_tools.motif_analysis import pfm2iupac
 from drg_tools.interpret_cnn import takegrad, ism, deeplift, indiv_network_contribution, kernel_assessment
 from drg_tools.bpcnn_model import bpcnn
-
+from drg_tools.model_utils import get_device, load_parameters
 
 if __name__ == '__main__':
     inputfile = sys.argv[1]
@@ -114,7 +114,7 @@ if __name__ == '__main__':
             Yclass = np.isin(names, siggenes).astype(int)
         else:    
             cutoff = float(sys.argv[sys.argv.index('--crossvalidation')+3])
-            Yclass = (np.sum(np.absolute(Y)>=cutoff, axis = 1) > 0).astype(int)
+            Yclass = (np.sum(np.absolute(Y)>=cutoff, axis = (1,2)) > 0).astype(int)
             cvs = True
     elif '--predictnew' in sys.argv:
         cvs = False

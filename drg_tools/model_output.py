@@ -376,11 +376,13 @@ def add_params_to_outname(outname, ndict):
         elif ndict['nfc_layers'] > 0:
             outname +='nfc'+str(ndict['nfc_layers'])
             nfcgiven = True
-    if ndict['fc_function'] != ndict['net_function'] and nfcgiven:
-        outname += ndict['fc_function']
-    if ndict['fclayer_size'] is not None and nfcgiven:
-        outname += 's'+str(ndict['fclayer_size'])
-        
+    if 'fc_function' in ndict:
+        if ndict['fc_function'] != ndict['net_function'] and nfcgiven:
+            outname += ndict['fc_function']
+    if 'fclayer_size' in ndict:
+        if ndict['fclayer_size'] is not None and nfcgiven:
+            outname += 's'+str(ndict['fclayer_size'])
+            
         
     if nfcgiven and ndict['nfc_residuals'] > 0:
         outname += 'r'+str(ndict['nfc_residuals'])
@@ -420,18 +422,24 @@ def add_params_to_outname(outname, ndict):
     if ndict['batch_norm']:
         outname += 'bno'+str(ndict['batch_norm'])[0]
     
-    if ndict['conv_dropout'] > 0.:
-        outname += 'cdo'+str(ndict['conv_dropout'])
-    if ndict['conv_batch_norm']:
-        outname += 'cbno'+str(ndict['conv_batch_norm'])[0]
-    if ndict['attention_dropout'] > 0.:
-        outname += 'ado'+str(ndict['attention_dropout'])
-    if ndict['attention_batch_norm']:
-        outname += 'abno'+str(ndict['attention_batch_norm'])[0]
-    if ndict['fc_dropout'] > 0.:
-        outname += 'fdo'+str(ndict['fc_dropout'])
-    if ndict['fc_batch_norm']:
-        outname += 'fbno'+str(ndict['fc_batch_norm'])[0]
+    if 'conv_dropout' in ndict:
+        if ndict['conv_dropout'] > 0.:
+            outname += 'cdo'+str(ndict['conv_dropout'])
+    if 'conv_batch_norm' in ndict:
+        if ndict['conv_batch_norm']:
+            outname += 'cbno'+str(ndict['conv_batch_norm'])[0]
+    if 'attention_dropout' in ndict:
+        if ndict['attention_dropout'] > 0.:
+            outname += 'ado'+str(ndict['attention_dropout'])
+    if 'attention_batch_norm' in ndict:
+        if ndict['attention_batch_norm']:
+            outname += 'abno'+str(ndict['attention_batch_norm'])[0]
+    if 'fc_dropout' in ndict:
+        if ndict['fc_dropout'] > 0.:
+            outname += 'fdo'+str(ndict['fc_dropout'])
+    if 'fc_batch_norm' in ndict:
+        if ndict['fc_batch_norm']:
+            outname += 'fbno'+str(ndict['fc_batch_norm'])[0]
     
     outname += 'tr'+str(ndict['lr'])+ndict['optimizer']
     

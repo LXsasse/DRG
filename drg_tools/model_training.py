@@ -892,7 +892,8 @@ def excute_epoch(model, dataloader, loss_func, pwm_out, normsize, take_grad, dev
     
     if 'l_out' in model.__dict__:
         if model.l_out is not None:
-            yclasses *= model.l_out
+            yclassesval *= model.l_out
+            yclassestrain *= model.l_out
     
     tsize = 1
     augsize = None
