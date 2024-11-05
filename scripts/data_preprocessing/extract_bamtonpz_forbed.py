@@ -54,7 +54,7 @@ if __name__ == '__main__':
 
     offset = 0
     if '--oneindex' in sys.argv:
-        offset = -1 # some location files start with 1, instead of 0. So 1 becomes 0 and so on. 
+        offset = 1 # some location files start with 1, instead of 0. So 1 becomes 0 and so on. 
     bedfile = readbed(sys.argv[2], offset = offset)
 
     outname = os.path.splitext(sys.argv[2])[0]+'_in_'+os.path.splitext(os.path.split(sys.argv[1])[1])[0]

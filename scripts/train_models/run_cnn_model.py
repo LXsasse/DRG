@@ -105,13 +105,15 @@ if __name__ == '__main__':
             sel = selfile.split(',')
         elif os.path.isfile(selfile):
             sel = np.genfromtxt(sys.argv[sys.argv.index('--select_tracks')+1], dtype = str)
+        else:
+            sel = [selfile]
         if isinstance(experiments, list):
             select_track = []
             for e, exp in enumerate(experiments):
                 select_track.append(np.isin(exp, sel))
                 if np.sum(select_track[-1]) < 1:
                     print('Selected list of tracks do not match the names in the data')
-                    sys.exit()
+                    #sys.exit()
         else:
             select_track = np.isin(experiments, sel)
             if np.sum(select_track) < 1:
@@ -631,7 +633,7 @@ if __name__ == '__main__':
     
     
     if '--save_predictions' in sys.argv:
-        print('SAVED', outname+'_pred.npz')
+        print('SAVED', outname+'_pred.npz', np.shape(Y_pred))
         #np.savetxt(outname+'_pred.txt', np.append(names[testset][:, None], Y_pred, axis = 1), fmt = '%s')
         np.savez_compressed(outname+'_pred.npz', names = names[testset], values = Y_pred, columns = experiments)
     

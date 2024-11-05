@@ -23,7 +23,7 @@ if __name__ == '__main__':
     np.random.seed(1)
     pth=sys.argv[1]
 
-    weights, motifnames, biases = read_motifs(pth, dtype = 'meme')
+    weights, motifnames, biases = read_motifs(pth, dtype = 'meme', info = 'bias=')
     weights = np.transpose(weights, axes = (0,2,1))
     
     if biases is None:
