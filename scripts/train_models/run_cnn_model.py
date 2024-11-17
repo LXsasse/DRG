@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn as nn
 import torch
 
-from drg_tools.io_utils import readin, check, numbertype, isfloat, create_outname, write_meme_file, separate_sys, inputkwargs_from_string, add_name_from_dict, get_index_from_string
+from drg_tools.io_utils import readin, check, numbertype, isfloat, create_outname, write_meme_file, separate_sys, inputkwargs_from_string, add_name_from_dict, get_index_from_string, readin_motif_files
 from drg_tools.model_training import create_sets
 from drg_tools.data_processing import manipulate_input
 from drg_tools.model_output import print_averages, save_performance
@@ -300,11 +300,11 @@ if __name__ == '__main__':
         outname += '_'.join(pwmnameset[~np.isin(pwmnameset, outname.split('_'))]) + 'ps'+str(psam)[0]+'ic'+str(infcont)[0]
         motcut = None
         
-        if '--motif_cutoff' in sys.argv:
+        if '--motif_cutoff' in sys.argv: # makes the binding score binary
             motcut = float(sys.argv[sys.argv.index('--motif_cutoff')+1])
             outname += 'mc'+str(motcut)
         
-        pfms, rbpnames = read_pwm(list_of_pwms)
+        pfms, rbpnames, nts = readin_motif_files(list_of_pwms)
         pwms = rescale_pwm(pfms, psam = psam, infcont = infcont, norm = True)
         if pwmusage != 'initialize': 
             params['fixed_kernels'] = pwms

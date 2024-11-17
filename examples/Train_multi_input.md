@@ -1,29 +1,30 @@
-# DNA input (for base model)
-input=TSS40k.npz # TSS100k.npz
-# Transcript input (for model with post-transcriptional understanding)
-trinput=RNA40k.npz # RNA100k.npz
-#trinput=RNA40kc.npz
+# Train CNNs with multiple sequence inputs
 
-# Gene expression counts for all cell types and interleukins
-output0=exonic.tsv
+## Define data
+```
+input=TSS40k.npz # DNA input around the TSS
+trinput=RNA40k.npz # Transcript input (for model with post-transcriptional understanding)
 
-# Transcription rate counts for DNA sequence for all cell types and interleukins
-troutput0=intronic.tsv
+output0=exonic.tsv # Gene expression counts for all cell types and interleukins
+troutput0=intronic.tsv # Transcription rate counts for DNA sequence for all cell types and interleukins
+deoutput0=degrad.tsv # Degradation rate counts for transcript forall cell types and interleukins
+```
 
-# Degradation rate counts for transcript forall cell types and interleukins
-deoutput0=degrad.tsv
+## Other files for training and performance testing
 
-# Could also run with combined model split across all cell types
-
-### All models are tested on how well they can predict correlation across interleukins for each gene in a cell type specific way.
-# a class table assigns the classes to the different columns in exonic.counts.txt
-classfile=condition.class.txt
+All models are tested on how well they can predict correlation across interleukins for each gene in a cell type specific way.
+```
+classfile=condition.class.txt # a class table assigns classes, here Cell types for all conditions, to the tracks in the csv files.
 
 cv=Exintron_testsetcv10.txt # Test and training fold that leave chromosomes out for test and validation
 fold=1
 
-scriptdir=~/Scripts/Git/DRG/scripts/train_models/
+scriptdir=/path/to/DRG/scripts/train_models/
+```
 
+## Define model architectures
+
+```
 nk=300 # number of kernels
 lk=15 # kernel length
 
@@ -45,8 +46,11 @@ basemodel=num_kernels=${nk}+l_kernels=${lk}+max_pooling=False+weighted_pooling=T
 
 # One attention layer, 4 heads, after dilated convolutions before pooling with conv. blocks
 transmodel=num_kernels=${nk}+l_kernels=${lk}+max_pooling=False+weighted_pooling=True+pooling_size=${fps}+net_function=GELU+dilated_convolutions=${ndp}+l_dilkernels=${lkc}+dilations=${dil}+dilweighted_pooling=10+dilpooling_steps=3+n_attention=1+n_distattention=4+dim_distattention=1.8+transformer_convolutions=${dc}+l_trkernels=${lkc}+trweighted_pooling=4+fclayer_size=${fcls}+nfc_layers=${nfc}
+```
 
+## Define optimization parameters
 
+```
 bs=8 # batchsize
 pat=10 # patience
 lr=0.00001
@@ -59,29 +63,46 @@ outdir=Models/
 
 training=conv_batch_norm=True+fc_dropout=0.1+lr=${lr}+patience=${pat}+batchsize=${bs}+optimizer=${opt}+device=${device}+keepmodel=True+seed=${seed}+finetuning_patience=3+finetuning_rounds=2+finetuning_rate=0.1+init_adjust=False+warm_up_epochs=4
 
-addname='sd'${seed}
+addname='sd'${seed} # added to final file name
+```
 
-# A) Baseline model trained on Correlation + MSE loss: DNA input, exonic counts output0
+## A) Baseline single sequence model: DNA input -> exonic counts
+Trained with Correlation + MSE loss
+```
 trloss=Correlationmse
 python ${scriptdir}run_cnn_model.py $trinput $output0 --outdir $outdir --delimiter $'\t' --reverse_complement --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss=Correlationdata+${basemodel}+${training} --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --addname $addname 
+```
 
-# B) Baseline single input multi-task output model: DNA input, exonic counts validation loss: ${output0},${deoutput0},${troutput0}, "['Correlationdata','None','None']"
+## B) Single input multi-modal output model: DNA input -> exonic,degradation,transcription counts
+Trained on same loss but validation loss is only looking at expression: "['Correlationdata','None','None']"
+```
 python ${scriptdir}run_cnn_model.py $input ${output0},${deoutput0},${troutput0} --outdir $outdir --delimiter $'\t' --reverse_complement --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss="['Correlationdata','None','None']"+${basemodel}+${training} --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --add_fileclasses ex,kd,kt --addname $addname
+```
 
-# C) Multi-input single output model with NN combinations: DNA and RNA input --> Correlation + MSE loss: DNA + RNA --> Expression
+## C) Multi-sequence input single output model with NN combinations: DNA + RNA input -> Expression
+```
 python ${scriptdir}run_cnn_model_multi.py ${input},${trinput} ${output0} --outdir $outdir --delimiter $'\t' --reverse_complement True,False --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss=Correlationdata+${basemodel}+${training} --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --addname $addname
+```
 
-# D) Multi-input-output model with real combination BUT linear embedding for each data modality: DNA and RNA input --> Correlation + MSE loss: DNA --> KT, DNA + RNA --> Expression, RNA --> KD with realistic combination
-python ${scriptdir}run_cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --outdir $outdir --delimiter $'\t' --reverse_complement True,False --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss="['Correlationdata','None','None']"+${basemodel}+input_to_combinefunc='[[0,1],[1],[0]]'+outclass="['difference','direct','direct']"+combine_function=Linear+${training} --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --add_fileclasses ex,kd,kt --addname $addname
-
-# E) Multi-input-output model with real combinations: DNA and RNA input --> Correlation + MSE loss: DNA --> KT, DNA + RNA --> Expression, RNA --> KD with realistic combination (hard combination with shared outputs)
+## D) Multi-input mulit-output model with "real combination": DNA --> KT, DNA + RNA --> Expression, RNA --> KD
+BUT indivudal linear embedding for each data modality (shared_embedding=False)
+```
+python ${scriptdir}run_cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --outdir $outdir --delimiter $'\t' --reverse_complement True,False --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss="['Correlationdata','None','None']"+${basemodel}+input_to_combinefunc='[[0,1],[1],[0]]'+outclass="['difference','direct','direct']"+combine_function=Linear+${training}+shared_embedding=False --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --add_fileclasses ex,kd,kt --addname $addname
+```
+If the prediction of KT and degradation should also be used for the difference for Expression, then set shared_embedding=True
+```
 python ${scriptdir}run_cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --outdir $outdir --delimiter $'\t' --reverse_complement True,False --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss="['Correlationdata','None','None']"+${basemodel}+input_to_combinefunc='[[0,1],[1],[0]]'+outclass="['difference','direct','direct']"+combine_function=Linear+shared_embedding=True+${training} --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --add_fileclasses ex,kd,kt --addname $addname
+```
 
-# F) Multi-input-output model with independent combinations through fully connected net: DNA and RNA input --> Correlation + MSE loss: DNA --> KT, DNA + RNA --> Expression, RNA --> KD with realistic combination
+## F) Multi-input multi-output model with independent combinations through fully connected net: DNA + RNA --> KT, DNA + RNA --> Expression, RNA +RNA --> KD
+
+Both inputs are used to predict each data modality with 2 fully connected layers for each modality that mix the information from each sequence embedding
+
+```
 python ${scriptdir}run_cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --outdir $outdir --delimiter $'\t' --reverse_complement True,False --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss="['Correlationdata','None','None']"+${basemodel}+n_combine_layers=2+${training} --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --add_fileclasses ex,kd,kt --addname $addname
+```
 
-# F) Multi-input-output attention model with real combinations and 100k input: DNA and RNA input --> Correlation + MSE loss: DNA --> KT, DNA + RNA --> Expression, RNA --> KD with realistic combination
-#input=TSS100k.npz
-#trinput=RNA100k.npz
-#python ${homedir}/Scripts/DRG/cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --outdir $outdir --delimiter $'\t' --reverse_complement True,False --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss="['Correlationdata','None','None']"+${transmodel}+input_to_combinefunc='[[0,1],[1],[0]]'+outclass="['difference','direct','direct']"+combine_function=Linear+${training}+batchsize=2 --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --add_fileclasses ex,kd,kt --addname $addname
-
+Instead, we can also define that only the expression modality sees both embeddings. 
+```
+python ${scriptdir}run_cnn_model_multi.py ${input},${trinput} ${output0},${deoutput0},${troutput0} --outdir $outdir --delimiter $'\t' --reverse_complement True,False --crossvalidation $cv $fold 10 --cnn loss_function=${trloss}+validation_loss="['Correlationdata','None','None']"+${basemodel}+input_to_combinefunc='[[0,1],[1],[0]]'+outclass=Linear+combine_function=GELU+n_combine_layers=2+${training} --split_outclasses $classfile --save_correlation_perclass --save_correlation_perpoint --add_fileclasses ex,kd,kt --addname $addname
+```

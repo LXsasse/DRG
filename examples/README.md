@@ -1,7 +1,7 @@
 # Examples
 This directory contains markdown sites with descriptions and code to execute different analyses.
 
-## [Process data for model training]('https://github.com/LXsasse/DRG/examples/Process_data.md')
+## [Process data for model training](https://github.com/LXsasse/DRG/examples/Process_data.md)
 
 To prepare model training, we download the reference genome, extract sequences in fasta, and transform those into one-hot encodings that we save in npz format. A future version will be able to take bed files as input to the model.
 
@@ -9,7 +9,7 @@ The model expects a normalized count matrix as target. The user can define for h
 
 For model training, we usually split the data into train, validation, and test sets based on chromosomes. 
 
-## [Train single input models]("https://github.com/LXsasse/DRG/examples/Train_single_input.md")
+## [Train single input models](https://github.com/LXsasse/DRG/examples/Train_single_input.md)
 
 This model uses a single one-hot encoded sequence to predict a normalized count matrix whose rows represent data points and columns represent different tracks, or conditions. This model can also split into diffferent individual networks after an initially shared part to better represent individual data matrices from different modalities. 
 
@@ -19,7 +19,7 @@ Save model performance and visualize to compare to other models or assess model 
 
 If training seems to have failed, plot the loss curves to get an idea what could have gone wrong. 
 
-## [Train multi-sequence input models]("https://github.com/LXsasse/DRG/examples/Train_multi_input.md) 
+## [Train multi-sequence input models](https://github.com/LXsasse/DRG/examples/Train_multi_input.md) 
 
 This model uses multiple sequences as input to predict 
 complex phenotypes, such as gene expression. Similar to the single input model, this model can also predict multiple modalities with their own networks. However, this model can also connect the representations from each network throgh analytical functions.

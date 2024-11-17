@@ -63,3 +63,13 @@ training='epochs=${epochs}+lr=${lr}+finetuning=${finetuning}+keepmodel=${keepmod
 python ../scripts/train_models/run_cnn_model.py $inseq ${target},${target2} --cross_validation $crossval_file 0 0 --cnn ${cnn}+${training} --split_outclasses $splitout --save_correlation_perpoint
 ```
 
+## Train model with kernels that were intialized with PWMs
+If there is a meme, or a motif file with motifs that could be useful for the task, one can also initialize the kernels with those. Usually, these motifs are postion probability matrices, which we normalize to be closer to the kernels that we see in our model, i.e. center and potentially use information content. 
+
+Moreover, we can use `reverse_complement` "max-pooling" in first layer, which uses max pooling between the activation of of the motif in the forward and reverse strand at each position. 
+
+```
+pwms=TF_motifs.meme
+python ../scripts/train_models/run_cnn_model.py $inseq $target --cross_validation $crossval_file 0 0 --cnn ${cnn}+${training} --split_outclasses $splitout --save_correlation_perpoint --save_correlation_perclass --list_of_pwms $pwms initialize --infocont
+```
+
