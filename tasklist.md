@@ -3,7 +3,7 @@
 ## Repository organization
 
 - [x] Split code between drg_tools and scripts that use these tools
-- [ ] Write short tutorials on how to use modules in drg_tools in examples
+- [x] Write short tutorials on how to use modules in drg_tools in examples
 - [ ] Write example .mds on how to use scripts
 - [ ] Write bpmodel training on bias code
 
@@ -38,5 +38,5 @@ Introduce learnable cell type and data modality vector.
 - [x] DeepLIFT to multiple random seeds
 - [ ] Find motifs in attributions with sequence specific cut off from dinuc shuffle
 - [ ] Write module that can extract sequences from 'sparse'-attribution maps with positions
-
+- [ ] Add motif annotations to plot attributions, with motif data base and conv scanning, and with names and location file
 
