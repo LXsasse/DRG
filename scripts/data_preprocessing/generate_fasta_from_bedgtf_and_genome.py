@@ -35,7 +35,6 @@ if __name__ == '__main__':
         outname += '.trscrpt'
 
     elif '--from_tss' in sys.argv:
-        if np.shape
         mask =ifile[:,4] == 'gene'
         ifile = ifile[mask]
         outname += '.tss'
