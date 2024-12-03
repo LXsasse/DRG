@@ -2,12 +2,12 @@ import numpy as np
 import sys, os
 import matplotlib.pyplot as plt
 from scipy.stats import pearsonr
+import pyBigWig
+import pickle
 
 from drg_tools.plotlib import plot_attribution_maps
-from drg_tools.io_utils import read_matrix_file as read_txt, get_indx
+from drg_tools.io_utils import read_matrix_file as read_txt, get_indx,readgenomefasta
 
-
-            
 
 if __name__ == '__main__':
     ism = np.load(sys.argv[1], allow_pickle = True)
@@ -102,7 +102,6 @@ if __name__ == '__main__':
             mlocs[m][1] = np.array(ml[1].split('-'), dtype = int)
         mlocs[:,[2,3]] = mlocs[:,[2,3]].astype(int)
 
-    
     if '--centerattributions' in sys.argv:
         att -= (np.sum(att, axis = -1)/4)[...,None]
     elif '--decenterattributions' in sys.argv:
@@ -119,7 +118,6 @@ if __name__ == '__main__':
         expd = exp[diff]
         exp = exp[mask]
         exp = np.array([e +'\n-'+expd for e in exp])
-
 
     barplot = None
     if '--add_predictions' in sys.argv:
@@ -187,15 +185,45 @@ if __name__ == '__main__':
     if not '--showall_attributions' in sys.argv:
         att = att*seq
         seq = None
+        
+    if '--save_bw' in sys.argv:
+        # get chromsizes    
+        chromsizes_path = sys.argv[sys.argv.index('--chromsizes_path')+1]
+        with open(chromsizes_path, 'rb') as f:
+            chromsizes = pickle.load(f)
+        pos_info_path = sys.argv[sys.argv.index('--pos_info_path')+1]
+        pos_info = np.load(pos_info_path)
+        chrom=pos_info[0]
+        region_start=int(pos_info[1])
+        region_end=int(pos_info[2])
+        region_len = region_end-region_start
+        
+        bw_att = att[0,:,:]
+        indices = np.argmax(np.abs(bw_att), axis=1)
+        bw_att = bw_att[np.arange(bw_att.shape[0]), indices]
+        
+        chrom_l = [chrom]*region_len
+        pos_l = list(range(region_start, region_end))
+        pos_plus_one_l =list(range(region_start+1,region_end+1))
+        
+        f = pyBigWig.open(f"{outname}_bw.bw", "w")
+        f.addHeader(chromsizes)
+        f.addEntries(chrom_l, 
+                     pos_l,
+                     pos_plus_one_l,
+                    bw_att)
+        f.close()
+        
+    else: 
+        fig = plot_attribution_maps(att, seq = seq, motifs = mlocs, experiments = exp, vlim = vlim, unit = unit, ratio = ratio, barplot = barplot, xtick_range = newrange)
     
-    fig = plot_attribution_maps(att, seq = seq, motifs = mlocs, experiments = exp, vlim = vlim, unit = unit, ratio = ratio, barplot = barplot, xtick_range = newrange)
-    if '--show' in sys.argv:
-        plt.show()
-    else:
-        if '--transparent' in sys.argv:
-            fig.savefig(outname+'.png', transparent = True, dpi = dpi, bbox_inches = 'tight')
+        if '--show' in sys.argv:
+            plt.show()
         else:
-            fig.savefig(outname+'.jpg', dpi = dpi, bbox_inches = 'tight')
+            if '--transparent' in sys.argv:
+                fig.savefig(outname+'.png', transparent = True, dpi = dpi, bbox_inches = 'tight')
+            else:
+                fig.savefig(outname+'.jpg', dpi = dpi, bbox_inches = 'tight')
             print(outname+'.jpg')
 
 
