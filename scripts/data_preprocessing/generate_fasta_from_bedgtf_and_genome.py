@@ -148,6 +148,12 @@ if __name__ == '__main__':
                     if ifile[e, 5] == '-':
                         extseq = reverse_complement_seqstring(extseq)
                     outfasta.write('>'+na+'\n'+extseq+'\n')
+                    
+                    if '--save_pos_info' in sys.argv:
+                        print('saving pos info')
+                        pos_info = np.array([uchr,start_region-before-offset-flank+flank,end_region + after-offset+flank+flank])
+                        np.save(f'{outname}_pos_info',pos_info)
+                        
             
             
         

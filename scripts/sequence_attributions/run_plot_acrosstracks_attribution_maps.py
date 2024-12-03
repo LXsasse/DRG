@@ -187,13 +187,10 @@ if __name__ == '__main__':
         seq = None
         
     if '--save_bw' in sys.argv:
-        # get chromsizes 
-        print('getting chromsizes for bigwig')
-   
+        # get chromsizes    
         chromsizes_path = sys.argv[sys.argv.index('--chromsizes_path')+1]
         with open(chromsizes_path, 'rb') as f:
             chromsizes = pickle.load(f)
-            
         pos_info_path = sys.argv[sys.argv.index('--pos_info_path')+1]
         pos_info = np.load(pos_info_path)
         chrom=pos_info[0]
