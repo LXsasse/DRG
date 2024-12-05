@@ -16,7 +16,6 @@ if __name__ == '__main__':
     selectin = sys.argv[3] # name of sequences
     electin = sys.argv[4] # tracks
     
-    
     names, values, exp = ism['names'], ism['values'], ism['experiments']
     # Define which sequence if several are provided to the model.
     # Single sequence attributions are of shape (Nseq, Ntracks, 4, length)
@@ -40,6 +39,7 @@ if __name__ == '__main__':
     
     select = get_indx(selectin, names)
     elect = get_indx(electin, exp, islist = True)
+    
     electin = ','.join(exp[elect])
     
     seq = seqfeatures[select]
@@ -187,32 +187,49 @@ if __name__ == '__main__':
         seq = None
         
     if '--save_bw' in sys.argv:
-        # get chromsizes    
-        chromsizes_path = sys.argv[sys.argv.index('--chromsizes_path')+1]
+                
+        if '--chromsizes_path' in sys.argv:
+            chromsizes_path = sys.argv[sys.argv.index('--chromsizes_path')+1]
+        else: 
+            raise ValueError("since --save_bw is in args, you need to provide --chromsizes_path")
+        
+        if '--pos_info_path' in sys.argv: 
+            pos_info_path = sys.argv[sys.argv.index('--pos_info_path')+1]
+        else: 
+            raise ValueError("since --save_bw is in args, you need to provide --pos_info_path")
+       
         with open(chromsizes_path, 'rb') as f:
             chromsizes = pickle.load(f)
-        pos_info_path = sys.argv[sys.argv.index('--pos_info_path')+1]
-        pos_info = np.load(pos_info_path)
+            
+        with open(pos_info_path, 'rb') as f:
+            pos_info = pickle.load(f)
+            
+        pos_info = pos_info[selectin]
         chrom=pos_info[0]
         region_start=int(pos_info[1])
         region_end=int(pos_info[2])
         region_len = region_end-region_start
         
-        bw_att = att[0,:,:]
-        indices = np.argmax(np.abs(bw_att), axis=1)
-        bw_att = bw_att[np.arange(bw_att.shape[0]), indices]
-        
-        chrom_l = [chrom]*region_len
-        pos_l = list(range(region_start, region_end))
-        pos_plus_one_l =list(range(region_start+1,region_end+1))
-        
-        f = pyBigWig.open(f"{outname}_bw.bw", "w")
-        f.addHeader(chromsizes)
-        f.addEntries(chrom_l, 
-                     pos_l,
-                     pos_plus_one_l,
-                    bw_att)
-        f.close()
+        for ct_id_idx in range(len(exp)): 
+            ct=exp[ct_id_idx]
+    
+            bw_att = att[ct_id_idx,:,:]
+            indices = np.argmax(np.abs(bw_att), axis=1)
+            bw_att = bw_att[np.arange(bw_att.shape[0]), indices]
+
+            chrom_l = [chrom]*region_len
+            pos_l = list(range(region_start, region_end))
+            pos_plus_one_l =list(range(region_start+1,region_end+1))
+
+            save_dir=os.path.dirname(outname)
+            
+            f = pyBigWig.open(f"{save_dir}/{selectin}_{ct}_bw.bw", "w")
+            f.addHeader(chromsizes)
+            f.addEntries(chrom_l, 
+                         pos_l,
+                         pos_plus_one_l,
+                        bw_att)
+            f.close()
         
     else: 
         fig = plot_attribution_maps(att, seq = seq, motifs = mlocs, experiments = exp, vlim = vlim, unit = unit, ratio = ratio, barplot = barplot, xtick_range = newrange)

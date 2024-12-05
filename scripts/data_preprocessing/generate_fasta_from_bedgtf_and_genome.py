@@ -1,5 +1,6 @@
 import numpy as np
 import sys, os
+import pickle
 
 from drg_tools.io_utils import readgtf, readgenomefasta, reverse_complement_seqstring
 
@@ -107,6 +108,8 @@ if __name__ == '__main__':
             unames, indx = np.unique(names[chrmask], return_index = True)
             unames = unames[np.argsort(indx)]
             print('Locations in chr', len(unames))
+            
+            pos_info = {}
             for n, na in enumerate(unames):
                 chrmask = np.where(names == na)[0]
                 
@@ -150,10 +153,13 @@ if __name__ == '__main__':
                     outfasta.write('>'+na+'\n'+extseq+'\n')
                     
                     if '--save_pos_info' in sys.argv:
-                        print('saving pos info')
-                        pos_info = np.array([uchr,start_region-before-offset-flank+flank,end_region + after-offset+flank+flank])
-                        np.save(f'{outname}_pos_info',pos_info)
-                        
+                        pos_info[na]=np.array([uchr,start_region-before-offset-flank+flank,end_region + after-offset+flank+flank])
+                
+            if '--save_pos_info' in sys.argv:
+                print('saving pos info')
+                with open(f"{outname}_pos_info.pkl", "wb") as file:
+                    pickle.dump(pos_info, file)
+
             
             
         
