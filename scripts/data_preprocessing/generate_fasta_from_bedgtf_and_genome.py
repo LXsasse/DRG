@@ -94,6 +94,8 @@ if __name__ == '__main__':
     print(uchroms)
 
     print(outname)
+    pos_info = {}
+
     # generate fasta file with sequences
     outfasta = open(outname+'.fasta', 'w')
     for u, uchr in enumerate(uchroms):
@@ -109,7 +111,6 @@ if __name__ == '__main__':
             unames = unames[np.argsort(indx)]
             print('Locations in chr', len(unames))
             
-            pos_info = {}
             for n, na in enumerate(unames):
                 chrmask = np.where(names == na)[0]
                 
@@ -148,15 +149,12 @@ if __name__ == '__main__':
                         after = (extend - (end_region-start_region)) // 2 + (extend - (end_region-start_region)) % 2
                         
                     extseq = chrfasta[start_region-before-offset-flank+flank:end_region + after-offset+flank+flank]
-                    if ifile[e, 5] == '-':
-                        extseq = reverse_complement_seqstring(extseq)
                     outfasta.write('>'+na+'\n'+extseq+'\n')
                     
                     if '--save_pos_info' in sys.argv:
                         pos_info[na]=np.array([uchr,start_region-before-offset-flank+flank,end_region + after-offset+flank+flank])
                 
             if '--save_pos_info' in sys.argv:
-                print('saving pos info')
                 with open(f"{outname}_pos_info.pkl", "wb") as file:
                     pickle.dump(pos_info, file)
 
