@@ -14,7 +14,6 @@ def ExpPWM(pwms):
 
 def stripPWM(pwms, cut, metric = 'absum', relative=True):
     for p,pwm in enumerate(pwms):
-        #print(pwm.shape)
         if metric == 'sum':
             pwmsum = np.sum(pwm,axis=0)
         elif metric == 'absum':
@@ -23,12 +22,12 @@ def stripPWM(pwms, cut, metric = 'absum', relative=True):
             pwmsum = np.amax(pwm,axis=0)
         elif metric == 'absmax':
             pwmsum = np.amax(np.abs(pwm),axis=0)
-        
+                    
         if relative:
             mask = np.where(pwmsum >= cut*np.amax(pwmsum))[0]
         else:
             mask = np.where(pwmsum >= cut)[0]
-        
+                    
         if mask[-1]-1 > mask[0]:
             pwms[p] = pwm[:,mask[0]:mask[-1]+1]
         else:
@@ -102,12 +101,13 @@ if __name__ == '__main__':
                 tr = [tr]
             
             for i, tri in enumerate(tr): # transform string entries to correct types
-                tr[i] = check(tri)
+                tr[i] = check(tri)            
             if tr[0] == 'exp':
                 ExpPWM(pwms)
             if tr[0] == 'norm':
                 normPWM(pwms, *tr[1:])
             if tr[0] == 'strip':
+                print(f'tr:{tr}')
                 stripPWM(pwms, *tr[1:])
             
     '''
@@ -147,6 +147,17 @@ if __name__ == '__main__':
         clusters = names
     
     outname += '.meme'
+    
+    if '--shorten_outname' in sys.argv: 
+        curr_dir = os.path.dirname(outname)
+        curr_filename = os.path.basename(outname)
+
+        if '9bs64-F_' in curr_filename:
+            shortened_filename = outname.split('9bs64-F_')[1]
+        else: 
+            shortened_filename=curr_filename
+        outname = os.path.join(curr_dir, shortened_filename)
+    
     write_meme_file(pwms, clusters, ''.join(nts), outname, round = 3)
     
     
