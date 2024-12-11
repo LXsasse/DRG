@@ -148,15 +148,10 @@ if __name__ == '__main__':
     
     outname += '.meme'
     
-    if '--shorten_outname' in sys.argv: 
+    if '--custom_outname' in sys.argv:
+        filename = sys.argv[sys.argv.index('--custom_outname')+1]
         curr_dir = os.path.dirname(outname)
-        curr_filename = os.path.basename(outname)
-
-        if '9bs64-F_' in curr_filename:
-            shortened_filename = outname.split('9bs64-F_')[1]
-        else: 
-            shortened_filename=curr_filename
-        outname = os.path.join(curr_dir, shortened_filename)
+        outname = os.path.join(curr_dir, f'{filename}.meme')
     
     write_meme_file(pwms, clusters, ''.join(nts), outname, round = 3)
     
