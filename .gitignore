@@ -7,3 +7,5 @@ data
 **.backup
 trash
 archive
+.venv
+.*_cache

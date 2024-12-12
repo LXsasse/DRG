@@ -31,7 +31,18 @@ Deep sequence-to-function models learn the relationship between genomic sequence
 
 ## Installation
 
-Download the repository and setup conda environment.
+Download the repository and setup virtual or conda environment.
+
+To create and activate a virtual environment, run:
+```
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install --upgrade pip
+```
+
+To install dev requirements (e.g. linters, typehinting), run:
+`pip install -r dev_requirements.txt`
 
 Install by navigating to the location of the local repository
 
