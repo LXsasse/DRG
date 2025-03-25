@@ -1584,7 +1584,7 @@ def BoxPlotfromBins(X, Y, start=None, end=None, bins=10, axis = 'x', ax = None, 
     if return_fig:
         return fig
 
-def scatterPlot(X, Y, title = None, xlabel = None, ylabel = None, include_fit = True, include_mainvar = True, diagonal = False, plot_axis = None , boxplot_x = None, boxplot_y = None, contour = False, pos_neg_contour = False, color=None, edgecolor = 'silver', cmap = None, sort_color = 'abshigh', color_density = False, vlim = None, sizes = None, alpha = None, lw = None, yticklabels = None, yticks = None, xticklabels = None, xticks = None, grid = False, xlim = None, ylim =None, xscale = None, legend = False, add_text = None, yscale = None, ax = None, dpi = 200):
+def scatterPlot(X, Y, title = None, xlabel = None, ylabel = None, include_fit = False, include_mainvar = False, diagonal = False, plot_axis = None , boxplot_x = None, boxplot_y = None, contour = False, pos_neg_contour = False, color=None, edgecolor = 'silver', cmap = None, sort_color = 'abshigh', color_density = False, vlim = None, sizes = None, alpha = None, lw = None, yticklabels = None, yticks = None, xticklabels = None, xticks = None, grid = False, xlim = None, ylim =None, xscale = None, legend = False, add_text = None, yscale = None, ax = None, dpi = 200):
     '''
     Creates fancy scatterplot with additional features
     
@@ -1646,26 +1646,33 @@ def scatterPlot(X, Y, title = None, xlabel = None, ylabel = None, include_fit = 
     if color_density:
         color = AssignDensity(X,Y, log = color_density == 'log')
     
+    if vlim is None:
+        vmin, vmax = None, None
+
     if color is not None:
-        if vlim is None:
-            if np.amin(color) < 0:
-                vlim = np.amax(np.abs(color))
-                vlim = [-vlim, vlim]
+        if isinstance(color, list) or isinstance(color, np.ndarray):
+            if vlim is None:
+                if np.amin(color) < 0:
+                    vlim = np.amax(np.abs(color))
+                    vmin, vmax = -vlim, vlim
+                else:
+                    vmin, vmax = 0, np.amax(color)
+
+            if sort_color == 'high':
+                sort = np.argsort(color)
+            elif sort_color == 'low':
+                sort = np.argsort(-color)
+            elif sort_color == 'abshigh':
+                sort = np.argsort(np.absolute(color))
             else:
-                vlim = [0, np.amax(color)]
-        if sort_color == 'high':
-            sort = np.argsort(color)
-        elif sort_color == 'low':
-            sort = np.argsort(-color)
-        elif sort_color == 'abshigh':
-            sort = np.argsort(np.absolute(color))
-        else:
-            sort = np.arange(len(color))
-        X, Y, color = X[sort], Y[sort], color[sort]
-        if sizes is not None:
-            size = sizes[sort]
+                sort = np.arange(len(color))
+            X, Y, color = X[sort], Y[sort], color[sort]
+
+    if sizes is not None:
+        if isinstance(color, list) or isinstance(color, np.ndarray):
+            sizes = np.array(sizes)[sort]
     
-    ax.scatter(X,Y, s = sizes, cmap = cmap, c=colors, alpha = alpha, vmin = vmin, vmax = vmax, edgecolor = edgecolor, lw = lw, label = 'R:'+str(round(pearsonr(X,Y)[0],2)), zorder = 0)
+    ax.scatter(X,Y, s = sizes, cmap = cmap, c=color, alpha = alpha, vmin = vmin, vmax = vmax, edgecolor = edgecolor, lw = lw, label = 'R:'+str(round(pearsonr(X,Y)[0],2)), zorder = 0)
     if legend:
         ax.legend()
         
@@ -1697,6 +1704,7 @@ def scatterPlot(X, Y, title = None, xlabel = None, ylabel = None, include_fit = 
     
     if contour:
         ContourMap(X,Y, ax = ax)
+
     elif pos_neg_contour and color is not None:
         contcolors = cm.get_cmap(cmap)(vlim)
         ContourMap(X[X>0],Y[X>0], ax = ax, color = contcolors[0])
@@ -1704,8 +1712,9 @@ def scatterPlot(X, Y, title = None, xlabel = None, ylabel = None, include_fit = 
         
     
     if include_fit:
-        lr = linear_model.LinearRegression().fit(X, Y)
-        ax.plot(np.array(limx), lr.predict(np.array(limx)), color = 'r', zorder = 1)
+        lr = linear_model.LinearRegression().fit(X.reshape(-1,1), Y)
+        ax.plot(np.array(limx), lr.predict(np.array(limx).reshape(-1,1)), color = 'r', zorder = 1)
+
     if include_mainvar:
         centerx, centery = np.mean(X), np.mean(Y)
         maindir, u, v = np.linalg.svd(np.array([X-centerx, Y-centery]), full_matrices=False)
