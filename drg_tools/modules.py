@@ -4,17 +4,16 @@ Contains torch.modules for automatic model building
 i.e. loss functions and model layers
 '''
 
-
-import sys, os 
+import math
 import numpy as np
 import torch.nn as nn
 import torch
+import torch.nn.functional as F
 from collections import OrderedDict
+from einops.layers.torch import Rearrange
+from fft_conv_pytorch import fft_conv
 from torch import Tensor
 from torch.nn.parameter import Parameter
-import math
-import torch.nn.functional as F
-from fft_conv_pytorch import fft_conv
 
 
 class EXPmax(nn.Module):
@@ -367,7 +366,7 @@ class multinomial(nn.Module):
         self.log_counts = log_counts
         self.eps = eps
         
-    def forward(self, p: torch.tensor, q: torch.tensor):
+    def forward(self, p: torch.Tensor, q: torch.Tensor):
         # bin the counts data, if mean_size = None then bin is entire length of input
         if self.mean_size is None:
             self.mean_size = p.size(dim = -1)
@@ -403,7 +402,7 @@ class JSD(nn.Module):
         self.reduction = reduction
         self.eps = eps
         
-    def forward(self, p: torch.tensor, q: torch.tensor):
+    def forward(self, p: torch.Tensor, q: torch.Tensor):
         if self.mse is not None:
             if self.mean_size is None:
                 self.mean_size = p.size(dim = -1)
@@ -454,7 +453,7 @@ class BCEMSE(nn.Module):
         self.log_counts = log_counts
         self.eps = eps
         
-    def forward(self, p: torch.tensor, q: torch.tensor):
+    def forward(self, p: torch.Tensor, q: torch.Tensor):
         if self.mean_size is None:
             self.mean_size = p.size(dim = -1)
         if self.meanpool is None:
@@ -487,8 +486,8 @@ class LogMSELoss(nn.Module):
         q = q-minq.unsqueeze(-1)
         q =torch.log(q+self.eps)
         if self.log_prediction:
-            p = p-minp.unsqueeze(-1)
             minp = torch.min(p,dim =-1)[0]
+            p = p-minp.unsqueeze(-1)
             p =torch.log(p+self.eps)
         return self.mse(p,q)
     
@@ -796,7 +795,6 @@ class Res_FullyConnect(nn.Module):
 
         return pred
 
-from einops.layers.torch import Rearrange
 #from einops import rearrange
 # This one is included into Padded_AvgPool1d now
 class SoftmaxNorm(nn.Module):
@@ -1308,7 +1306,7 @@ class Res_Conv1d(nn.Module):
                 self.convlayers['Bnorm'+str(n)] = nn.BatchNorm1d(currdim + int(concatenate_residual*dtl*(residual_after>0))*currdim)
             
             # decide if activation function should be applied before or after convolutional layer
-            if act_func_before and ((~is_modified) or (n != 0)):
+            if act_func_before and ((not is_modified) or (n != 0)):
                 self.convlayers['Conv_func'+str(n)] = func_dict[activation_function]()
             
             if long_conv:
@@ -1324,7 +1322,7 @@ class Res_Conv1d(nn.Module):
                 # (non-symmetric) padding to have same padding left and right of sequence and get same sequence length
                 convpad = [int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))-int((dilations[n]*(l_kernels[n]-1)+1)%2==0), int(np.floor((dilations[n]*(l_kernels[n]-1)+1)/2))]
                 # padded convolutional layer
-                concatcheck = int(concatenate_residual*dtl)*int(n%residual_after==0)*int(linear_layer==False) # check if input is concatenated output of convolution and residual or not
+                concatcheck = int(concatenate_residual*dtl)*int(n%residual_after==0)*int(linear_layer is False) # check if input is concatenated output of convolution and residual or not
                 self.convlayers['Conv'+str(n)] = Padded_Conv1d(currdim+ concatcheck*currdim, int(currdim*kernel_increase[n]), kernel_size = l_kernels[n], bias = bias, stride = strides[n], dilation = dilations[n], padding = convpad)
                 currlen = int(np.floor((currlen +convpad[0]+convpad[1]- dilations[n]*(l_kernels[n]-1)-1)/strides[n]+1))
             # see above
@@ -1389,7 +1387,9 @@ class Res_Conv1d(nn.Module):
             self.residual_entire = Residual_convolution(resedim, currdim, resentire)
         else:
             self.residual_entire = None
-        concatcheck = int(concatenate_residual)*int(n%residual_after==0)*int(linear_layer==False) # check if input is concatenated output of convolution and residual or not
+        
+        # check if input is concatenated output of convolution and residual or not
+        concatcheck = int(concatenate_residual)*int(n%residual_after==0)*int(linear_layer is False) 
         
         self.currdim, self.currlen = currdim+ concatcheck*currdim +int(residual_entire)*currdim, currlen
         
@@ -1449,7 +1449,7 @@ class gap_conv(nn.Module):
         self.out_len = int(np.floor((in_len + padding - kernel_size)/stride +1))
         # max pooling before layers are flattened to reduce dimension of output given to fully connected layer
         self.pooling = None
-        if pooling == True:
+        if pooling is True:
             poolstride = int(kernel_size/2)
         elif pooling > 1:
             poolstride = pooling
@@ -1537,7 +1537,6 @@ class parallel_module(nn.Module):
     def forward(self, x):
         out = []
         for m in self.modellist:
-            outadd = m(x)
             if self.flatten:
                 out.append(torch.flatten(m(x), start_dim = 1, end_dim = -1))
             else:
@@ -1559,8 +1558,11 @@ class final_convolution(nn.Module):
             self.cut_sites = [cut_sites, cut_sites]
         else:
             self.cut_sites = cut_sites
+        
         if batch_norm:
-            self.Bnorm = self.nn.BatchNorm1d(currdim)
+            # TODO: VERIFY 
+            # NOTE [Alyss Flynn 2024-10-21]: used gap_conv init as reference; changed self.nn.BatchNorm1d(currdim) to nn.BatchNorm1d(indim) 
+            self.Bnorm = nn.BatchNorm1d(indim)
 
         self.n_convolutions = n_convolutions
         if n_convolutions > 1:
@@ -1603,7 +1605,7 @@ class final_convolution(nn.Module):
 
 # Interaction module creates non-linear interactions between all features by multiplying them with each other and then multiplies a weight matrix to them
 class interaction_module(nn.Module):
-    def __init__(self, indim, outdim):
+    def __init__(self, indim, outdim, classes=None):
         super(interaction_module, self).__init__()
         self.outdim = outdim # if outdim is 1 then use softmax output
         # else use RelU
@@ -1844,7 +1846,7 @@ class MyAttention_layer(nn.Module):
                 if self.receptive_matmul.mask.is_cuda:
                     devicetobe = self.qpred.get_device()
                     self.receptive_matmul.to('cuda:'+str(devicetobe))
-            attmatix = self.receptive_matmul(qpred, kpred)
+            attmatrix = self.receptive_matmul(qpred, kpred)
         else:
             qpred = qpred.transpose(-1,-2)
             attmatrix = torch.matmul(qpred, kpred)
@@ -1932,9 +1934,18 @@ class PredictionHead(nn.Module):
 # Returns a stretching and adds bias for each kernel dimension after convolution
 # Also good example how write own module with any tensor multiplication and initialized parameters
 class Kernel_linear(nn.Module):
-    def __init__(self, n_kernels: int) -> None:
+    # TODO: VERIFY 
+    # NOTE [Alyss Flynn 2024-10-21]: this init only included one input `n_kernels: int`,
+    # but common usage appears to require two inputs => `Kernel_linear(currdim, self.kernel_thresholding)`,
+    # and internally it seems to require additional keyword parameters (**factory_kwargs) to pass into torch.empty.
+    # 
+    # I added `kernel_thresholding: int` and `**factory_kwargs` to the init, to fix Type/NameErrors, 
+    # but I want to verify these changes are appropriate for typical use of this class.
+    # Also, we should replace `**factory_kwargs` with explicit key-value pairs to avoid passing invalid args to torch.empty.
+    def __init__(self, n_kernels: int, kernel_thresholding: int, **factory_kwargs) -> None:
         super(Kernel_linear, self).__init__()
         self.n_kernels = n_kernels
+        self.kernel_thresholding = kernel_thresholding
         self.weight = Parameter(torch.empty((1, n_kernels, 1), **factory_kwargs))
         self.bias = Parameter(torch.empty(n_kernels, **factory_kwargs))
         self.init_parameters()
